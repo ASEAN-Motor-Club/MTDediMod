@@ -285,6 +285,16 @@ local function CargoMovementToTable(movement)
   }
 end
 
+local function ContractToTable(contract)
+  local data = {}
+  data.Item = contract.Item:ToString()
+  data.Amount = contract.Amount
+  data.Cost = RewardToTable(contract.Cost)
+  data.CompletionPayment = RewardToTable(contract.CompletionPayment)
+  return data
+end
+
+
 ---Convert AMTCargo to JSON serializable table
 ---@param cargo AMTCargo
 local function CargoToTable(cargo)
@@ -303,14 +313,14 @@ local function CargoToTable(cargo)
   -- data.HitSound = cargo.HitSound
   -- data.InteractableComponent = cargo.InteractableComponent
   -- data.Net_DroppedCargoSpace = cargo.Net_DroppedCargoSpace
-  data.Net_MovementOwnerPC = GetPlayerUniqueId(cargo.Net_MovementOwnerPC)
-  data.Server_ManualLoadingPaidPC = GetPlayerUniqueId(cargo.Server_ManualLoadingPaidPC)
-  data.Server_LastMovementOwnerPC = GetPlayerUniqueId(cargo.Server_LastMovementOwnerPC)
+  --data.Net_MovementOwnerPC = GetPlayerUniqueId(cargo.Net_MovementOwnerPC)
+  --data.Server_ManualLoadingPaidPC = GetPlayerUniqueId(cargo.Server_ManualLoadingPaidPC)
+  --data.Server_LastMovementOwnerPC = GetPlayerUniqueId(cargo.Server_LastMovementOwnerPC)
 
   data.Server_TempMovementOwnerPCs = {}
-  cargo.Server_TempMovementOwnerPCs:ForEach(function(key, value)
-    data.Server_TempMovementOwnerPCs[GetPlayerUniqueId(key:get())] = value:get()
-  end)
+  --cargo.Server_TempMovementOwnerPCs:ForEach(function(key, value)
+  --  data.Server_TempMovementOwnerPCs[GetPlayerUniqueId(key:get())] = value:get()
+  --end)
 
   -- data.DestinationInteractionActor = cargo.DestinationInteractionActor
   data.Net_CargoKey = cargo.Net_CargoKey:ToString()
@@ -335,8 +345,8 @@ local function CargoToTable(cargo)
   data.Net_bIsEmptyContainer = cargo.Net_bIsEmptyContainer
   data.Net_OwnerName = cargo.Net_OwnerName:ToString()
   -- data.Net_LastValidCarrierVehicle = cargo.Net_LastValidCarrierVehicle
-  data.DroppedMarker = VectorToTable(cargo.DroppedMarker:K2_GetActorLocation())
-  data.Marker = VectorToTable(cargo.Marker:K2_GetActorLocation())
+  --data.DroppedMarker = VectorToTable(cargo.DroppedMarker:K2_GetActorLocation())
+  --data.Marker = VectorToTable(cargo.Marker:K2_GetActorLocation())
   -- data.Net_Strap = cargo.Net_Strap
   data.Net_PickupTimeSeconds = cargo.Net_PickupTimeSeconds
 
@@ -414,6 +424,17 @@ webhook.RegisterEventHook(
     return {
       PlayerId = playerId,
       Cargos = data
+    }
+  end
+)
+
+webhook.RegisterEventHook(
+  "ServerSignContract",
+  function (context, Contract, CompanyGuid)
+    local playerId = GetPlayerUniqueId(context:get())
+    return {
+      PlayerId = playerId,
+      Contract = ContractToTable(Contract:get())
     }
   end
 )
