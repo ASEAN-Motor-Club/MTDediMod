@@ -72,6 +72,22 @@ local function GetPlayerStates(uniqueId)
   return arr
 end
 
+
+---TransferMoneyToPlayer
+---@param uniqueId string? Filter by player state unique net ID
+---@param amount int The amount to transfer (potentially negative)
+---@param message str The message that comes with the transfer
+---@return bool
+local function TransferMoneyToPlayer(uniqueId, amount, message)
+  local PC = GetPlayerControllerFromUniqueId(uniqueId)
+  if not PC:IsValid() then return false end
+  ExecuteInGameThread(function()
+    PC:ClientAddMoney(amount, 'Context', FText(message), true, 'Context', 'Context')
+  end)
+  return true
+end
+
+
 ---Get my current pawn transform
 ---@return FVector? location
 ---@return FRotator? rotation
@@ -118,6 +134,22 @@ end
 
 ---Handle request to teleport player
 ---@type RequestPathHandler
+local function HandleTransferMoneyToPlayer(session)
+  local playerId = session.pathComponents[2]
+  if not playerId then
+    return json.stringify { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if data and data.Amount and data.Message then
+    TransferMoneyToPlayer(playerId, data.Amount, data.Message)
+    return nil, nil, 200
+  end
+  return json.stringify { error = "Invalid payload" }, nil, 400
+end
+
+---Handle request to teleport player
+---@type RequestPathHandler
 local function HandleTeleportPlayer(session)
   local playerId = session.pathComponents[2]
   local data = json.parse(session.content)
@@ -155,4 +187,5 @@ return {
   GetMyCurrentTransform = GetMyCurrentTransform,
   PlayerStateToTable = PlayerStateToTable,
   HandleTeleportPlayer = HandleTeleportPlayer,
+  HandleTransferMoneyToPlayer = HandleTransferMoneyToPlayer,
 }
