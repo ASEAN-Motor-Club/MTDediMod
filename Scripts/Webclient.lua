@@ -20,6 +20,7 @@ local events = {
     ServerJoinEvent = "/Script/MotorTown.MotorTownPlayerController:ServerJoinEvent",
     ServerLeaveEvent = "/Script/MotorTown.MotorTownPlayerController:ServerLeaveEvent",
     ServerCargoArrived = "/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived",
+    ServerCargoDumped = "/Script/MotorTown.MotorTownPlayerController:ServerCargoDumped",
     ServerSignContract = "/Script/MotorTown.MotorTownPlayerController:ServerSignContract",
     ServerPassengerArrived = "/Script/MotorTown.MotorTownPlayerController:ServerPassengerArrived",
     ServerContractCargoDelivered = "/Script/MotorTown.MotorTownPlayerController:ServerContractCargoDelivered",

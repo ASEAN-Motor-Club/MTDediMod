@@ -459,6 +459,17 @@ webhook.RegisterEventHook(
 )
 
 webhook.RegisterEventHook(
+  "ServerCargoDumped",
+  function (context, Cargo)
+    local playerId = GetPlayerUniqueId(context:get())
+    return {
+      PlayerId = playerId,
+      Cargo = CargoToTable(Cargo:get())
+    }
+  end
+)
+
+webhook.RegisterEventHook(
   "ServerSignContract",
   function (context, Contract, CompanyGuid)
     local PC = context:get()
