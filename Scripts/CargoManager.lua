@@ -142,6 +142,36 @@ local function DeliveryToTable(delivery)
   return data
 end
 
+---Convert UMTPassengerComponent to table
+---@param delivery UMTPassengerComponent
+local function PassengerToTable(passenger)
+  local data = {}
+
+  data.Net_PassengerType = passenger.Net_PassengerType --EMTPassengerType
+  --data.Net_BusPassengerParams = passenger.Net_BusPassengerParams --FMTBusPassengerParams
+  data.Net_StartLocation = VectorToTable(passenger.Net_StartLocation) --FVector
+  data.Net_DestinationLocation = VectorToTable(passenger.Net_DestinationLocation) --FVector
+  data.Net_Distance = passenger.Net_Distance --float
+  data.Net_Payment = passenger.Net_Payment --int64
+  data.Net_PaymentPer100m = passenger.Net_PaymentPer100m --int64
+  data.Net_PassengerFlags = passenger.Net_PassengerFlags --int32
+  data.Net_bArrived = passenger.Net_bArrived --boolean
+  --data.Net_GroupCharacters = passenger.Net_GroupCharacters --TArray<AMTCharacter>
+  --data.InteractionMeshComponent = passenger.InteractionMeshComponent --UMTInteractionMeshComponent
+  --data.InteractionComponent = passenger.InteractionComponent --UMTInteractableComponent
+  --data.DestinationActor = passenger.DestinationActor --AMTInteractionMeshActor
+  --data.PassengerMarker = passenger.PassengerMarker --AMTARMarker
+  --data.DialogueComponent = passenger.DialogueComponent --UMTDialogueComponent
+  --data.DialogueInteractionComponent = passenger.DialogueInteractionComponent --UMTInteractableComponent
+  --data.Net_ReservedPlayerState = passenger.Net_ReservedPlayerState --AMotorTownPlayerState
+  data.Net_TimeLimitToDestinationFromStart = passenger.Net_TimeLimitToDestinationFromStart --float
+  data.Net_TimeLimitToDestination = passenger.Net_TimeLimitToDestination --float
+  data.Net_TimeLimitPoint = passenger.Net_TimeLimitPoint --int32
+  data.Net_LCComfortSatisfaction = passenger.Net_LCComfortSatisfaction --int32
+
+  return data
+end
+
 ---Convert FMTInventoryEntry to JSON serializable table
 ---@param entry FMTInventoryEntry
 local function InventoryEntryToTable(entry)
@@ -435,6 +465,18 @@ webhook.RegisterEventHook(
     return {
       PlayerId = playerId,
       Contract = ContractToTable(Contract:get())
+    }
+  end
+)
+
+webhook.RegisterEventHook(
+  "ServerPassengerArrived",
+  function (context, PassengerComponent)
+    local playerId = GetPlayerUniqueId(context:get())
+    local data = PassengerToTable(PassengerComponent:get())
+    return {
+      PlayerId = playerId,
+      Passenger = data
     }
   end
 )
