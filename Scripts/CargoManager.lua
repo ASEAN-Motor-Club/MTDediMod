@@ -461,10 +461,60 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerSignContract",
   function (context, Contract, CompanyGuid)
-    local playerId = GetPlayerUniqueId(context:get())
+    local PC = context:get()
+    local playerId = GetPlayerUniqueId(PC)
+    local company = nil
+    PC.Companies:ForEach(function(key, value)
+      local _company = value:get()
+      if _company:IsValid() and GuidToString(_company.Guid) == GuidToString(CompanyGuid:get()) then
+        company = _company
+      end
+    end)
+
+    local contractGuid = nil
+    if company ~= nil then
+      company.ContractsInProgress:ForEach(function(key, value)
+        local cip = value:get()
+        if cip:IsValid() and cip.Contract == Contract:get() then
+          contractGuid = GuidToString(cip.Guid)
+        end
+      end)
+    end
+
     return {
       PlayerId = playerId,
-      Contract = ContractToTable(Contract:get())
+      Contract = ContractToTable(Contract:get()),
+      contractGuid = contractGuid,
+    }
+  end
+)
+
+webhook.RegisterEventHook(
+  "ServerContractCargoDelivered",
+  function (context, ContractGuid)
+    local PC = context:get()
+    local playerId = GetPlayerUniqueId(PC)
+    local contractGuid = ContractGuid:get()
+    local contract = nil
+    local finishedAmount = 0
+    PC.Companies:ForEach(function(key, value)
+      local company = value:get()
+      if company:IsValid() then
+        company.ContractsInProgress:ForEach(function(key, value)
+          local cip = value:get()
+          if cip:IsValid() and GuidToString(cip.Guid) == GuidToString(contractGuid) then
+            contract = ContractToTable(cip.Contract)
+            finishedAmount = cip.FinishedAmount
+          end
+        end)
+      end
+    end)
+
+    return {
+      PlayerId = playerId,
+      ContractGuid = GuidToString(contractGuid),
+      Contract = contract,
+      FinishedAmount = finishedAmount,
     }
   end
 )

@@ -22,6 +22,7 @@ local events = {
     ServerCargoArrived = "/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived",
     ServerSignContract = "/Script/MotorTown.MotorTownPlayerController:ServerSignContract",
     ServerPassengerArrived = "/Script/MotorTown.MotorTownPlayerController:ServerPassengerArrived",
+    ServerContractCargoDelivered = "/Script/MotorTown.MotorTownPlayerController:ServerContractCargoDelivered",
 }
 
 ---Send a request to the specified URL
