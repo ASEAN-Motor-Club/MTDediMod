@@ -161,18 +161,35 @@ local function HandleTeleportPlayer(session)
     local rotation = {
       Roll = data.Rotation and data.Rotation.Roll or 0.0,
       Pitch = data.Rotation and data.Rotation.Pitch or 0.0,
-      Yaw = data.Rotation and data.Rotation.Roll or 0.0
+      Yaw = data.Rotation and data.Rotation.Yaw or 0.0
     }
 
     if playerId then
       local PC = GetPlayerControllerFromUniqueId(playerId)
+      ---@cast PC AMotorTownPlayerController
+
       if PC:IsValid() then
         local pawn = PC:K2_GetPawn()
         if pawn:IsValid() then
-          if pawn:K2_TeleportTo(location, rotation) then
-            local msg = string.format("Teleported player %s to %s", playerId, json.stringify(data.Location))
-            return json.stringify { status = msg }, nil, 200
-          end
+          LogOutput("DEBUG", "pawn: %s", pawn:GetFullName())
+          local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+          ---@cast charClass UClass
+          local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+          ---@cast vehicleClass UClass
+
+          ExecuteInGameThread(function()
+            if pawn:IsA(charClass) then
+              PC:ServerTeleportCharacter(location, false, false)
+            elseif pawn:IsA(vehicleClass) then
+              ---@cast pawn AMTVehicle
+              PC:ServerResetVehicleAt(pawn, location, rotation, true)
+            else
+              error("Failed to teleport player")
+            end
+          end)
+
+          local msg = string.format("Teleported player %s to %s", playerId, json.stringify(location))
+          return json.stringify { status = msg }
         end
       end
       return json.stringify { error = string.format("Failed to teleport player %s", playerId) }, nil, 400
