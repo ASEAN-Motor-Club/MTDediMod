@@ -1,4 +1,5 @@
 local json = require("JsonParser")
+local webhook = require("Webclient")
 
 ---Convert player state to JSON serializable table
 ---@param playerState AMotorTownPlayerState
@@ -198,6 +199,16 @@ local function HandleTeleportPlayer(session)
   end
   return json.stringify { error = "Invalid payload" }, nil, 400
 end
+
+webhook.RegisterEventHook(
+  "ServerSetMoney",
+  function(context, Money)
+    return {
+      PlayerId = GetPlayerUniqueId(context:get()),
+      Money = Money:get()
+    }
+  end
+)
 
 return {
   HandleGetPlayerStates = HandleGetPlayerStates,
