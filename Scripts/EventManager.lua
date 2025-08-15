@@ -136,8 +136,8 @@ local function CreateNewEvent(event)
       EventGuid = guid,
       EventType = event.EventType,
       OwnerCharacterId = {
-        CharacterGuid = { A = 0, B = 0, C = 0, D = 0 },
-        UniqueNetId = ""
+        CharacterGuid = StringToGuid(event.OwnerCharacterId.CharacterGuid),
+        UniqueNetId = event.OwnerCharacterId.UniqueNetId
       },
       Players = {},
       bInCountdown = false,
@@ -172,6 +172,12 @@ local function CreateNewEvent(event)
     end
 
     eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.NumLaps = event.RaceSetup.NumLaps
+    local PC = GetPlayerControllerFromUniqueId(event.OwnerCharacterId.UniqueNetId)
+    if PC:IsValid() then
+      ExecuteInGameThread(function()
+          PC:ServerJoinEvent(guid)
+      end)
+    end
 
     return true, GuidToString(eventSystem.Net_Events[#eventSystem.Net_Events].EventGuid)
   end
