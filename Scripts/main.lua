@@ -45,6 +45,7 @@ local function LoadWebserver()
     server.registerHandler("/players", "GET", playerManager.HandleGetPlayerStates)
     server.registerHandler("/players/*/teleport", "POST", playerManager.HandleTeleportPlayer)
     server.registerHandler("/players/*/money", "POST", playerManager.HandleTransferMoneyToPlayer)
+    server.registerHandler("/players/*/chat", "POST", playerManager.HandlePlayerSendChat)
     server.registerHandler("/players/*", "GET", playerManager.HandleGetPlayerStates)
 
     -- Event management

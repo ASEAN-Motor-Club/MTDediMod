@@ -89,6 +89,16 @@ local function TransferMoneyToPlayer(uniqueId, amount, message)
 end
 
 
+local function PlayerSendChat(uniqueId, message)
+  local PC = GetPlayerControllerFromUniqueId(uniqueId)
+  if not PC:IsValid() then return false end
+  ExecuteInGameThread(function()
+    PC:ServerSendChat(message, 0)
+  end)
+  return true
+end
+
+
 ---Get my current pawn transform
 ---@return FVector? location
 ---@return FRotator? rotation
@@ -145,6 +155,20 @@ local function HandleTransferMoneyToPlayer(session)
   if data and data.Amount and data.Message then
     TransferMoneyToPlayer(playerId, data.Amount, data.Message)
     return nil, nil, 200
+  end
+  return json.stringify { error = "Invalid payload" }, nil, 400
+end
+
+local function HandlePlayerSendChat(session)
+  local playerId = session.pathComponents[2]
+  if not playerId then
+    return json.stringify { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if data and data.Message then
+    PlayerSendChat(playerId, data.Message)
+    return nil, nil, 204
   end
   return json.stringify { error = "Invalid payload" }, nil, 400
 end
@@ -216,4 +240,5 @@ return {
   PlayerStateToTable = PlayerStateToTable,
   HandleTeleportPlayer = HandleTeleportPlayer,
   HandleTransferMoneyToPlayer = HandleTransferMoneyToPlayer,
+  HandlePlayerSendChat = HandlePlayerSendChat,
 }
