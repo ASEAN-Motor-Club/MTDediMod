@@ -172,6 +172,23 @@ local function PassengerToTable(passenger)
   return data
 end
 
+local function TowRequestToTable(towRequest)
+  local data = {}
+
+  --data.DestinationActor = towRequest.DestinationActor --AMTInteractionMeshActor
+  --data.Marker = towRequest.Marker --AMTARMarker
+  data.Net_StartLocation = VectorToTable(towRequest.Net_StartLocation) --FVector
+  data.Net_DestinationAbsoluteLocation = VectorToTable(towRequest.Net_DestinationAbsoluteLocation) --FVector
+  data.Net_Payment = towRequest.Net_Payment --int64
+  data.Net_bArrived = towRequest.Net_bArrived --boolean
+  data.Net_TowRequestFlags = towRequest.Net_TowRequestFlags --int32
+  --data.Net_LastWreckerPC = towRequest.Net_LastWreckerPC --AMotorTownPlayerController
+  --data.Net_PoliceTowingVehicleDriverCharacterGuid = towRequest.Net_PoliceTowingVehicleDriverCharacterGuid --FGuid
+  -- data.LastWrecker = towRequest.LastWrecker --AMTVehicle
+
+  return data
+end
+
 ---Convert FMTInventoryEntry to JSON serializable table
 ---@param entry FMTInventoryEntry
 local function InventoryEntryToTable(entry)
@@ -538,6 +555,18 @@ webhook.RegisterEventHook(
     return {
       PlayerId = playerId,
       Passenger = data
+    }
+  end
+)
+
+webhook.RegisterEventHook(
+  "ServerTowRequestArrived",
+  function (context, TowRequestComponent)
+    local playerId = GetPlayerUniqueId(context:get())
+    local data = TowRequestToTable(TowRequestComponent:get())
+    return {
+      PlayerId = playerId,
+      TowRequest = data
     }
   end
 )
