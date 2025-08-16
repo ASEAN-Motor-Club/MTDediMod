@@ -522,6 +522,38 @@ local function HandleUpdateEvent(session)
   return nil, nil, 400
 end
 
+local function HandleJoinEvent(session)
+  local eventGuid = session.pathComponents[2]
+  local content = json.parse(session.content)
+
+  if type(content) == "table" and content.PlayerId then
+    local PC = GetPlayerControllerFromUniqueId(content.PlayerId)
+    if PC:IsValid() then
+      ExecuteInGameThread(function()
+        PC:ServerJoinEvent(StringToGuid(eventGuid))
+      end)
+      return nil, nil, 204
+    end
+  end
+  return nil, nil, 400
+end
+
+local function HandleLeaveEvent(session)
+  local eventGuid = session.pathComponents[2]
+  local content = json.parse(session.content)
+
+  if type(content) == "table" and content.PlayerId then
+    local PC = GetPlayerControllerFromUniqueId(content.PlayerId)
+    if PC:IsValid() then
+      ExecuteInGameThread(function()
+        PC:ServerLeaveEvent(StringToGuid(eventGuid))
+      end)
+      return nil, nil, 204
+    end
+  end
+  return nil, nil, 400
+end
+
 ---Handle request for event removal
 ---@type RequestPathHandler
 local function HandleRemoveEvent(session)
@@ -539,5 +571,7 @@ return {
   HandleUpdateEvent = HandleUpdateEvent,
   HandleCreateNewEvent = HandleCreateNewEvent,
   HandleChangeEventState = HandleChangeEventState,
-  HandleRemoveEvent = HandleRemoveEvent
+  HandleRemoveEvent = HandleRemoveEvent,
+  HandleJoinEvent = HandleJoinEvent,
+  HandleLeaveEvent = HandleLeaveEvent,
 }

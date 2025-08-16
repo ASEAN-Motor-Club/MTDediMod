@@ -53,6 +53,8 @@ local function LoadWebserver()
     server.registerHandler("/events", "POST", eventManager.HandleCreateNewEvent)
     server.registerHandler("/events/*", "GET", eventManager.HandleGetEvents)
     server.registerHandler("/events/*/state", "POST", eventManager.HandleChangeEventState)
+    server.registerHandler("/events/*/join", "POST", eventManager.HandleJoinEvent)
+    server.registerHandler("/events/*/leave", "POST", eventManager.HandleLeaveEvent)
     server.registerHandler("/events/*", "POST", eventManager.HandleUpdateEvent)
     server.registerHandler("/events/*", "DELETE", eventManager.HandleRemoveEvent)
 
