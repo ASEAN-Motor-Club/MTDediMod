@@ -594,7 +594,7 @@ local function VehicleAttachmentPartCompToTable(comp)
   if not comp:IsValid() then return {} end
 
   return {
-    Net_PartKey = comp.Net_PartKey,
+    Net_PartKey = comp.Net_PartKey:ToString(),
     Net_PartSlot = comp.Net_PartSlot
   }
 end
