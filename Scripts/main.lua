@@ -29,11 +29,13 @@ local function LoadWebserver()
     local propertyManager = require("PropertyManager")
     local vehicleManager = require("VehicleManager")
     local assetManager = require("AssetManager")
+    local webclient = require("Webclient")
 
     -- Note that the ordering of the path registration matters.
     -- Put more specific paths before more general ones
 
     -- General server status
+    server.registerHandler("/webhook", "GET", webclient.HandleGetWebhooks)
     server.registerHandler("/status", "GET", serverManager.HandleGetServerStatus, false)
     server.registerHandler("/version", "GET", serverManager.HandleGetModVersion, false)
     server.registerHandler("/status/general", "GET", serverManager.HandleGetServerState)

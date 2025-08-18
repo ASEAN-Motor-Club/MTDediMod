@@ -116,7 +116,7 @@ local requests = {}
 ---@param callback fun(status: boolean)? Optional callback after handling the request
 local function CreateEventWebhook(event, data, callback)
     LogOutput("DEBUG", "Received hook event %s", event)
-    if socket and webhookUrl then
+    if socket then
         local payload = {
             hook = event,
             timestamp = math.floor(socket.gettime() * 1000),
@@ -124,36 +124,52 @@ local function CreateEventWebhook(event, data, callback)
         }
         LogOutput("DEBUG", "Collecting payload:\n%s", payload)
         table.insert(requests, { payload, callback })
+
+        -- Do not let webhooks grow indefinitely
+        if #table > 100 then
+          table.remove(requests, 1)
+        end
     end
 end
 
 -- Get the amount of delay in between async loop (ms).
 -- This will slot in between webserver loops.
 local delay = (tonumber(os.getenv("MOD_SERVER_PROCESS_AMOUNT")) or 5) * 100
-LoopAsync(delay, function()
-    if #requests > 0 then
-        local payloads = {} ---@type table[]
-        local callbacks = {} ---@type fun(status: boolean)[]
+if delay > 0 and webhookEvents[1] ~= "none" and webhookUrl then
+    LoopAsync(delay, function()
+        if #requests > 0 then
+            local payloads = {} ---@type table[]
+            local callbacks = {} ---@type fun(status: boolean)[]
 
-        -- Return the payload in order
-        -- This also takes into account possible table insertion while processing data
-        while #requests ~= 0 do
-            local payload, callback = table.unpack(table.remove(requests, 1))
-            table.insert(payloads, payload)
-            table.insert(callbacks, callback)
+            -- Return the payload in order
+            -- This also takes into account possible table insertion while processing data
+            while #requests ~= 0 do
+                local payload, callback = table.unpack(table.remove(requests, 1))
+                table.insert(payloads, payload)
+                table.insert(callbacks, callback)
+            end
+
+            local payload = json.stringify(payloads)
+            LogOutput("DEBUG", "Sending webhook content:\n%s", payload)
+            -- Silently send the webhook request without raising any error
+            local status = pcall(__createWebhookRequest, webhookUrl, payload)
+
+            for _, value in ipairs(callbacks) do
+                value(status)
+            end
         end
+    end)
+end
 
-        local payload = json.stringify(payloads)
-        LogOutput("DEBUG", "Sending webhook content:\n%s", payload)
-        -- Silently send the webhook request without raising any error
-        local status = pcall(__createWebhookRequest, webhookUrl, payload)
-
-        for _, value in ipairs(callbacks) do
-            value(status)
-        end
-    end
-    return webhookEvents[1] == "none"
-end)
+local function HandleGetWebhooks(session)
+  local payloads = {} ---@type table[]
+  while #requests ~= 0 do
+    local payload, callback = table.unpack(table.remove(requests, 1))
+    table.insert(payloads, payload)
+  end
+  local payload = json.stringify(payloads)
+  return payload, nil, 200
+end
 
 ---Send a request synchronously to the specified webhook URL
 ---@param path string
@@ -222,4 +238,5 @@ return {
     ---@deprecated Use `RegisterEventHook` wrapper function for cleaner code
     CreateEventWebhook = CreateEventWebhook,
     RegisterEventHook = RegisterEventHook,
+    HandleGetWebhooks = HandleGetWebhooks,
 }
