@@ -212,13 +212,38 @@ local function RegisterEventHook(event, hookFunction, callback)
     if isEnabled and eventName then
         local status, out1, out2 = pcall(function()
             local preId, postId = RegisterHook(eventName, function(self, ...)
-                local status, result = pcall(hookFunction, self, ...)
+                LogOutput("INFO", "Event hook start: %s", eventName)
+                local _self = self:get()
+                if _self == nil or not _self:IsValid() then
+                  return
+                end
+
+                local originalArgs = {...}
+                local mappedArgs = {}
+                for i, value in ipairs(originalArgs) do
+                  if value == nil or value.get == nil then
+                    return
+                  end
+
+                  local val = value:get()
+                  if type(val) ~= "userdata" then
+                    mappedArgs[i] = val
+                  elseif val ~= nil and val.IsValid ~= nil and val:IsValid() then
+                    mappedArgs[i] = val
+                  else
+                    LogOutput("ERROR", "Failed to execute event hook: %s, Argument invalid", eventName)
+                    return
+                  end
+                end
+
+                local status, result = pcall(hookFunction, _self, table.unpack(mappedArgs))
                 if status then
                     if result then
                         CreateEventWebhook(eventName, result, callback)
+                        LogOutput("INFO", "Event hook created: %s", eventName)
                     end
                 else
-                    LogOutput("ERROR", "Failed to execute event hook: %s", result)
+                    LogOutput("ERROR", "Failed to execute event hook: %s", eventName)
                 end
             end)
             return preId, postId

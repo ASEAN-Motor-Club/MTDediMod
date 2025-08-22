@@ -400,6 +400,28 @@ local function CargoToTable(cargo)
   return data
 end
 
+---@param cargo AMTCargo
+local function CargoToTableSummary(cargo)
+  local data = {}
+
+  data.EmptyContainerMass = cargo.EmptyContainerMass
+  data.Net_CargoKey = cargo.Net_CargoKey:ToString()
+  data.Net_Weight = cargo.Net_Weight
+  data.Net_Damage = cargo.Net_Damage
+  data.Net_CargoActorFlags = cargo.Net_CargoActorFlags
+  data.Net_DeliveryId = cargo.Net_DeliveryId
+  data.Net_DestinationLocation = VectorToTable(cargo.Net_DestinationLocation)
+  data.Net_SenderAbsoluteLocation = VectorToTable(cargo.Net_SenderAbsoluteLocation)
+  data.Net_SingleCargoPayment = RewardToTable(cargo.Net_SingleCargoPayment)
+  data.Net_Payment = RewardToTable(cargo.Net_Payment)
+  data.Net_SavedLifeTimeSeconds = cargo.Net_SavedLifeTimeSeconds
+  data.Net_TimeLeftSeconds = cargo.Net_TimeLeftSeconds
+  data.Net_bIsEmptyContainer = cargo.Net_bIsEmptyContainer
+  data.Net_PickupTimeSeconds = cargo.Net_PickupTimeSeconds
+
+  return data
+end
+
 ---Get delivery points
 ---@param guid string? Filter by delivery guid
 ---@param fields string[]? Filter by fields
@@ -452,22 +474,26 @@ end
 
 webhook.RegisterEventHook(
   "ServerAcceptDelivery",
-  function(context, DeliveryId)
+  function(PC, DeliveryId)
     return {
-      PlayerId = GetPlayerUniqueId(context:get()),
-      DeliveryId = DeliveryId:get()
+      PlayerId = GetPlayerUniqueId(PC),
+      DeliveryId = DeliveryId,
     }
   end
 )
 
 webhook.RegisterEventHook(
   "ServerCargoArrived",
-  function (context, Cargos)
-    local playerId = GetPlayerUniqueId(context:get())
+  function (PC, cargos)
+    local playerId = GetPlayerUniqueId(PC)
     local data = {}
-    Cargos:get():ForEach(function(key, value)
-      table.insert(data, CargoToTable(value:get()))
+    cargos:ForEach(function(key, value)
+      local cargo = value:get()
+      if cargo ~= nil and cargo:IsValid() then
+        table.insert(data, CargoToTableSummary(cargo))
+      end
     end)
+
     return {
       PlayerId = playerId,
       Cargos = data
@@ -477,24 +503,23 @@ webhook.RegisterEventHook(
 
 webhook.RegisterEventHook(
   "ServerCargoDumped",
-  function (context, Cargo)
-    local playerId = GetPlayerUniqueId(context:get())
+  function (PC, cargo)
+    local playerId = GetPlayerUniqueId(PC)
     return {
       PlayerId = playerId,
-      Cargo = CargoToTable(Cargo:get())
+      Cargo = CargoToTableSummary(cargo)
     }
   end
 )
 
 webhook.RegisterEventHook(
   "ServerSignContract",
-  function (context, Contract, CompanyGuid)
-    local PC = context:get()
+  function (PC, contract, companyGuid)
     local playerId = GetPlayerUniqueId(PC)
     local company = nil
     PC.Companies:ForEach(function(key, value)
       local _company = value:get()
-      if _company:IsValid() and GuidToString(_company.Guid) == GuidToString(CompanyGuid:get()) then
+      if company ~= nil and _company:IsValid() and GuidToString(_company.Guid) == GuidToString(companyGuid) then
         company = _company
       end
     end)
@@ -503,7 +528,7 @@ webhook.RegisterEventHook(
     if company ~= nil then
       company.ContractsInProgress:ForEach(function(key, value)
         local cip = value:get()
-        if cip:IsValid() and cip.Contract == Contract:get() then
+        if cip ~= nil and cip:IsValid() and cip.Contract == contract then
           contractGuid = GuidToString(cip.Guid)
         end
       end)
@@ -511,7 +536,7 @@ webhook.RegisterEventHook(
 
     return {
       PlayerId = playerId,
-      Contract = ContractToTable(Contract:get()),
+      Contract = ContractToTable(contract),
       contractGuid = contractGuid,
     }
   end
@@ -519,24 +544,25 @@ webhook.RegisterEventHook(
 
 webhook.RegisterEventHook(
   "ServerContractCargoDelivered",
-  function (context, ContractGuid)
-    local PC = context:get()
+  function (PC, contractGuid)
     local playerId = GetPlayerUniqueId(PC)
-    local contractGuid = ContractGuid:get()
     local contract = nil
     local finishedAmount = 0
     PC.Companies:ForEach(function(key, value)
       local company = value:get()
-      if company:IsValid() then
+      if company ~= nil and company:IsValid() then
         company.ContractsInProgress:ForEach(function(key, value)
           local cip = value:get()
-          if cip:IsValid() and GuidToString(cip.Guid) == GuidToString(contractGuid) then
+          if cip ~= nil and cip:IsValid() and GuidToString(cip.Guid) == GuidToString(contractGuid) then
             contract = ContractToTable(cip.Contract)
             finishedAmount = cip.FinishedAmount
           end
         end)
       end
     end)
+    if not contract then
+      return nil
+    end
 
     return {
       PlayerId = playerId,
@@ -549,9 +575,9 @@ webhook.RegisterEventHook(
 
 webhook.RegisterEventHook(
   "ServerPassengerArrived",
-  function (context, PassengerComponent)
-    local playerId = GetPlayerUniqueId(context:get())
-    local data = PassengerToTable(PassengerComponent:get())
+  function (PC, passenger)
+    local playerId = GetPlayerUniqueId(PC)
+    local data = PassengerToTable(passenger)
     return {
       PlayerId = playerId,
       Passenger = data
@@ -561,9 +587,9 @@ webhook.RegisterEventHook(
 
 webhook.RegisterEventHook(
   "ServerTowRequestArrived",
-  function (context, TowRequestComponent)
-    local playerId = GetPlayerUniqueId(context:get())
-    local data = TowRequestToTable(TowRequestComponent:get())
+  function (PC, towRequest)
+    local playerId = GetPlayerUniqueId(PC)
+    local data = TowRequestToTable(towRequest)
     return {
       PlayerId = playerId,
       TowRequest = data
