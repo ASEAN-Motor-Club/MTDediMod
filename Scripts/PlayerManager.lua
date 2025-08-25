@@ -81,7 +81,7 @@ end
 ---@return bool
 local function TransferMoneyToPlayer(uniqueId, amount, message)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
-  if not PC:IsValid() then return false end
+  if PC == nil or not PC:IsValid() then return false end
   ExecuteInGameThread(function()
     PC:ClientAddMoney(amount, 'Context', FText(message), true, 'Context', 'Context')
   end)
