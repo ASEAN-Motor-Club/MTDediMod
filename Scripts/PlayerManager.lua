@@ -205,6 +205,8 @@ local function HandleTeleportPlayer(session)
           ExecuteInGameThread(function()
             if pawn:IsA(charClass) then
               PC:ServerTeleportCharacter(location, false, false)
+            elseif pawn:IsA(vehicleClass) and data.NoVehicles then
+              return json.stringify { error = string.format("Failed to teleport player %s: Player is inside a vehicle", playerId) }, nil, 400
             elseif pawn:IsA(vehicleClass) then
               ---@cast pawn AMTVehicle
               PC:ServerResetVehicleAt(pawn, location, rotation, true)
