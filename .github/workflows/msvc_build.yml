@@ -25,8 +25,8 @@ jobs:
       - name: Checkout UE4SS
         uses: actions/checkout@v4
         with:
-          repository: drpsyko101/RE-UE4SS
-          ref: amc
+          repository: ASEAN-Motor-Club/RE-UE4SS
+          ref: main
           path: RE-UE4SS
           submodules: recursive
           token: ${{ secrets.UEPSEUDO_PAT }}
