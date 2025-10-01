@@ -175,6 +175,39 @@ local function HandlePlayerSendChat(session)
   return json.stringify { error = "Invalid payload" }, nil, 400
 end
 
+local mutedPlayers = {}
+
+local function HandleMutePlayer(session)
+  local playerId = session.pathComponents[2]
+  if not playerId then
+    return json.stringify { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if data and data.MuteUntil then
+    mutedPlayers[playerId] = data.MuteUntil
+    return nil, nil, 204
+  end
+  return json.stringify { error = "Invalid payload" }, nil, 400
+end
+
+
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", function(self, Message, Category)
+  local PC = self:get()
+  if PC:IsValid() then
+    local playerId = GetPlayerUniqueId(PC)
+
+    if mutedPlayers[playerId] ~= nil then
+      local now = os.time()
+      if mutedPlayers[playerId] >= now then
+        Message:set("")
+      else
+        mutedPlayers[playerId] = nil
+      end
+    end
+  end
+end)
+
 ---Handle request to teleport player
 ---@type RequestPathHandler
 local function HandleTeleportPlayer(session)
@@ -245,4 +278,5 @@ return {
   HandleTeleportPlayer = HandleTeleportPlayer,
   HandleTransferMoneyToPlayer = HandleTransferMoneyToPlayer,
   HandlePlayerSendChat = HandlePlayerSendChat,
+  HandleMutePlayer = HandleMutePlayer,
 }
