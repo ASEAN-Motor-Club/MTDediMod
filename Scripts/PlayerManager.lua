@@ -82,7 +82,8 @@ end
 local function TransferMoneyToPlayer(uniqueId, amount, message)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
   if PC == nil or not PC:IsValid() then return false end
-  ExecuteInGameThread(function()
+  LogOutput("INFO", "TransferMoneyToPlayer")
+  ExecuteInGameThreadSync(function()
     PC:ClientAddMoney(amount, 'Context', FText(message), true, 'Context', 'Context')
   end)
   return true
@@ -92,6 +93,7 @@ end
 local function PlayerSendChat(uniqueId, message)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
   if not PC:IsValid() then return false end
+  LogOutput("INFO", "PlayerSendChat")
   ExecuteInGameThread(function()
     PC:ServerSendChat(message, 0)
   end)
@@ -202,7 +204,7 @@ local function HandleTeleportPlayer(session)
           local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
           ---@cast vehicleClass UClass
 
-          ExecuteInGameThread(function()
+          ExecuteInGameThreadSync(function()
             if pawn:IsA(charClass) then
               PC:ServerTeleportCharacter(location, false, false)
             elseif pawn:IsA(vehicleClass) and data.NoVehicles then

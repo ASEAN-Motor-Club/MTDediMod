@@ -1,4 +1,5 @@
 local UEHelpers = require("UEHelpers")
+local socket = require("socket")
 
 local myPlayerControllerCache = CreateInvalidObject() ---@cast myPlayerControllerCache APlayerController
 ---Get my own PlayerController
@@ -519,4 +520,19 @@ function MergeTable(base, append)
     end
   end
   return base
+end
+
+
+function ExecuteInGameThreadSync(fn)
+  local wait = 0
+  local isFinished = false
+  ExecuteInGameThread(function()
+    fn()
+    isFinished = true
+  end)
+
+  while not isFinished and wait < 1000 do
+    wait = wait + 1
+    socket.sleep(1 / 1000)
+  end
 end

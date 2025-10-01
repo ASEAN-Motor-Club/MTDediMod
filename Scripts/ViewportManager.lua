@@ -128,7 +128,7 @@ local function ShowMessagePopup(message, uniqueId)
     end
   end
 
-  ExecuteInGameThread(function()
+  ExecuteInGameThreadSync(function()
     for _, value in ipairs(playerControllers) do
       if value:IsValid() then
         ---@cast value AMotorTownPlayerController
