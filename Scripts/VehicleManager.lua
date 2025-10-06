@@ -1925,8 +1925,7 @@ local function HandleGetPlayerVehicleIds(session)
     return json.stringify { error = "Invalid player controller" }, nil, 400
   end
 
-  local vehicles = PC.Net_SpawnedVehicles
-  if not vehicles:IsValid() then
+  if not PC.Net_SpawnedVehicles:IsValid() then
     return json.stringify { error = "Invalid player vehicles" }, nil, 400
   end
 
@@ -1936,7 +1935,7 @@ local function HandleGetPlayerVehicleIds(session)
   end
 
   local vehicles = {}
-  vehicles:ForEach(function(index, element)
+  PC.Net_SpawnedVehicles:ForEach(function(index, element)
     local vehicle = element:get()
     if vehicle:IsValid() then
       local vehicleInfo = {}
