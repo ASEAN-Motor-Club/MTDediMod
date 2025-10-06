@@ -6,6 +6,17 @@ local timer = require("Debugging/Timer")
 
 local vehicleDealerSoftPath = "/Script/MotorTown.MTDealerVehicleSpawnPoint"
 
+local function GetPlayerVehicle(PC)
+  local pawn = PC:K2_GetPawn()
+  if pawn:IsValid() then
+    local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+
+    if pawn:IsA(vehicleClass) then
+      return pawn
+    end
+  end
+end
+
 ---Convert FMTVehicleColorSlot to JSON serializable table
 ---@param slot FMTVehicleColorSlot
 local function ColorSlotToTable(slot)
@@ -893,6 +904,22 @@ local function VehicleCustomizationToTable(custom)
   return data
 end
 
+local function TableToVehicleCustomization(t, custom)
+  custom.BodyColors:Empty()
+  for index, value in ipairs(t.BodyColors) do
+    custom.BodyColors[index] = {
+      MaterialSlotName = FName(value.MaterialSlotName),
+      Color = value.Color,
+      Metallic = value.Metallic,
+      Roughness = value.Roughness,
+    }
+  end
+  return {
+    BodyMaterialIndex = t.BodyMaterialIndex,
+    BodyColors = custom.BodyColors,
+  }
+end
+
 ---Convert FMTVehicleDecalLayer to JSON serializable table
 ---@param decal FMTVehicleDecalLayer
 local function VehicleDecalLayerToTable(decal)
@@ -901,6 +928,20 @@ local function VehicleDecalLayerToTable(decal)
     Color = ColorToTable(decal.Color),
     Position = Vector2DToTable(decal.Position),
     Rotation = RotatorToTable(decal.Rotation),
+    DecalScale = decal.DecalScale,
+    Stretch = decal.Stretch,
+    Coverage = decal.Coverage,
+    Flags = decal.Flags,
+  }
+end
+
+local function TableToVehicleDecalLayer(decal)
+  LogOutput('INFO', 'Setting decal')
+  return {
+    DecalKey = FName(decal.DecalKey),
+    Color = decal.Color,
+    Position = decal.Position,
+    Rotation = decal.Rotation,
     DecalScale = decal.DecalScale,
     Stretch = decal.Stretch,
     Coverage = decal.Coverage,
@@ -919,6 +960,18 @@ local function VehicleDecalToTable(decal)
 
   return {
     DecalLayers = data,
+  }
+end
+
+local function TableToVehicleDecal(decal)
+  local decalLayers = {}
+
+  for index, value in ipairs(decal.DecalLayers) do
+    table.insert(decalLayers, TableToVehicleDecalLayer(value))
+  end
+
+  return {
+    DecalLayers = decalLayers,
   }
 end
 
@@ -1793,9 +1846,126 @@ local function HandleSetVehicleParameter(session)
   return json.stringify { error = "Invalid payload provided" }, nil, 400
 end
 
+local function HandleDespawnPlayerVehicle(session)
+  local playerId = session.pathComponents[2]
+
+  local PC = GetPlayerControllerFromUniqueId(playerId)
+  if PC:IsValid() then
+    local vehicle = GetPlayerVehicle(PC)
+    if vehicle == nil then
+      return json.stringify { error = "Player is not in a vehicle" }, nil, 400
+    end
+    if vehicle:IsValid() then
+      PC:ServerDespawnVehicle(vehicle, 0)
+      return json.stringify { Status = "ok" }, nil, 200
+    end
+    return json.stringify { error = "Invalid vehicle" }, nil, 400
+  end
+
+  return json.stringify { error = "Invalid payload provided" }, nil, 400
+end
+
+local function HandleGetPlayerVehicleDecal(session)
+  local playerId = session.pathComponents[2]
+
+  local PC = GetPlayerControllerFromUniqueId(playerId)
+  if PC:IsValid() then
+    local vehicle = GetPlayerVehicle(PC)
+    if vehicle == nil then
+      return json.stringify { error = "Player is not in a vehicle" }, nil, 400
+    end
+    if vehicle:IsValid() then
+      local decal = VehicleDecalToTable(vehicle.Net_Decal)
+      local customization = VehicleCustomizationToTable(vehicle.Customization)
+      local garageMode = vehicle:IsGarageMode()
+      return json.stringify {
+        decal = decal,
+        garageMode = garageMode,
+        customization = customization,
+      }, nil, 200
+    end
+    return json.stringify { error = "Invalid vehicle" }, nil, 400
+  end
+
+  return json.stringify { error = "Invalid player controller" }, nil, 400
+end
+
+local function HandleSetPlayerVehicleDecal(session)
+  local playerId = session.pathComponents[2]
+  local content = json.parse(session.content)
+
+  local PC = GetPlayerControllerFromUniqueId(playerId)
+  if PC:IsValid() then
+    local vehicle = GetPlayerVehicle(PC)
+    if vehicle == nil then
+      return json.stringify { error = "Player is not in a vehicle" }, nil, 400
+    end
+    if vehicle:IsValid() then
+      local decal = TableToVehicleDecal(content.decal)
+      vehicle.Net_Decal.DecalLayers:Empty()
+      for index, value in ipairs(decal.DecalLayers) do
+        vehicle.Net_Decal.DecalLayers[index] = value
+      end
+      vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
+      PC:ServerSetVehicleCustomization(vehicle, TableToVehicleCustomization(content.customization, vehicle.Customization))
+
+      return json.stringify { Status = "ok" }, nil, 200
+    end
+    return json.stringify { error = "Invalid vehicle" }, nil, 400
+  end
+
+  return json.stringify { error = "Invalid player controller" }, nil, 400
+end
+
+local function HandleGetPlayerVehicleIds(session)
+  local playerId = session.pathComponents[2]
+
+  local PC = GetPlayerControllerFromUniqueId(playerId)
+  if not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+
+  local vehicles = PC.Net_SpawnedVehicles
+  if not vehicles:IsValid() then
+    return json.stringify { error = "Invalid player vehicles" }, nil, 400
+  end
+
+  local lastPlayerVehicleId = nil
+  if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
+    lastPlayerVehicleId = PC.LastVehicle.Net_VehicleId
+  end
+
+  local vehicles = {}
+  vehicles:ForEach(function(index, element)
+    local vehicle = element:get()
+    if vehicle:IsValid() then
+      local vehicleInfo = {}
+      vehicleInfo["vehicleId"] = vehicle.Net_VehicleId
+      local vehicleTags = {}
+      vehicle.Tags:ForEach(function(index, val)
+        local tag = val:get():ToString()
+        table.insert(vehicleTags, tag)
+      end)
+      vehicleInfo["tags"] = vehicleTags
+      vehicleInfo["isLastVehicle"] = vehicle.Net_VehicleId == lastPlayerVehicleId
+      vehicleInfo["position"] = VectorToTable(vehicle:K2_GetActorLocation())
+      table.insert(vehicles, vehicleInfo)
+    end
+  end)
+  return json.stringify { vehicles = vehicles }, nil, 200
+end
+
+RegisterHook('/Script/MotorTown.MotorTownPlayerController:ServerSetVehicleDecal', function(self, vehicle, decal)
+    LogOutput('INFO', 'SetDecal')
+end)
+
 return {
   HandleGetVehicles = HandleGetVehicles,
+  HandleGetPlayerVehicles = HandleGetPlayerVehicles,
+  HandleGetPlayerVehicleDecal = HandleGetPlayerVehicleDecal,
+  HandleSetPlayerVehicleDecal = HandleSetPlayerVehicleDecal,
   HandleDespawnVehicle = HandleDespawnVehicle,
+  HandleDespawnPlayerVehicle = HandleDespawnPlayerVehicle,
   HandleCreateVehicleDealerSpawnPoint = HandleCreateVehicleDealerSpawnPoint,
   HandleGetGarages = HandleGetGarages,
   HandleSpawnGarage = HandleSpawnGarage,
