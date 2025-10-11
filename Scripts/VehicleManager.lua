@@ -1954,10 +1954,6 @@ local function HandleGetPlayerVehicleIds(session)
   return json.stringify { vehicles = vehicles }, nil, 200
 end
 
-RegisterHook('/Script/MotorTown.MotorTownPlayerController:ServerSetVehicleDecal', function(self, vehicle, decal)
-    LogOutput('INFO', 'SetDecal')
-end)
-
 return {
   HandleGetVehicles = HandleGetVehicles,
   HandleGetPlayerVehicles = HandleGetPlayerVehicles,
