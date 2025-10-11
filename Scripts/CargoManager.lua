@@ -412,7 +412,6 @@ local function CargoToTableSummary(cargo)
   data.Net_DeliveryId = cargo.Net_DeliveryId
   data.Net_DestinationLocation = VectorToTable(cargo.Net_DestinationLocation)
   data.Net_SenderAbsoluteLocation = VectorToTable(cargo.Net_SenderAbsoluteLocation)
-  data.Net_SingleCargoPayment = RewardToTable(cargo.Net_SingleCargoPayment)
   data.Net_Payment = RewardToTable(cargo.Net_Payment)
   data.Net_SavedLifeTimeSeconds = cargo.Net_SavedLifeTimeSeconds
   data.Net_TimeLeftSeconds = cargo.Net_TimeLeftSeconds
@@ -485,7 +484,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerCargoArrived",
   function (PC, cargos)
-    local playerId = GetPlayerUniqueId(PC)
+    local characterGuid = GetPlayerGuid(PC)
     local data = {}
     cargos:ForEach(function(key, value)
       local cargo = value:get()
@@ -495,7 +494,7 @@ webhook.RegisterEventHook(
     end)
 
     return {
-      PlayerId = playerId,
+      CharacterGuid = characterGuid,
       Cargos = data
     }
   end
@@ -545,27 +544,27 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerContractCargoDelivered",
   function (PC, contractGuid)
-    local playerId = GetPlayerUniqueId(PC)
+    local characterGuid = GetPlayerGuid(PC)
     local contract = nil
     local finishedAmount = 0
     PC.Companies:ForEach(function(key, value)
       local company = value:get()
-      if company ~= nil and company:IsValid() then
+      if company ~= nil and company:IsValid() and company.ContractsInProgress:IsValid() then
         company.ContractsInProgress:ForEach(function(key, value)
           local cip = value:get()
-          if cip ~= nil and cip:IsValid() and GuidToString(cip.Guid) == GuidToString(contractGuid) then
+          if cip ~= nil and cip:IsValid() and GuidToString(cip.Guid) == GuidToString(contractGuid) and cip.Contract:IsValid() then
             contract = ContractToTable(cip.Contract)
             finishedAmount = cip.FinishedAmount
           end
         end)
       end
     end)
-    if not contract then
-      return nil
+    if contract == nil then
+      return {}
     end
 
     return {
-      PlayerId = playerId,
+      CharacterGuid = characterGuid,
       ContractGuid = GuidToString(contractGuid),
       Contract = contract,
       FinishedAmount = finishedAmount,
@@ -576,10 +575,10 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerPassengerArrived",
   function (PC, passenger)
-    local playerId = GetPlayerUniqueId(PC)
+    local characterGuid = GetPlayerGuid(PC)
     local data = PassengerToTable(passenger)
     return {
-      PlayerId = playerId,
+      CharacterGuid = characterGuid,
       Passenger = data
     }
   end
@@ -588,10 +587,10 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerTowRequestArrived",
   function (PC, towRequest)
-    local playerId = GetPlayerUniqueId(PC)
+    local characterGuid = GetPlayerGuid(PC)
     local data = TowRequestToTable(towRequest)
     return {
-      PlayerId = playerId,
+      CharacterGuid = characterGuid,
       TowRequest = data
     }
   end

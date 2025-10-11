@@ -264,6 +264,9 @@ end
 ---Convert FMTShadowedInt64 to JSON serializable table
 ---@param reward FMTShadowedInt64
 function RewardToTable(reward)
+  if not reward:IsValid() then
+    return {}
+  end
   return {
     BaseValue = reward.BaseValue,
     ShadowedValue = reward.ShadowedValue
