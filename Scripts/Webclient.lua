@@ -126,7 +126,7 @@ local function CreateEventWebhook(event, data, callback)
         table.insert(requests, { payload, callback })
 
         -- Do not let webhooks grow indefinitely
-        if #table > 100 then
+        if #table > 1000 then
           table.remove(requests, 1)
         end
     end
