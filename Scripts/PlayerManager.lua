@@ -192,22 +192,6 @@ local function HandleMutePlayer(session)
 end
 
 
-RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", function(self, Message, Category)
-  local PC = self:get()
-  if PC:IsValid() then
-    local playerId = GetPlayerUniqueId(PC)
-
-    if mutedPlayers[playerId] ~= nil then
-      local now = os.time()
-      if mutedPlayers[playerId] >= now then
-        Message:set("")
-      else
-        mutedPlayers[playerId] = nil
-      end
-    end
-  end
-end)
-
 ---Handle request to teleport player
 ---@type RequestPathHandler
 local function HandleTeleportPlayer(session)
