@@ -127,11 +127,12 @@ local EventTable = {}
 ---@return string? guid
 local function CreateNewEvent(event)
   local eventSystem = GetEventSystem()
+  local PC = GetPlayerControllerFromUniqueId(event.OwnerCharacterId.UniqueNetId)
 
   if eventSystem:IsValid() then
     -- Add a new event without any TArray
     local guid = StringToGuid(event.EventGuid)
-    eventSystem.Net_Events[#eventSystem.Net_Events + 1] = {
+    local Event = {
       EventName = event.EventName,
       EventGuid = guid,
       EventType = event.EventType,
@@ -152,6 +153,11 @@ local function CreateNewEvent(event)
       },
       State = 1
     }
+    if PC:IsValid() then
+      PC:ServerAddEvent(Event)
+    else
+      eventSystem.Net_Events[#eventSystem.Net_Events + 1] = Event
+    end
 
     eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.Route.RouteName = event.RaceSetup.Route.RouteName
 
@@ -172,10 +178,9 @@ local function CreateNewEvent(event)
     end
 
     eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.NumLaps = event.RaceSetup.NumLaps
-    local PC = GetPlayerControllerFromUniqueId(event.OwnerCharacterId.UniqueNetId)
     if PC:IsValid() then
       ExecuteInGameThread(function()
-          PC:ServerJoinEvent(guid)
+        PC:ServerSetEventRaceSetup(guid, eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup)
       end)
     end
 
