@@ -552,7 +552,7 @@ webhook.RegisterEventHook(
       if company ~= nil and company:IsValid() and company.ContractsInProgress:IsValid() then
         company.ContractsInProgress:ForEach(function(key, value)
           local cip = value:get()
-          if cip ~= nil and cip:IsValid() and GuidToString(cip.Guid) == GuidToString(contractGuid) and cip.Contract:IsValid() then
+          if cip ~= nil and cip:IsValid() and cip.Guid:IsValid() and GuidToString(cip.Guid) == GuidToString(contractGuid) and cip.Contract:IsValid() then
             contract = ContractToTable(cip.Contract)
             finishedAmount = cip.FinishedAmount
           end

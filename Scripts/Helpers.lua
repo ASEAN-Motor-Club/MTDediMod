@@ -126,6 +126,9 @@ end)
 ---Convert FVector to JSON serializable table
 ---@param vector FVector
 function VectorToTable(vector)
+  if not vector:IsValid() then
+    return nil
+  end
   return {
     X = vector.X,
     Y = vector.Y,
@@ -172,6 +175,9 @@ end
 function GuidToString(guid)
   if type(guid) == "table" then return "0000" end
 
+  if not guid:IsValid() then
+    return "0000"
+  end
   local rawGuid = { guid.A, guid.B, guid.C, guid.D }
   local strGuid = ""
   for index, value in ipairs(rawGuid) do
