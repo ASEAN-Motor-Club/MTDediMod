@@ -126,7 +126,7 @@ end)
 ---Convert FVector to JSON serializable table
 ---@param vector FVector
 function VectorToTable(vector)
-  if not vector:IsValid() then
+  if vector ~= nil and vector.IsValid and not vector:IsValid() then
     return nil
   end
   return {
