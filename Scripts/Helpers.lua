@@ -126,7 +126,7 @@ end)
 ---Convert FVector to JSON serializable table
 ---@param vector FVector
 function VectorToTable(vector)
-  if vector ~= nil and vector.IsValid and not vector:IsValid() then
+  if vector ~= nil and type(vector.IsValid) == "function" and not vector:IsValid() then
     return nil
   end
   return {
@@ -173,9 +173,13 @@ end
 ---Convert FGuid to string
 ---@param guid FGuid
 function GuidToString(guid)
+  if guid == nil then
+    return "0000"
+  end
+
   if type(guid) == "table" then return "0000" end
 
-  if not guid:IsValid() then
+  if type(guid.IsValid) == "function" and not guid:IsValid() then
     return "0000"
   end
   local rawGuid = { guid.A, guid.B, guid.C, guid.D }
@@ -532,16 +536,28 @@ function MergeTable(base, append)
 end
 
 
+local syncFns = {}
 function ExecuteInGameThreadSync(fn)
-  local wait = 0
-  local isFinished = false
-  ExecuteInGameThread(function()
-    fn()
-    isFinished = true
-  end)
-
-  while not isFinished and wait < 1000 do
-    wait = wait + 1
-    socket.sleep(1 / 1000)
-  end
+  table.insert(syncFns, fn)
 end
+
+local isFinished = true
+local attempts = 0
+
+LoopAsync(100, function()
+  if not isFinished and attempts < 10 then
+    attempts = attempts + 1
+    return false
+  end
+
+  local fn = table.remove(syncFns, 1)
+
+  if fn then
+    isFinished = false
+    attempts = 0
+    ExecuteInGameThread(function()
+      fn()
+      isFinished = true
+    end)
+  end
+end)
