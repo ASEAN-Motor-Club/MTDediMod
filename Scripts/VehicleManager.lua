@@ -1917,7 +1917,7 @@ local function HandleSetPlayerVehicleDecal(session)
   return json.stringify { error = "Invalid player controller" }, nil, 400
 end
 
-local function HandleGetPlayerVehicleIds(session)
+local function HandleGetPlayerVehicles(session)
   local playerId = session.pathComponents[2]
 
   local PC = GetPlayerControllerFromUniqueId(playerId)
