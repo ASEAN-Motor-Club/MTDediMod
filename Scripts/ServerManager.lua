@@ -266,6 +266,21 @@ local function HandleGetModVersion(session)
     return json.stringify { version = statics.ModVersion }
 end
 
+local function HandleSetServerConfig(session)
+  local gameState = GetMotorTownGameState()
+  if not gameState:IsValid() then
+    return false
+  end
+  local body = json.parse(session.content)
+  if body.MaxVehiclePerPlayer ~= nil then
+    gameState.Net_ServerConfig.MaxVehiclePerPlayer = body.MaxVehiclePerPlayer
+  end
+  if body.bAllowCorporation ~= nil then
+    gameState.Net_ServerConfig.bAllowCorporation = body.bAllowCorporation
+  end
+  return nil, nil, 200
+end
+
 return {
     HandleGetServerState = HandleGetServerState,
     HandleGetZoneState = HandleGetZoneState,
@@ -273,4 +288,5 @@ return {
     HandleServerExecCommand = HandleServerExecCommand,
     HandleGetServerStatus = HandleGetServerStatus,
     HandleGetModVersion = HandleGetModVersion,
+    HandleSetServerConfig = HandleSetServerConfig,
 }
