@@ -1869,7 +1869,9 @@ local function HandleDespawnPlayerVehicle(session)
         curr = nil
         v.Net_Hooks:ForEach(function(i, val)
           local hook = val:get()
-          curr = hook.Trailer
+          if hook:IsValid() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
+            curr = hook.Trailer
+          end
         end)
         ExecuteInGameThread(function()
           PC:ServerDespawnVehicle(v, 0)
@@ -1948,9 +1950,25 @@ local function HandleGetPlayerVehicles(session)
   end
 
   local lastPlayerVehicleId = nil
+  local activeVehicles = {}
   if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
     lastPlayerVehicleId = PC.LastVehicle.Net_VehicleId
+
+    local curr = PC.LastVehicle
+
+    while curr ~= nil and curr:IsValid() and curr.Net_Hooks:IsValid() do
+      local v = curr
+      activeVehicles[curr.Net_VehicleId] = true
+      curr = nil
+      v.Net_Hooks:ForEach(function(i, val)
+        local hook = val:get()
+        if hook:IsValid() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
+          curr = hook.Trailer
+        end
+      end)
+    end
   end
+
 
   local vehicles = {}
   PC.Net_SpawnedVehicles:ForEach(function(index, element)
@@ -1964,7 +1982,7 @@ local function HandleGetPlayerVehicles(session)
         table.insert(vehicleTags, tag)
       end)
       vehicleInfo["tags"] = vehicleTags
-      vehicleInfo["isLastVehicle"] = vehicle.Net_VehicleId == lastPlayerVehicleId
+      vehicleInfo["isLastVehicle"] = activeVehicles[vehicle.Net_VehicleId] ~= nil
       vehicleInfo["position"] = VectorToTable(vehicle:K2_GetActorLocation())
       table.insert(vehicles, vehicleInfo)
     end
