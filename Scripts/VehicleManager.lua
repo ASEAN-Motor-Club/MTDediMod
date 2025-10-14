@@ -7,11 +7,14 @@ local timer = require("Debugging/Timer")
 local vehicleDealerSoftPath = "/Script/MotorTown.MTDealerVehicleSpawnPoint"
 
 local function GetPlayerVehicle(PC)
+  if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
+    return PC.LastVehicle
+  end
   local pawn = PC:K2_GetPawn()
   if pawn:IsValid() then
     local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
 
-    if pawn:IsA(vehicleClass) then
+    if pawn:IsA(vehicleClass) and pawn:IsValid() then
       return pawn
     end
   end
@@ -1856,7 +1859,22 @@ local function HandleDespawnPlayerVehicle(session)
       return json.stringify { error = "Player is not in a vehicle" }, nil, 400
     end
     if vehicle:IsValid() then
-      PC:ServerDespawnVehicle(vehicle, 0)
+      local curr = vehicle
+      ExecuteInGameThread(function()
+        PC:ServerExitVehicle()
+      end)
+
+      while curr ~= nil and curr:IsValid() and curr.Net_Hooks:IsValid() do
+        local v = curr
+        curr = nil
+        v.Net_Hooks:ForEach(function(i, val)
+          local hook = val:get()
+          curr = hook.Trailer
+        end)
+        ExecuteInGameThread(function()
+          PC:ServerDespawnVehicle(v, 0)
+        end)
+      end
       return json.stringify { Status = "ok" }, nil, 200
     end
     return json.stringify { error = "Invalid vehicle" }, nil, 400
