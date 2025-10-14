@@ -84,7 +84,9 @@ local function TransferMoneyToPlayer(uniqueId, amount, message)
   if PC == nil or not PC:IsValid() then return false end
   LogOutput("INFO", "TransferMoneyToPlayer")
   ExecuteInGameThreadSync(function()
-    PC:ClientAddMoney(amount, 'Context', FText(message), true, 'Context', 'Context')
+    if PC:IsValid() then
+      PC:ClientAddMoney(amount, 'Context', FText(message), true, 'Context', 'Context')
+    end
   end)
   return true
 end
@@ -222,6 +224,9 @@ local function HandleTeleportPlayer(session)
           ---@cast vehicleClass UClass
 
           ExecuteInGameThreadSync(function()
+            if not pawn:IsValid() then
+              return
+            end
             if pawn:IsA(charClass) then
               PC:ServerTeleportCharacter(location, false, false)
             elseif pawn:IsA(vehicleClass) and data.NoVehicles then
