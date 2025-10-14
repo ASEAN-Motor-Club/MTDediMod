@@ -205,23 +205,6 @@ end)
 
 -- Register event hooks
 
--- Restore all previously set widget settings
-RegisterHook("/Script/MotorTown.MotorTownPlayerController:ClientFirstTickResponse", function(self, ...)
-  LogOutput("DEBUG", "Received widget update request")
-  for key, value in pairs(registerKeys) do
-    SetWidgetVisibility(value)
-  end
-
-  -- Get the hotbar initial canvas position
-  local slot = GetHotBarCanvasSlot()
-  if slot:IsValid() then
-    hotbarInitialPos = slot:GetPosition()
-  end
-
-  local pos = config.GetModConfig("hotbarLocation")
-  SetHotBarPosition(pos)
-end)
-
 return {
   HandleShowPopupMessage = HandleShowPopupMessage
 }
