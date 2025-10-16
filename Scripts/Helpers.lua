@@ -544,7 +544,7 @@ end
 local isFinished = true
 local attempts = 0
 
-LoopAsync(100, function()
+LoopAsync(500, function()
   if not isFinished and attempts < 10 then
     attempts = attempts + 1
     return false
