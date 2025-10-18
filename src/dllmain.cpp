@@ -10,6 +10,11 @@
 #include <LuaMadeSimple/LuaMadeSimple.hpp>
 #include <LuaType/LuaUObject.hpp>
 
+#include <Unreal/UFunction.hpp>
+#include <Unreal/FProperty.hpp>
+#include <Unreal/Property/FStructProperty.hpp>
+#include <Unreal/UScriptStruct.hpp>
+
 #include "webserver.h"
 #include "statics.h"
 
@@ -34,6 +39,37 @@ auto MotorTownMods::on_unreal_init() -> void
 {
 	// Init API server
 	auto server = Webserver::Get();
+	auto prehook = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+		Output::send<LogLevel::Verbose>(STR("prehook\n"));
+		const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+		auto CargosProperty = FunctionBeingExecuted->GetPropertyByName(STR("Cargos"));
+		const auto& cargos = CargosProperty->ContainerPtrToValuePtr<TArray<UObject*>>(Context.TheStack.Locals());
+		for (const auto& cargo : *cargos) {
+			const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
+			if (CargoKey) {
+				Output::send<LogLevel::Verbose>(STR("Cargo {}\n"), CargoKey->ToString());
+			}
+			const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
+			if (Damage) {
+				Output::send<LogLevel::Verbose>(STR("Damage {}\n"), *Damage);
+			}
+			const auto& DestinationLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
+			const auto& SenderAbsoluteLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_SenderAbsoluteLocation"));
+			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
+			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
+			auto TopLevelPayment = PaymentProperty->GetStruct();
+			auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
+			auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
+			auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
+			if (BasePayment) {
+				Output::send<LogLevel::Verbose>(STR("Base payment {}\n"), *BasePayment);
+			}
+		}
+	};
+	auto posthook = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+		Output::send<LogLevel::Verbose>(STR("posthook\n"));
+		};
+	UObjectGlobals::RegisterHook(STR("/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived"), prehook, posthook, nullptr);
 }
 
 auto MotorTownMods::on_lua_start(
