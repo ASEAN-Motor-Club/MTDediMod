@@ -6,6 +6,7 @@
 #include <Unreal/UObjectGlobals.hpp>
 #include "statics.h"
 #include "modsmanager.h"
+#include "EventsRoute.h"
 
 // Workaround against multiple check definitions
 #pragma push_macro("check")
@@ -29,6 +30,7 @@ Webserver::Webserver() {
 	}
 
 	responses.push_back(std::make_shared<ModsManager>());
+	responses.push_back(std::make_shared<EventsRoute>());
 
 	serverThread = boost::thread(&Webserver::run_server, this, Port);
 	serverThread.detach();

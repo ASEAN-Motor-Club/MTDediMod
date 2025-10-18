@@ -17,6 +17,7 @@
 
 #include "webserver.h"
 #include "statics.h"
+#include "EventManager.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -64,6 +65,12 @@ auto MotorTownMods::on_unreal_init() -> void
 			if (BasePayment) {
 				Output::send<LogLevel::Verbose>(STR("Base payment {}\n"), *BasePayment);
 			}
+			json::object event_payload;
+			event_payload["event_type"] = json::string("ServerCargoArrived");
+			event_payload["cargo_key"] = json::string(to_string(CargoKey->ToString()));
+			event_payload["timestamp"] = std::time(nullptr);// Optional: add a timestamp
+
+			EventManager::Get().AddEvent(std::move(event_payload));
 		}
 	};
 	auto posthook = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
