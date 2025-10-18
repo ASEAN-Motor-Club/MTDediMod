@@ -11,10 +11,10 @@ bool EventsRoute::IsMatchingRequest(http::request<http::string_body> req)
 json::object EventsRoute::GetResponseJson(http::request<http::string_body> req, http::status& statusCode)
 {
     // Retrieve and clear all pending events from the manager
-    //json::array events = EventManager::Get().GetAndClearEvents();
+   json::array events = EventManager::Get().GetAndClearEvents();
 
     json::object response;
-    //response["events"] = events;
+    response["events"] = events;
 
     statusCode = http::status::ok;
     return response;
