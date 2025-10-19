@@ -1,5 +1,5 @@
 #include "dllmain.h"
-
+#include <cmath>
 #include <Mod/CppUserModBase.hpp>
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <Unreal/UObjectGlobals.hpp>
@@ -80,14 +80,14 @@ auto MotorTownMods::on_unreal_init() -> void
 			const auto& DeliveryId = cargo->GetValuePtrByPropertyNameInChain<int32>(STR("Net_DeliveryId"));
 			const auto& DestinationLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
 			json::object destination_location_obj;
-			destination_location_obj["X"] = DestinationLocation->X();
-			destination_location_obj["Y"] = DestinationLocation->Y();
-			destination_location_obj["Z"] = DestinationLocation->Z();
+			destination_location_obj["X"] = static_cast<int>(std::round(DestinationLocation->X()));
+			destination_location_obj["Y"] = static_cast<int>(std::round(DestinationLocation->Y()));
+			destination_location_obj["Z"] = static_cast<int>(std::round(DestinationLocation->Z()));
 			const auto& SenderAbsoluteLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_SenderAbsoluteLocation"));
 			json::object sender_location_obj;
-			sender_location_obj["X"] = SenderAbsoluteLocation->X();
-			sender_location_obj["Y"] = SenderAbsoluteLocation->Y();
-			sender_location_obj["Z"] = SenderAbsoluteLocation->Z();
+			sender_location_obj["X"] = static_cast<int>(std::round(SenderAbsoluteLocation->X()));
+			sender_location_obj["Y"] = static_cast<int>(std::round(SenderAbsoluteLocation->Y()));
+			sender_location_obj["Z"] = static_cast<int>(std::round(SenderAbsoluteLocation->Z()));
 			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
 			auto TopLevelPayment = PaymentProperty->GetStruct();
 			auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
