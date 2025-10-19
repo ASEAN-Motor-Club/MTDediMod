@@ -53,7 +53,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			if (CharacterGuid) {
 				Output::send<LogLevel::Verbose>(STR("Character guid found\n"));
 				CharacterGuidStr = std::format(
-					"{:08X}-{:04X}-{:04X}-{:04X}-{:04X}{:08X}",
+					"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
 					CharacterGuid->A,
 					(CharacterGuid->B >> 16),      // High 16 bits of B
 					(CharacterGuid->B & 0xFFFF),   // Low 16 bits of B
