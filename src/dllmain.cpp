@@ -40,7 +40,7 @@ auto MotorTownMods::on_unreal_init() -> void
 {
 	// Init API server
 	auto server = Webserver::Get();
-	auto prehook = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+	auto prehookServerCargoArrived = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
 		const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 		std::string CharacterGuidStr;
 		const auto& PlayerController = Context.Context;
@@ -108,10 +108,60 @@ auto MotorTownMods::on_unreal_init() -> void
 		event_payload["data"] = event_data;
 		EventManager::Get().AddEvent(std::move(event_payload));
 	};
-	auto posthook = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
-		Output::send<LogLevel::Verbose>(STR("posthook\n"));
-		};
-	UObjectGlobals::RegisterHook(STR("/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived"), prehook, posthook, nullptr);
+	auto posthookServerCargoArrived = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+	};
+	UObjectGlobals::RegisterHook(STR("/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived"), prehookServerCargoArrived, posthookServerCargoArrived, nullptr);
+
+	auto prehookServerResetVehicleAtResponse = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+		Output::send<LogLevel::Verbose>(STR("ServerResetVehicleAtResponse hook\n"));
+		const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+		std::string CharacterGuidStr;
+		const auto& PlayerController = Context.Context;
+		auto PlayerStateProperty = PlayerController->GetPropertyByNameInChain(STR("PlayerState"));
+		auto PlayerState = PlayerController->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
+		if (PlayerState) {
+			const auto& CharacterGuid = (*PlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
+			if (CharacterGuid) {
+				CharacterGuidStr = std::format(
+					"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
+					CharacterGuid->A,
+					(CharacterGuid->B >> 16),      // High 16 bits of B
+					(CharacterGuid->B & 0xFFFF),   // Low 16 bits of B
+					(CharacterGuid->C >> 16),      // High 16 bits of C
+					(CharacterGuid->C & 0xFFFF),   // Low 16 bits of C
+					CharacterGuid->D
+				);
+				Output::send<LogLevel::Verbose>(STR("{}\n"), to_wstring(CharacterGuidStr));
+			}
+		}
+
+		json::object event_payload;
+		json::object event_data;
+		if (!CharacterGuidStr.empty()) {
+			event_data["CharacterGuid"] = json::string(CharacterGuidStr);
+		}
+		event_payload["hook"] = json::string("ServerResetVehicleAtResponse");
+		event_payload["timestamp"] = std::time(nullptr);
+
+		auto VehicleProperty = FunctionBeingExecuted->GetPropertyByName(STR("Vehicle"));
+		const auto& Vehicle = VehicleProperty->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
+		if (Vehicle) {
+			auto VehicleId = (*Vehicle)->GetValuePtrByPropertyNameInChain<int64>(STR("Net_VehicleId"));
+			if (VehicleId) {
+				event_data["VehicleId"] = *VehicleId;
+				event_payload["data"] = event_data;
+				EventManager::Get().AddEvent(std::move(event_payload));
+			}
+		}
+	};
+	auto posthookServerResetVehicleAtResponse = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+	};
+	UObjectGlobals::RegisterHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAtResponse"),
+		prehookServerResetVehicleAtResponse,
+		posthookServerResetVehicleAtResponse,
+		nullptr
+	);
 }
 
 auto MotorTownMods::on_lua_start(
