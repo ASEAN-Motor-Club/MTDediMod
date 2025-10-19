@@ -67,8 +67,8 @@ auto MotorTownMods::on_unreal_init() -> void
 		if (!CharacterGuidStr.empty()) {
 			event_data["CharacterGuid"] = json::string(CharacterGuidStr);
 		}
-		event_payload["Hook"] = json::string("ServerCargoArrived");
-		event_payload["Timestamp"] = std::time(nullptr);
+		event_payload["hook"] = json::string("ServerCargoArrived");
+		event_payload["timestamp"] = std::time(nullptr);
 		json::array cargos_payload;
 
 		auto CargosProperty = FunctionBeingExecuted->GetPropertyByName(STR("Cargos"));
