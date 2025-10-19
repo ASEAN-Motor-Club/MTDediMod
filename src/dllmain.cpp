@@ -41,17 +41,14 @@ auto MotorTownMods::on_unreal_init() -> void
 	// Init API server
 	auto server = Webserver::Get();
 	auto prehook = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
-		Output::send<LogLevel::Verbose>(STR("prehook\n"));
 		const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 		std::string CharacterGuidStr;
 		const auto& PlayerController = Context.Context;
 		auto PlayerStateProperty = PlayerController->GetPropertyByNameInChain(STR("PlayerState"));
 		auto PlayerState = PlayerController->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
 		if (PlayerState) {
-			Output::send<LogLevel::Verbose>(STR("Player state found\n"));
 			const auto& CharacterGuid = (*PlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
 			if (CharacterGuid) {
-				Output::send<LogLevel::Verbose>(STR("Character guid found\n"));
 				CharacterGuidStr = std::format(
 					"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
 					CharacterGuid->A,
@@ -77,27 +74,33 @@ auto MotorTownMods::on_unreal_init() -> void
 		const auto& cargos = CargosProperty->ContainerPtrToValuePtr<TArray<UObject*>>(Context.TheStack.Locals());
 		for (const auto& cargo : *cargos) {
 			const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
-			if (CargoKey) {
-				Output::send<LogLevel::Verbose>(STR("Cargo {}\n"), CargoKey->ToString());
-			}
 			const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
-			if (Damage) {
-				Output::send<LogLevel::Verbose>(STR("Damage {}\n"), *Damage);
-			}
+			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
+			const auto& DeliveryId = cargo->GetValuePtrByPropertyNameInChain<int32>(STR("Net_DeliveryId"));
 			const auto& DestinationLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
+			json::object destination_location_obj;
+			destination_location_obj["X"] = DestinationLocation->X();
+			destination_location_obj["Y"] = DestinationLocation->Y();
+			destination_location_obj["Z"] = DestinationLocation->Z();
 			const auto& SenderAbsoluteLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_SenderAbsoluteLocation"));
+			json::object sender_location_obj;
+			sender_location_obj["X"] = SenderAbsoluteLocation->X();
+			sender_location_obj["Y"] = SenderAbsoluteLocation->Y();
+			sender_location_obj["Z"] = SenderAbsoluteLocation->Z();
 			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
 			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
 			auto TopLevelPayment = PaymentProperty->GetStruct();
 			auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
 			auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
 			auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
-			if (BasePayment) {
-				Output::send<LogLevel::Verbose>(STR("Base payment {}\n"), *BasePayment);
-			}
 			cargos_payload.push_back({
-				{"cargo_key", json::string(to_string(CargoKey->ToString()))},
-				{"payment", *BasePayment},
+				{"Net_CargoKey", json::string(to_string(CargoKey->ToString()))},
+				{"Net_DeliveryId", *DeliveryId},
+				{"Net_Payment", *BasePayment},
+				{"Net_Damage", *Damage},
+				{"Net_TimeLeftSeconds", *TimeLeftSeconds},
+				{"Net_DestinationLocation", destination_location_obj},
+				{"Net_SenderAbsoluteLocation", sender_location_obj}
 			});
 		}
 		event_payload["Cargos"] = cargos_payload;
