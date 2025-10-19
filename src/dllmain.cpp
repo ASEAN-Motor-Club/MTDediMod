@@ -63,8 +63,9 @@ auto MotorTownMods::on_unreal_init() -> void
 		}
 
 		json::object event_payload;
+		json::object event_data;
 		if (!CharacterGuidStr.empty()) {
-			event_payload["CharacterGuid"] = json::string(CharacterGuidStr);
+			event_data["CharacterGuid"] = json::string(CharacterGuidStr);
 		}
 		event_payload["Hook"] = json::string("ServerCargoArrived");
 		event_payload["Timestamp"] = std::time(nullptr);
@@ -103,7 +104,9 @@ auto MotorTownMods::on_unreal_init() -> void
 				{"Net_SenderAbsoluteLocation", sender_location_obj}
 			});
 		}
-		event_payload["Cargos"] = cargos_payload;
+
+		event_data["Cargos"] = cargos_payload;
+		event_payload["data"] = event_data;
 		EventManager::Get().AddEvent(std::move(event_payload));
 	};
 	auto posthook = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
