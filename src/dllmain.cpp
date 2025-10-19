@@ -88,7 +88,6 @@ auto MotorTownMods::on_unreal_init() -> void
 			sender_location_obj["X"] = SenderAbsoluteLocation->X();
 			sender_location_obj["Y"] = SenderAbsoluteLocation->Y();
 			sender_location_obj["Z"] = SenderAbsoluteLocation->Z();
-			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
 			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
 			auto TopLevelPayment = PaymentProperty->GetStruct();
 			auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
