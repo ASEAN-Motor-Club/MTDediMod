@@ -6,6 +6,7 @@
 #include <Unreal/UObject.hpp>
 #include <Unreal/UScriptStruct.hpp>
 #include <Unreal/Property/FStructProperty.hpp>
+#include <Unreal/Property/FArrayProperty.hpp>
 #include <Unreal/AGameModeBase.hpp>
 #include <LuaMadeSimple/LuaMadeSimple.hpp>
 #include <LuaType/LuaUObject.hpp>
@@ -103,9 +104,80 @@ auto MotorTownMods::on_unreal_init() -> void
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt"),
 		"ServerResetVehicleAt"
-		// No data extractor needed!
 	);
 
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerContractCargoDelivered"),
+		"ServerContractCargoDelivered",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			auto ContractGuidProperty = FunctionBeingExecuted->GetPropertyByName(STR("ContractGuid"));
+			const auto& ContractGuid = ContractGuidProperty->ContainerPtrToValuePtr<FGuid>(Context.TheStack.Locals());
+			if (ContractGuid == nullptr) return false;
+			const auto& PlayerController = Context.Context;
+			const auto& CompaniesProperty = static_cast<FArrayProperty*>(PlayerController->GetPropertyByNameInChain(STR("Companies")));
+			if (!CompaniesProperty) {
+				Output::send<LogLevel::Verbose>(STR("Companies property not found\n"));
+				return false;
+			}
+			const auto& Companies = CompaniesProperty->ContainerPtrToValuePtr<FScriptArray>(PlayerController);
+			if (Companies == nullptr || Companies->GetData() == nullptr) return false;
+			const auto& CompaniesInnerProp = static_cast<FStructProperty*>(CompaniesProperty->GetInner());
+			const int32 InnerPropSize = CompaniesInnerProp->GetElementSize();
+			const int32 NumCompanies = Companies->Num();
+			for (int32_t i = 0; i < NumCompanies; ++i) {
+				// https://github.com/UE4SS-RE/RE-UE4SS/blob/e77e3d1712faad2793c4ff040ce3687a36fa5bca/UE4SS/src/GUI/LiveView.cpp#L2278
+				auto element_offset = CompaniesInnerProp->GetElementSize() * i;
+				auto element_container_ptr = static_cast<uint8_t*>(Companies->GetData()) + element_offset;
+				const auto& TopLevelCompany = CompaniesInnerProp->GetStruct();
+				const auto& Company = CompaniesInnerProp->ContainerPtrToValuePtr<void>(element_container_ptr);
+				const auto& ContractsInProgressProperty = static_cast<FArrayProperty*>(TopLevelCompany->GetPropertyByNameInChain(STR("ContractsInProgress")));
+				if (!ContractsInProgressProperty) {
+					Output::send<LogLevel::Verbose>(STR("ContractsInProgress property not found\n"));
+					return false;
+				}
+				const auto& ContractsInProgress = ContractsInProgressProperty->ContainerPtrToValuePtr<FScriptArray>(Company);
+				if (ContractsInProgress == nullptr || ContractsInProgress->GetData() == nullptr) return false;
+				const auto& CipInnerProp = static_cast<FStructProperty*>(ContractsInProgressProperty->GetInner());
+				const int32 CipInnerPropSize = CipInnerProp->GetElementSize();
+				const int32 NumCips = ContractsInProgress->Num();
+				for (int32_t i = 0; i < NumCips; ++i) {
+					auto element_offset = CipInnerProp->GetElementSize() * i;
+					auto element_container_ptr = static_cast<uint8_t*>(ContractsInProgress->GetData()) + element_offset;
+					auto ContractInProgress = CipInnerProp->ContainerPtrToValuePtr<void>(element_container_ptr);
+					const auto& TopLevelCip = CipInnerProp->GetStruct();
+					const auto& CipGuidProperty = TopLevelCip->GetPropertyByNameInChain(STR("Guid"));
+					const auto& ContractInProgressGuid = CipGuidProperty->ContainerPtrToValuePtr<FGuid>(ContractInProgress);
+					if (ContractInProgressGuid == nullptr) continue;
+					if (*ContractGuid == *ContractInProgressGuid) {
+						const auto& ContractProperty = static_cast<FStructProperty*>(TopLevelCip->GetPropertyByNameInChain(STR("Contract")));
+						if (!ContractProperty) {
+							Output::send<LogLevel::Verbose>(STR("Contract property found\n"));
+							return false;
+						}
+						const auto& Contract = ContractProperty->ContainerPtrToValuePtr<void>(ContractInProgress);
+						if (Contract == nullptr) return false;
+						const auto& TopLevelContract = ContractProperty->GetStruct();
+						const auto AmountProp = TopLevelContract->GetPropertyByNameInChain(STR("Amount"));
+						const auto& Amount = AmountProp->ContainerPtrToValuePtr<float>(Contract);
+						event_data["Amount"] = *Amount;
+						const auto ItemProp = TopLevelContract->GetPropertyByNameInChain(STR("Item"));
+						const auto& Item = ItemProp->ContainerPtrToValuePtr<FString>(Contract);
+						event_data["Item"] = to_string(Item->GetCharArray());
+						const auto& CompletionPaymentProperty = static_cast<FStructProperty*>(TopLevelContract->GetPropertyByNameInChain(STR("CompletionPayment")));
+						const auto& CompletionPayment = CompletionPaymentProperty->ContainerPtrToValuePtr<void>(Contract);
+						const auto& TopLevelCompletionPayment = CompletionPaymentProperty->GetStruct();
+						const auto& BaseValueProperty = TopLevelCompletionPayment->GetPropertyByNameInChain(STR("BaseValue"));
+						const auto& Payment = BaseValueProperty->ContainerPtrToValuePtr<int64>(CompletionPayment);
+						event_data["CompletionPayment"] = *Payment;
+						return true;
+					}
+				}
+			}
+
+			return false;
+		}
+	);
 }
 
 auto MotorTownMods::on_lua_start(
