@@ -11,6 +11,7 @@
 #include <LuaMadeSimple/LuaMadeSimple.hpp>
 #include <LuaType/LuaUObject.hpp>
 #include <Unreal/UFunction.hpp>
+#include <Unreal/UEnum.hpp>
 #include <Unreal/FProperty.hpp>
 
 #include "webserver.h"
@@ -114,6 +115,15 @@ auto MotorTownMods::on_unreal_init() -> void
 			auto ContractGuidProperty = FunctionBeingExecuted->GetPropertyByName(STR("ContractGuid"));
 			const auto& ContractGuid = ContractGuidProperty->ContainerPtrToValuePtr<FGuid>(Context.TheStack.Locals());
 			if (ContractGuid == nullptr) return false;
+			event_data["ContractGuid"] = std::format(
+				"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
+				ContractGuid->A,
+				(ContractGuid->B >> 16),    // High 16 bits of B
+				(ContractGuid->B & 0xFFFF), // Low 16 bits of B
+				(ContractGuid->C >> 16),    // High 16 bits of C
+				(ContractGuid->C & 0xFFFF), // Low 16 bits of C
+				ContractGuid->D
+			);
 			const auto& PlayerController = Context.Context;
 			const auto& CompaniesProperty = static_cast<FArrayProperty*>(PlayerController->GetPropertyByNameInChain(STR("Companies")));
 			if (!CompaniesProperty) {
@@ -178,6 +188,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			return false;
 		}
 	);
+
 }
 
 auto MotorTownMods::on_lua_start(
