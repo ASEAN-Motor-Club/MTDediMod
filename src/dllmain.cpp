@@ -41,39 +41,50 @@ auto MotorTownMods::on_unreal_init() -> void
 	// Init API server
 	auto server = Webserver::Get();
 	auto prehookServerCargoArrived = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+		Output::send<LogLevel::Verbose>(STR("ServerCargoArrived hook\n"));
 		const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 		std::string CharacterGuidStr;
 		const auto& PlayerController = Context.Context;
-		auto PlayerStateProperty = PlayerController->GetPropertyByNameInChain(STR("PlayerState"));
-		auto PlayerState = PlayerController->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
-		if (PlayerState) {
-			const auto& CharacterGuid = (*PlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
-			if (CharacterGuid) {
-				CharacterGuidStr = std::format(
-					"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
-					CharacterGuid->A,
-					(CharacterGuid->B >> 16),      // High 16 bits of B
-					(CharacterGuid->B & 0xFFFF),   // Low 16 bits of B
-					(CharacterGuid->C >> 16),      // High 16 bits of C
-					(CharacterGuid->C & 0xFFFF),   // Low 16 bits of C
-					CharacterGuid->D
-				);
-				Output::send<LogLevel::Verbose>(STR("{}\n"), to_wstring(CharacterGuidStr));
-			}
+		if (PlayerController == nullptr) {
+			return;
 		}
+		Output::send<LogLevel::Verbose>(STR("Got PlayerController\n"));
+		auto PlayerState = PlayerController->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
+		if (PlayerState == nullptr || *PlayerState == nullptr) {
+			return;
+		}
+		Output::send<LogLevel::Verbose>(STR("Got PlayerState\n"));
+		const auto& CharacterGuid = (*PlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
+		if (CharacterGuid == nullptr) {
+			return;
+		}
+		CharacterGuidStr = std::format(
+			"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
+			CharacterGuid->A,
+			(CharacterGuid->B >> 16),      // High 16 bits of B
+			(CharacterGuid->B & 0xFFFF),   // Low 16 bits of B
+			(CharacterGuid->C >> 16),      // High 16 bits of C
+			(CharacterGuid->C & 0xFFFF),   // Low 16 bits of C
+			CharacterGuid->D
+		);
+		Output::send<LogLevel::Verbose>(STR("{}\n"), to_wstring(CharacterGuidStr));
 
 		json::object event_payload;
 		json::object event_data;
-		if (!CharacterGuidStr.empty()) {
-			event_data["CharacterGuid"] = json::string(CharacterGuidStr);
-		}
+		event_data["CharacterGuid"] = json::string(CharacterGuidStr);
 		event_payload["hook"] = json::string("ServerCargoArrived");
 		event_payload["timestamp"] = std::time(nullptr);
 		json::array cargos_payload;
 
 		auto CargosProperty = FunctionBeingExecuted->GetPropertyByName(STR("Cargos"));
 		const auto& cargos = CargosProperty->ContainerPtrToValuePtr<TArray<UObject*>>(Context.TheStack.Locals());
+		if (cargos == nullptr) {
+			return;
+		}
 		for (const auto& cargo : *cargos) {
+			if (cargo == nullptr) {
+				continue;
+			}
 			const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
 			const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
 			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
@@ -91,6 +102,9 @@ auto MotorTownMods::on_unreal_init() -> void
 			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
 			auto TopLevelPayment = PaymentProperty->GetStruct();
 			auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
+			if (Payment == nullptr) {
+				return;
+			}
 			auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
 			auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
 			cargos_payload.push_back({
@@ -103,7 +117,6 @@ auto MotorTownMods::on_unreal_init() -> void
 				{"Net_SenderAbsoluteLocation", sender_location_obj}
 			});
 		}
-
 		event_data["Cargos"] = cargos_payload;
 		event_payload["data"] = event_data;
 		EventManager::Get().AddEvent(std::move(event_payload));
@@ -112,54 +125,49 @@ auto MotorTownMods::on_unreal_init() -> void
 	};
 	UObjectGlobals::RegisterHook(STR("/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived"), prehookServerCargoArrived, posthookServerCargoArrived, nullptr);
 
-	auto prehookServerResetVehicleAtResponse = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
-		Output::send<LogLevel::Verbose>(STR("ServerResetVehicleAtResponse hook\n"));
-		const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
-		std::string CharacterGuidStr;
-		const auto& PlayerController = Context.Context;
-		auto PlayerStateProperty = PlayerController->GetPropertyByNameInChain(STR("PlayerState"));
-		auto PlayerState = PlayerController->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
-		if (PlayerState) {
-			const auto& CharacterGuid = (*PlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
-			if (CharacterGuid) {
-				CharacterGuidStr = std::format(
-					"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
-					CharacterGuid->A,
-					(CharacterGuid->B >> 16),      // High 16 bits of B
-					(CharacterGuid->B & 0xFFFF),   // Low 16 bits of B
-					(CharacterGuid->C >> 16),      // High 16 bits of C
-					(CharacterGuid->C & 0xFFFF),   // Low 16 bits of C
-					CharacterGuid->D
-				);
-				Output::send<LogLevel::Verbose>(STR("{}\n"), to_wstring(CharacterGuidStr));
-			}
-		}
-
-		json::object event_payload;
-		json::object event_data;
-		if (!CharacterGuidStr.empty()) {
-			event_data["CharacterGuid"] = json::string(CharacterGuidStr);
-		}
-		event_payload["hook"] = json::string("ServerResetVehicleAtResponse");
-		event_payload["timestamp"] = std::time(nullptr);
-
-		auto VehicleProperty = FunctionBeingExecuted->GetPropertyByName(STR("Vehicle"));
-		const auto& Vehicle = VehicleProperty->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
-		if (Vehicle) {
-			auto VehicleId = (*Vehicle)->GetValuePtrByPropertyNameInChain<int64>(STR("Net_VehicleId"));
-			if (VehicleId) {
-				event_data["VehicleId"] = *VehicleId;
-				event_payload["data"] = event_data;
-				EventManager::Get().AddEvent(std::move(event_payload));
-			}
-		}
-	};
-	auto posthookServerResetVehicleAtResponse = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
-	};
+	// ServerResetVehicleAt
 	UObjectGlobals::RegisterHook(
-		STR("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAtResponse"),
-		prehookServerResetVehicleAtResponse,
-		posthookServerResetVehicleAtResponse,
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt"),
+		[](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+			Output::send<LogLevel::Verbose>(STR("ServerResetVehicleAt hook\n"));
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			std::string CharacterGuidStr;
+			const auto& PlayerController = Context.Context;
+			if (PlayerController == nullptr) {
+				return;
+			}
+			Output::send<LogLevel::Verbose>(STR("Got PlayerController\n"));
+			auto PlayerState = PlayerController->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
+			if (PlayerState == nullptr || *PlayerState == nullptr) {
+				return;
+			}
+			Output::send<LogLevel::Verbose>(STR("Got PlayerState\n"));
+			const auto& CharacterGuid = (*PlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
+			if (CharacterGuid == nullptr) {
+				return;
+			}
+			CharacterGuidStr = std::format(
+				"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
+				CharacterGuid->A,
+				(CharacterGuid->B >> 16),      // High 16 bits of B
+				(CharacterGuid->B & 0xFFFF),   // Low 16 bits of B
+				(CharacterGuid->C >> 16),      // High 16 bits of C
+				(CharacterGuid->C & 0xFFFF),   // Low 16 bits of C
+				CharacterGuid->D
+			);
+			Output::send<LogLevel::Verbose>(STR("{}\n"), to_wstring(CharacterGuidStr));
+
+			json::object event_payload;
+			json::object event_data;
+			event_data["CharacterGuid"] = json::string(CharacterGuidStr);
+			event_payload["hook"] = json::string("ServerResetVehicleAt");
+			event_payload["timestamp"] = std::time(nullptr);
+
+			event_payload["data"] = event_data;
+			EventManager::Get().AddEvent(std::move(event_payload));
+		},
+		[](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+		},
 		nullptr
 	);
 }
