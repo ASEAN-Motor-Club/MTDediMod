@@ -9,15 +9,12 @@
 #include <Unreal/AGameModeBase.hpp>
 #include <LuaMadeSimple/LuaMadeSimple.hpp>
 #include <LuaType/LuaUObject.hpp>
-
 #include <Unreal/UFunction.hpp>
 #include <Unreal/FProperty.hpp>
-#include <Unreal/Property/FStructProperty.hpp>
-#include <Unreal/UScriptStruct.hpp>
 
 #include "webserver.h"
 #include "statics.h"
-#include "EventManager.h"
+#include "HookManager.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -40,136 +37,75 @@ auto MotorTownMods::on_unreal_init() -> void
 {
 	// Init API server
 	auto server = Webserver::Get();
-	auto prehookServerCargoArrived = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
-		Output::send<LogLevel::Verbose>(STR("ServerCargoArrived hook\n"));
-		const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
-		std::string CharacterGuidStr;
-		const auto& PlayerController = Context.Context;
-		if (PlayerController == nullptr) {
-			return;
-		}
-		Output::send<LogLevel::Verbose>(STR("Got PlayerController\n"));
-		auto PlayerState = PlayerController->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
-		if (PlayerState == nullptr || *PlayerState == nullptr) {
-			return;
-		}
-		Output::send<LogLevel::Verbose>(STR("Got PlayerState\n"));
-		const auto& CharacterGuid = (*PlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
-		if (CharacterGuid == nullptr) {
-			return;
-		}
-		CharacterGuidStr = std::format(
-			"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
-			CharacterGuid->A,
-			(CharacterGuid->B >> 16),      // High 16 bits of B
-			(CharacterGuid->B & 0xFFFF),   // Low 16 bits of B
-			(CharacterGuid->C >> 16),      // High 16 bits of C
-			(CharacterGuid->C & 0xFFFF),   // Low 16 bits of C
-			CharacterGuid->D
-		);
-		Output::send<LogLevel::Verbose>(STR("{}\n"), to_wstring(CharacterGuidStr));
-
-		json::object event_payload;
-		json::object event_data;
-		event_data["CharacterGuid"] = json::string(CharacterGuidStr);
-		event_payload["hook"] = json::string("ServerCargoArrived");
-		event_payload["timestamp"] = std::time(nullptr);
-		json::array cargos_payload;
-
-		auto CargosProperty = FunctionBeingExecuted->GetPropertyByName(STR("Cargos"));
-		const auto& cargos = CargosProperty->ContainerPtrToValuePtr<TArray<UObject*>>(Context.TheStack.Locals());
-		if (cargos == nullptr) {
-			return;
-		}
-		for (const auto& cargo : *cargos) {
-			if (cargo == nullptr) {
-				continue;
-			}
-			const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
-			const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
-			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
-			const auto& DeliveryId = cargo->GetValuePtrByPropertyNameInChain<int32>(STR("Net_DeliveryId"));
-			const auto& DestinationLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
-			json::object destination_location_obj;
-			destination_location_obj["X"] = static_cast<int>(std::round(DestinationLocation->X()));
-			destination_location_obj["Y"] = static_cast<int>(std::round(DestinationLocation->Y()));
-			destination_location_obj["Z"] = static_cast<int>(std::round(DestinationLocation->Z()));
-			const auto& SenderAbsoluteLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_SenderAbsoluteLocation"));
-			json::object sender_location_obj;
-			sender_location_obj["X"] = static_cast<int>(std::round(SenderAbsoluteLocation->X()));
-			sender_location_obj["Y"] = static_cast<int>(std::round(SenderAbsoluteLocation->Y()));
-			sender_location_obj["Z"] = static_cast<int>(std::round(SenderAbsoluteLocation->Z()));
-			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
-			auto TopLevelPayment = PaymentProperty->GetStruct();
-			auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
-			if (Payment == nullptr) {
-				return;
-			}
-			auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
-			auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
-			cargos_payload.push_back({
-				{"Net_CargoKey", json::string(to_string(CargoKey->ToString()))},
-				{"Net_DeliveryId", *DeliveryId},
-				{"Net_Payment", *BasePayment},
-				{"Net_Damage", *Damage},
-				{"Net_TimeLeftSeconds", *TimeLeftSeconds},
-				{"Net_DestinationLocation", destination_location_obj},
-				{"Net_SenderAbsoluteLocation", sender_location_obj}
-			});
-		}
-		event_data["Cargos"] = cargos_payload;
-		event_payload["data"] = event_data;
-		EventManager::Get().AddEvent(std::move(event_payload));
-	};
-	auto posthookServerCargoArrived = [](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
-	};
-	UObjectGlobals::RegisterHook(STR("/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived"), prehookServerCargoArrived, posthookServerCargoArrived, nullptr);
-
-	// ServerResetVehicleAt
-	UObjectGlobals::RegisterHook(
-		STR("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt"),
-		[](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
-			Output::send<LogLevel::Verbose>(STR("ServerResetVehicleAt hook\n"));
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived"),
+		"ServerCargoArrived",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			json::array cargos_payload;
 			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
-			std::string CharacterGuidStr;
-			const auto& PlayerController = Context.Context;
-			if (PlayerController == nullptr) {
-				return;
-			}
-			Output::send<LogLevel::Verbose>(STR("Got PlayerController\n"));
-			auto PlayerState = PlayerController->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
-			if (PlayerState == nullptr || *PlayerState == nullptr) {
-				return;
-			}
-			Output::send<LogLevel::Verbose>(STR("Got PlayerState\n"));
-			const auto& CharacterGuid = (*PlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
-			if (CharacterGuid == nullptr) {
-				return;
-			}
-			CharacterGuidStr = std::format(
-				"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
-				CharacterGuid->A,
-				(CharacterGuid->B >> 16),      // High 16 bits of B
-				(CharacterGuid->B & 0xFFFF),   // Low 16 bits of B
-				(CharacterGuid->C >> 16),      // High 16 bits of C
-				(CharacterGuid->C & 0xFFFF),   // Low 16 bits of C
-				CharacterGuid->D
-			);
-			Output::send<LogLevel::Verbose>(STR("{}\n"), to_wstring(CharacterGuidStr));
 
-			json::object event_payload;
-			json::object event_data;
-			event_data["CharacterGuid"] = json::string(CharacterGuidStr);
-			event_payload["hook"] = json::string("ServerResetVehicleAt");
-			event_payload["timestamp"] = std::time(nullptr);
+			auto CargosProperty = FunctionBeingExecuted->GetPropertyByName(STR("Cargos"));
+			const auto& cargos = CargosProperty->ContainerPtrToValuePtr<TArray<UObject*>>(Context.TheStack.Locals());
+			if (cargos == nullptr) {
+				return false;
+			}
+			for (const auto& cargo : *cargos) {
+				if (cargo == nullptr) {
+					continue;
+				}
+				const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
+				const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
+				const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
+				const auto& DeliveryId = cargo->GetValuePtrByPropertyNameInChain<int32>(STR("Net_DeliveryId"));
+				const auto& DestinationLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
+				const auto& SenderAbsoluteLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_SenderAbsoluteLocation"));
+				auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
+				if (!PaymentProperty) continue; // Safety check
 
-			event_payload["data"] = event_data;
-			EventManager::Get().AddEvent(std::move(event_payload));
-		},
-		[](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
-		},
-		nullptr
+				auto TopLevelPayment = PaymentProperty->GetStruct();
+				auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
+				if (Payment == nullptr) continue; // Safety check
+
+				auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
+				if (!BaseValueProperty) continue; // Safety check
+
+				auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
+
+				if (!CargoKey || !Damage || !TimeLeftSeconds || !DeliveryId || !DestinationLocation || !SenderAbsoluteLocation || !BasePayment) {
+					Output::send<LogLevel::Warning>(STR("Skipping cargo in ServerCargoArrived hook due to null property."));
+					continue;
+				}
+
+				json::object destination_location_obj;
+				destination_location_obj["X"] = static_cast<int>(std::round(DestinationLocation->X()));
+				destination_location_obj["Y"] = static_cast<int>(std::round(DestinationLocation->Y()));
+				destination_location_obj["Z"] = static_cast<int>(std::round(DestinationLocation->Z()));
+				json::object sender_location_obj;
+				sender_location_obj["X"] = static_cast<int>(std::round(SenderAbsoluteLocation->X()));
+				sender_location_obj["Y"] = static_cast<int>(std::round(SenderAbsoluteLocation->Y()));
+				sender_location_obj["Z"] = static_cast<int>(std::round(SenderAbsoluteLocation->Z()));
+
+				cargos_payload.push_back({
+					{"Net_CargoKey", json::string(to_string(CargoKey->ToString()))},
+					{"Net_DeliveryId", *DeliveryId},
+					{"Net_Payment", *BasePayment},
+					{"Net_Damage", *Damage},
+					{"Net_TimeLeftSeconds", *TimeLeftSeconds},
+					{"Net_DestinationLocation", destination_location_obj},
+					{"Net_SenderAbsoluteLocation", sender_location_obj}
+					});
+			}
+			event_data["Cargos"] = cargos_payload;
+			return true;
+		}
 	);
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt"),
+		"ServerResetVehicleAt"
+		// No data extractor needed!
+	);
+
 }
 
 auto MotorTownMods::on_lua_start(
