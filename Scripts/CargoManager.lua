@@ -481,22 +481,30 @@ webhook.RegisterEventHook(
   end
 )
 
-webhook.RegisterEventHook(
+webhook.RegisterEventHook2(
   "ServerCargoArrived",
-  function (PC, cargos)
-    local characterGuid = GetPlayerGuid(PC)
+  function (self, Cargos)
+    local cargos = Cargos:get()
+    if not cargos:IsValid() then
+      return
+    end
+
+    local characterGuid = nil --GetPlayerGuid(PC)
     local data = {}
     cargos:ForEach(function(key, value)
       local cargo = value:get()
       if cargo ~= nil and cargo:IsValid() then
         table.insert(data, CargoToTableSummary(cargo))
+        if characterGuid == nil and cargo.Server_LastMovementOwnerPC:IsValid() then
+          characterGuid = GetPlayerGuid(cargo.Server_LastMovementOwnerPC)
+        end
       end
     end)
 
-    return {
+    webhook.CreateEventWebhook("ServerCargoArrived", {
       CharacterGuid = characterGuid,
       Cargos = data
-    }
+    })
   end
 )
 

@@ -261,6 +261,26 @@ local function RegisterEventHook(event, hookFunction, callback)
     end
 end
 
+local function RegisterEventHook2(event, hookFunction, callback)
+    local isEnabled, isPostHook, eventName = isEventEnabled(event)
+    if isEnabled and eventName then
+        local status, out1, out2 = pcall(function()
+            if isPostHook then
+              local preId, postId = RegisterHook(eventName, function() end, hookFunction)
+              return preId, postId
+            else
+              local preId, postId = RegisterHook(eventName, hookFunction)
+              return preId, postId
+            end
+        end)
+        if status then
+            return out1, out2
+        else
+            LogOutput("ERROR", "Failed to register event hook: %s", out1)
+        end
+    end
+end
+
 return {
     ---@deprecated Use `CreateEventWebhook` instead for additional functionality
     CreateWebhookRequest = CreateWebhookRequest,
@@ -268,5 +288,6 @@ return {
     ---@deprecated Use `RegisterEventHook` wrapper function for cleaner code
     CreateEventWebhook = CreateEventWebhook,
     RegisterEventHook = RegisterEventHook,
+    RegisterEventHook2 = RegisterEventHook2,
     HandleGetWebhooks = HandleGetWebhooks,
 }
