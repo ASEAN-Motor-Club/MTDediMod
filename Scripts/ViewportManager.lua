@@ -139,6 +139,19 @@ local function ShowMessagePopup(message, uniqueId)
   end)
 end
 
+local function ShowMessagePopupToCharacter(message, characterGuid)
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return nil
+  end
+
+  ExecuteInGameThreadSync(function()
+    if PC:IsValid() then
+      PC:ClientShowPopupMessage(FText(message))
+    end
+  end)
+end
+
 ---Set hot bar position
 ---@param position HotBarLocation
 local function SetHotBarPosition(position)
@@ -168,7 +181,10 @@ end
 local function HandleShowPopupMessage(session)
   local content = json.parse(session.content)
   if content and type(content) == "table" then
-    if content.message then
+    if content.message and content.characterGuid then
+      ShowMessagePopupToCharacter(content.message, content.characterGuid)
+      return nil, nil, 204
+    elseif content.message then
       ShowMessagePopup(content.message, content.playerId)
       return nil, nil, 204
     end

@@ -91,6 +91,18 @@ local function TransferMoneyToPlayer(uniqueId, amount, message)
   return true
 end
 
+local function TransferMoneyToCharacter(characterGuid, amount, message)
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if PC == nil or not PC:IsValid() then return false end
+  LogOutput("INFO", "TransferMoneyToPlayer")
+  ExecuteInGameThreadSync(function()
+    if PC:IsValid() then
+      PC:ClientAddMoney(amount, '', FText(message), true, '', '')
+    end
+  end)
+  return true
+end
+
 
 local function PlayerSendChat(uniqueId, message)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
@@ -156,6 +168,10 @@ local function HandleTransferMoneyToPlayer(session)
   end
 
   local data = json.parse(session.content)
+  if data and data.Amount and data.Message and data.CharacterGuid then
+    TransferMoneyToPlayer(data.CharacterGuid, data.Amount, data.Message)
+    return nil, nil, 200
+  end
   if data and data.Amount and data.Message then
     TransferMoneyToPlayer(playerId, data.Amount, data.Message)
     return nil, nil, 200
