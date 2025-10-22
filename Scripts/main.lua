@@ -84,6 +84,9 @@ local function LoadWebserver()
     server.registerHandler("/dealers/spawn", "POST", vehicleManager.HandleCreateVehicleDealerSpawnPoint)
     server.registerHandler("/garages", "GET", vehicleManager.HandleGetGarages)
     server.registerHandler("/garages/spawn", "POST", vehicleManager.HandleGetGarages)
+    server.registerHandler("/rp_sessions/*", "GET", vehicleManager.HandleGetRPMode)
+    server.registerHandler("/rp_sessions/*/toggle", "POST", vehicleManager.HandleSetRPMode)
+    server.registerHandler("/player_vehicles/*/exit", "GET", vehicleManager.HandlePlayerExitVehicle)
 
     -- Asset management
     server.registerHandler("/assets/spawn", "POST", assetManager.HandleSpawnActor)
