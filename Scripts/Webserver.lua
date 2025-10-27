@@ -454,6 +454,7 @@ local function handleClient(client)
                 if method ~= nil then
                     s.method = method
                     s.urlString = urlString
+                    LogOutput("INFO", "Incoming request %s", s.urlString)
 
                     -- Break down the url string
                     s.urlComponents = url.parse(urlString)

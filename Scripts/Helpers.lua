@@ -536,28 +536,19 @@ function MergeTable(base, append)
 end
 
 
-local syncFns = {}
 function ExecuteInGameThreadSync(fn)
-  table.insert(syncFns, fn)
+  local wait = 0
+  local isFinished = false
+  ExecuteInGameThread(function()
+    LogOutput('INFO', 'ExecuteInGameThreadSync callback')
+    fn()
+    isFinished = true
+    LogOutput('INFO', 'finished ExecuteInGameThreadSync callback')
+  end)
+
+  while not isFinished and wait < 1000 do
+    wait = wait + 1
+    socket.sleep(1 / 1000)
+  end
 end
 
-local isFinished = true
-local attempts = 0
-
-LoopAsync(100, function()
-  if not isFinished and attempts < 10 then
-    attempts = attempts + 1
-    return false
-  end
-
-  local fn = table.remove(syncFns, 1)
-
-  if fn then
-    isFinished = false
-    attempts = 0
-    ExecuteInGameThread(function()
-      fn()
-      isFinished = true
-    end)
-  end
-end)

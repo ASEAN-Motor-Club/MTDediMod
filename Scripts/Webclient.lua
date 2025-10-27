@@ -192,13 +192,17 @@ end
 ---@return boolean enabled
 ---@return string? eventName
 local function isEventEnabled(event)
+    local isPostHook = false
     if webhookEvents[1] == "none" then return false end
     for index, value in ipairs(webhookEvents) do
         if events[event] and (value == "all" or event == value) then
-            return true, events[event]
+            if event == "ServerSignContract" then
+              isPostHook = true
+            end
+            return true, isPostHook, events[event]
         end
     end
-    return false
+    return false, false
 end
 
 ---Register event hook wrapper
@@ -208,10 +212,11 @@ end
 ---@return integer? preId
 ---@return integer? postId
 local function RegisterEventHook(event, hookFunction, callback)
-    local isEnabled, eventName = isEventEnabled(event)
+    local isEnabled, isPostHook, eventName = isEventEnabled(event)
     if isEnabled and eventName then
         local status, out1, out2 = pcall(function()
-            local preId, postId = RegisterHook(eventName, function() end, function(self, ...)
+            local hookFn = function(self, ...)
+                LogOutput('INFO', string.format('Start of event hook: %s', event))
                 local _self = self:get()
                 if _self == nil or not _self:IsValid() then
                   return
@@ -237,10 +242,36 @@ local function RegisterEventHook(event, hookFunction, callback)
 
                 result = hookFunction(_self, table.unpack(mappedArgs))
                 if result then
-                    CreateEventWebhook(eventName, result, callback)
+                    CreateEventWebhook(event, result, callback)
                 end
-            end)
-            return preId, postId
+            end
+            if isPostHook then
+              local preId, postId = RegisterHook(eventName, function() end, hookFn)
+              return preId, postId
+            else
+              local preId, postId = RegisterHook(eventName, hookFn)
+              return preId, postId
+            end
+        end)
+        if status then
+            return out1, out2
+        else
+            LogOutput("ERROR", "Failed to register event hook: %s", out1)
+        end
+    end
+end
+
+local function RegisterEventHook2(event, hookFunction, callback)
+    local isEnabled, isPostHook, eventName = isEventEnabled(event)
+    if isEnabled and eventName then
+        local status, out1, out2 = pcall(function()
+            if isPostHook then
+              local preId, postId = RegisterHook(eventName, function() end, hookFunction)
+              return preId, postId
+            else
+              local preId, postId = RegisterHook(eventName, hookFunction)
+              return preId, postId
+            end
         end)
         if status then
             return out1, out2
@@ -257,5 +288,6 @@ return {
     ---@deprecated Use `RegisterEventHook` wrapper function for cleaner code
     CreateEventWebhook = CreateEventWebhook,
     RegisterEventHook = RegisterEventHook,
+    RegisterEventHook2 = RegisterEventHook2,
     HandleGetWebhooks = HandleGetWebhooks,
 }

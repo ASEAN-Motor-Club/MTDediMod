@@ -481,22 +481,30 @@ webhook.RegisterEventHook(
   end
 )
 
-webhook.RegisterEventHook(
+webhook.RegisterEventHook2(
   "ServerCargoArrived",
-  function (PC, cargos)
-    local characterGuid = GetPlayerGuid(PC)
+  function (self, Cargos)
+    local cargos = Cargos:get()
+    if not cargos:IsValid() then
+      return
+    end
+
+    local characterGuid = nil --GetPlayerGuid(PC)
     local data = {}
     cargos:ForEach(function(key, value)
       local cargo = value:get()
       if cargo ~= nil and cargo:IsValid() then
         table.insert(data, CargoToTableSummary(cargo))
+        if characterGuid == nil and cargo.Server_LastMovementOwnerPC:IsValid() then
+          characterGuid = GetPlayerGuid(cargo.Server_LastMovementOwnerPC)
+        end
       end
     end)
 
-    return {
+    webhook.CreateEventWebhook("ServerCargoArrived", {
       CharacterGuid = characterGuid,
       Cargos = data
-    }
+    })
   end
 )
 
@@ -514,27 +522,27 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerSignContract",
   function (PC, contract, companyGuid)
-    local playerId = GetPlayerUniqueId(PC)
-    local company = nil
+    local characterGuid = GetPlayerGuid(PC)
+    if not PC.Companies:IsValid() then
+      return
+    end
+
+    local contractGuid = nil
+
     PC.Companies:ForEach(function(key, value)
-      local _company = value:get()
-      if company ~= nil and _company:IsValid() and GuidToString(_company.Guid) == GuidToString(companyGuid) then
-        company = _company
+      local company = value:get()
+      if company ~= nil and company:IsValid() and company.ContractsInProgress:IsValid() then
+        company.ContractsInProgress:ForEach(function(key, value)
+          local cip = value:get()
+          if cip ~= nil and cip:IsValid() and cip.Contract:IsValid() then
+            contractGuid = GuidToString(cip.Guid)
+          end
+        end)
       end
     end)
 
-    local contractGuid = nil
-    if company ~= nil then
-      company.ContractsInProgress:ForEach(function(key, value)
-        local cip = value:get()
-        if cip ~= nil and cip:IsValid() and cip.Contract == contract then
-          contractGuid = GuidToString(cip.Guid)
-        end
-      end)
-    end
-
     return {
-      PlayerId = playerId,
+      CharacterGuid = characterGuid,
       Contract = ContractToTable(contract),
       contractGuid = contractGuid,
     }
@@ -545,29 +553,34 @@ webhook.RegisterEventHook(
   "ServerContractCargoDelivered",
   function (PC, contractGuid)
     local characterGuid = GetPlayerGuid(PC)
-    local contract = nil
-    local finishedAmount = 0
-    PC.Companies:ForEach(function(key, value)
-      local company = value:get()
-      if company ~= nil and company:IsValid() and company.ContractsInProgress:IsValid() then
-        company.ContractsInProgress:ForEach(function(key, value)
-          local cip = value:get()
-          if cip ~= nil and cip:IsValid() and cip.Guid:IsValid() and GuidToString(cip.Guid) == GuidToString(contractGuid) and cip.Contract:IsValid() then
-            contract = ContractToTable(cip.Contract)
-            finishedAmount = cip.FinishedAmount
-          end
-        end)
-      end
-    end)
-    if contract == nil then
-      return {}
-    end
+    --local contract = nil
+    --local finishedAmount = 0
+
+    --if not PC.Companies:IsValid() then
+    --  return
+    --end
+
+    --PC.Companies:ForEach(function(key, value)
+    --  local company = value:get()
+    --  if company ~= nil and company:IsValid() and company.ContractsInProgress:IsValid() then
+    --    company.ContractsInProgress:ForEach(function(key, value)
+    --      local cip = value:get()
+    --      if cip ~= nil and cip:IsValid() and cip.Guid:IsValid() and GuidToString(cip.Guid) == GuidToString(contractGuid) and cip.Contract:IsValid() then
+    --        contract = ContractToTable(cip.Contract)
+    --        finishedAmount = cip.FinishedAmount
+    --      end
+    --    end)
+    --  end
+    --end)
+    --if contract == nil then
+    --  return {}
+    --end
 
     return {
       CharacterGuid = characterGuid,
       ContractGuid = GuidToString(contractGuid),
-      Contract = contract,
-      FinishedAmount = finishedAmount,
+      --Contract = contract,
+      --FinishedAmount = finishedAmount,
     }
   end
 )
@@ -615,6 +628,35 @@ local function HandleGetDeliveryPoints(session)
   if guid and #data == 0 then
     return json.stringify { message = string.format("Delivery point %s not found", guid) }, nil, 404
   end
+  return json.stringify {
+    data = data
+  }
+end
+
+local function HandleGetPlayerContracts(session)
+  local characterGuid = session.pathComponents[2]
+
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() or not PC.Companies:IsValid() then
+    return
+  end
+
+  local data = {}
+  PC.Companies:ForEach(function(key, value)
+    local company = value:get()
+    if company ~= nil and company:IsValid() and company.ContractsInProgress:IsValid() then
+      company.ContractsInProgress:ForEach(function(key, value)
+        local cip = value:get()
+        if cip ~= nil and cip:IsValid() and cip.Contract:IsValid() then
+          table.insert(data, {
+            contractGuid = GuidToString(cip.Guid),
+            contract = ContractToTable(cip.Contract),
+          })
+        end
+      end)
+    end
+  end)
+
   return json.stringify {
     data = data
   }

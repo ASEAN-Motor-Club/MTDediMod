@@ -1869,7 +1869,9 @@ local function HandleDespawnPlayerVehicle(session)
         curr = nil
         v.Net_Hooks:ForEach(function(i, val)
           local hook = val:get()
-          curr = hook.Trailer
+          if hook:IsValid() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
+            curr = hook.Trailer
+          end
         end)
         ExecuteInGameThread(function()
           PC:ServerDespawnVehicle(v, 0)
@@ -1948,9 +1950,25 @@ local function HandleGetPlayerVehicles(session)
   end
 
   local lastPlayerVehicleId = nil
+  local activeVehicles = {}
   if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
     lastPlayerVehicleId = PC.LastVehicle.Net_VehicleId
+
+    local curr = PC.LastVehicle
+
+    while curr ~= nil and curr:IsValid() and curr.Net_Hooks:IsValid() do
+      local v = curr
+      activeVehicles[curr.Net_VehicleId] = true
+      curr = nil
+      v.Net_Hooks:ForEach(function(i, val)
+        local hook = val:get()
+        if hook:IsValid() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
+          curr = hook.Trailer
+        end
+      end)
+    end
   end
+
 
   local vehicles = {}
   PC.Net_SpawnedVehicles:ForEach(function(index, element)
@@ -1964,13 +1982,63 @@ local function HandleGetPlayerVehicles(session)
         table.insert(vehicleTags, tag)
       end)
       vehicleInfo["tags"] = vehicleTags
-      vehicleInfo["isLastVehicle"] = vehicle.Net_VehicleId == lastPlayerVehicleId
+      vehicleInfo["isLastVehicle"] = activeVehicles[vehicle.Net_VehicleId] ~= nil
       vehicleInfo["position"] = VectorToTable(vehicle:K2_GetActorLocation())
       table.insert(vehicles, vehicleInfo)
     end
   end)
   return json.stringify { vehicles = vehicles }, nil, 200
 end
+
+
+local rpPlayers = {}
+
+local function HandlePlayerExitVehicle(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+  PC:ServerExitVehicle()
+  return nil, nil, 200
+end
+
+local function HandleGetRPMode(session)
+  local characterGuid = session.pathComponents[2]
+  return json.stringify { isRpMode = rpPlayers[characterGuid] == true }, nil, 200
+end
+
+local function HandleSetRPMode(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+
+  if not PC.Net_SpawnedVehicles:IsValid() then
+    return json.stringify { error = "Invalid player vehicles" }, nil, 400
+  end
+
+
+  if rpPlayers[characterGuid] == nil then
+      PC.Net_SpawnedVehicles:ForEach(function(index, element)
+        local vehicle = element:get()
+        if vehicle:IsValid() then
+            ExecuteInGameThread(function()
+                PC:ServerDespawnVehicle(vehicle, 0)
+            end)
+        end
+      end)
+      rpPlayers[characterGuid] = true
+      return json.stringify { isRpMode = true }, nil, 200
+  else
+      rpPlayers[characterGuid] = nil
+      return json.stringify { isRpMode = false }, nil, 200
+  end
+
+  return nil, nil, 200
+end
+
 
 return {
   HandleGetVehicles = HandleGetVehicles,
@@ -1988,4 +2056,7 @@ return {
   VehicleMirrorPositionToTable = VehicleMirrorPositionToTable,
   VehicleSettingToTable = VehicleSettingToTable,
   HandleSetVehicleParameter = HandleSetVehicleParameter,
+  HandleGetRPMode = HandleGetRPMode,
+  HandleSetRPMode = HandleSetRPMode,
+  HandlePlayerExitVehicle = HandlePlayerExitVehicle,
 }
