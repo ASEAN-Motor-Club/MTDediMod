@@ -42,6 +42,7 @@ public:
     )
     {
         auto pre_hook = [event_name, data_extractor_fn](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+            Output::send<LogLevel::Verbose>(STR("Start of hook {}"), to_wstring(event_name));
 
             // 1. Get Base Player Info (now encapsulated)
             std::optional<std::string> character_guid_str = GetCharacterGuid(Context);
