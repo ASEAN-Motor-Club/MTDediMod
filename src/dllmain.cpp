@@ -110,6 +110,146 @@ auto MotorTownMods::on_unreal_init() -> void
 		"ServerResetVehicleAt"
 	);
 
+	/*
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerContractCargoDelivered"),
+		"ServerContractCargoDelivered",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			auto ContractGuidProperty = FunctionBeingExecuted->GetPropertyByName(STR("ContractGuid"));
+			const auto& ContractGuid = ContractGuidProperty->ContainerPtrToValuePtr<FGuid>(Context.TheStack.Locals());
+			if (ContractGuid == nullptr) return false;
+			event_data["ContractGuid"] = std::format(
+				"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
+				ContractGuid->A,
+				(ContractGuid->B >> 16),    // High 16 bits of B
+				(ContractGuid->B & 0xFFFF), // Low 16 bits of B
+				(ContractGuid->C >> 16),    // High 16 bits of C
+				(ContractGuid->C & 0xFFFF), // Low 16 bits of C
+				ContractGuid->D
+			);
+			const auto& PlayerController = Context.Context;
+			const auto& CompaniesProperty = static_cast<FArrayProperty*>(PlayerController->GetPropertyByNameInChain(STR("Companies")));
+			if (!CompaniesProperty) {
+				Output::send<LogLevel::Verbose>(STR("Companies property not found\n"));
+				return false;
+			}
+			const auto& Companies = CompaniesProperty->ContainerPtrToValuePtr<FScriptArray>(PlayerController);
+			if (Companies == nullptr || Companies->GetData() == nullptr) return false;
+			const auto& CompaniesInnerProp = static_cast<FStructProperty*>(CompaniesProperty->GetInner());
+			const int32 InnerPropSize = CompaniesInnerProp->GetElementSize();
+			const int32 NumCompanies = Companies->Num();
+			for (int32_t i = 0; i < NumCompanies; ++i) {
+				// https://github.com/UE4SS-RE/RE-UE4SS/blob/e77e3d1712faad2793c4ff040ce3687a36fa5bca/UE4SS/src/GUI/LiveView.cpp#L2278
+				auto element_offset = CompaniesInnerProp->GetElementSize() * i;
+				auto element_container_ptr = static_cast<uint8_t*>(Companies->GetData()) + element_offset;
+				const auto& TopLevelCompany = CompaniesInnerProp->GetStruct();
+				const auto& Company = CompaniesInnerProp->ContainerPtrToValuePtr<void>(element_container_ptr);
+				const auto& ContractsInProgressProperty = static_cast<FArrayProperty*>(TopLevelCompany->GetPropertyByNameInChain(STR("ContractsInProgress")));
+				if (!ContractsInProgressProperty) {
+					Output::send<LogLevel::Verbose>(STR("ContractsInProgress property not found\n"));
+					return false;
+				}
+				const auto& ContractsInProgress = ContractsInProgressProperty->ContainerPtrToValuePtr<FScriptArray>(Company);
+				if (ContractsInProgress == nullptr || ContractsInProgress->GetData() == nullptr) return false;
+				const auto& CipInnerProp = static_cast<FStructProperty*>(ContractsInProgressProperty->GetInner());
+				const int32 CipInnerPropSize = CipInnerProp->GetElementSize();
+				const int32 NumCips = ContractsInProgress->Num();
+				for (int32_t i = 0; i < NumCips; ++i) {
+					auto element_offset = CipInnerProp->GetElementSize() * i;
+					auto element_container_ptr = static_cast<uint8_t*>(ContractsInProgress->GetData()) + element_offset;
+					auto ContractInProgress = CipInnerProp->ContainerPtrToValuePtr<void>(element_container_ptr);
+					const auto& TopLevelCip = CipInnerProp->GetStruct();
+					const auto& CipGuidProperty = TopLevelCip->GetPropertyByNameInChain(STR("Guid"));
+					const auto& FinishedAmountProperty = TopLevelCip->GetPropertyByNameInChain(STR("FinishedAmount"));
+					const auto& FinishedAmount = FinishedAmountProperty->ContainerPtrToValuePtr<float>(ContractInProgress);
+					event_data["FinishedAmount"] = *FinishedAmount;
+					const auto& ContractInProgressGuid = CipGuidProperty->ContainerPtrToValuePtr<FGuid>(ContractInProgress);
+					if (ContractInProgressGuid == nullptr) continue;
+					if (ContractGuid == ContractInProgressGuid) {
+						const auto& ContractProperty = static_cast<FStructProperty*>(TopLevelCip->GetPropertyByNameInChain(STR("Contract")));
+						if (!ContractProperty) {
+							Output::send<LogLevel::Verbose>(STR("Contract property found\n"));
+							return false;
+						}
+						const auto& Contract = ContractProperty->ContainerPtrToValuePtr<void>(ContractInProgress);
+						if (Contract == nullptr) return false;
+						const auto& TopLevelContract = ContractProperty->GetStruct();
+						const auto AmountProp = TopLevelContract->GetPropertyByNameInChain(STR("Amount"));
+						const auto& Amount = AmountProp->ContainerPtrToValuePtr<float>(Contract);
+						event_data["Amount"] = *Amount;
+						const auto ItemProp = TopLevelContract->GetPropertyByNameInChain(STR("Item"));
+						const auto& Item = ItemProp->ContainerPtrToValuePtr<FString>(Contract);
+						event_data["Item"] = to_string(Item->GetCharArray());
+						const auto& CompletionPaymentProperty = static_cast<FStructProperty*>(TopLevelContract->GetPropertyByNameInChain(STR("CompletionPayment")));
+						const auto& CompletionPayment = CompletionPaymentProperty->ContainerPtrToValuePtr<void>(Contract);
+						const auto& TopLevelCompletionPayment = CompletionPaymentProperty->GetStruct();
+						const auto& BaseValueProperty = TopLevelCompletionPayment->GetPropertyByNameInChain(STR("BaseValue"));
+						const auto& Payment = BaseValueProperty->ContainerPtrToValuePtr<int64>(CompletionPayment);
+						event_data["CompletionPayment"] = *Payment;
+						return true;
+					}
+				}
+			}
+
+			return false;
+		}
+	);
+	*/
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerPassengerArrived"),
+		"ServerPassengerArrived",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+
+			const auto& PassengerProperty = static_cast<FObjectProperty*>(FunctionBeingExecuted->GetPropertyByNameInChain(STR("PassengerComponent")));
+			
+			const auto& Passenger = PassengerProperty->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
+			if (Passenger == nullptr) return false;
+			Output::send<LogLevel::Verbose>(STR("Passenger found\n"));
+			const auto& Payment = (*Passenger)->GetValuePtrByPropertyNameInChain<int64>(STR("Net_Payment"));
+			const auto& PassengerType = (*Passenger)->GetValuePtrByPropertyNameInChain<uint8>(STR("Net_PassengerType"));
+			const auto& StartLocation = (*Passenger)->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_StartLocation"));
+			const auto& DestinationLocation = (*Passenger)->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
+			const auto& Distance = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_Distance"));
+			const auto& PassengerFlags = (*Passenger)->GetValuePtrByPropertyNameInChain<int32>(STR("Net_PassengerFlags"));
+			const auto& LCComfortSatisfaction = (*Passenger)->GetValuePtrByPropertyNameInChain<int32>(STR("Net_LCComfortSatisfaction"));
+			const auto& TimeLimitPoint = (*Passenger)->GetValuePtrByPropertyNameInChain<int32>(STR("Net_TimeLimitPoint"));
+			const auto& TimeLimitToDestination = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLimitToDestination"));
+			const auto& TimeLimitToDestinationFromStart = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLimitToDestinationFromStart"));
+
+			if (!Payment || !PassengerType || !Distance || !PassengerFlags || !LCComfortSatisfaction || !TimeLimitPoint || !TimeLimitToDestination || !TimeLimitToDestinationFromStart
+				|| !StartLocation || !DestinationLocation) {
+				Output::send<LogLevel::Verbose>(STR("Missing information\n")); 
+				return false;
+			}
+
+			json::object passenger_obj;
+			passenger_obj["Net_Payment"] = *Payment;
+			passenger_obj["Net_PassengerType"] = *PassengerType;
+			passenger_obj["Net_Distance"] = *Distance;
+			passenger_obj["Net_PassengerFlags"] = *PassengerFlags;
+			passenger_obj["Net_LCComfortSatisfaction"] = *LCComfortSatisfaction;
+			passenger_obj["Net_TimeLimitPoint"] = *TimeLimitPoint;
+			passenger_obj["Net_TimeLimitToDestination"] = *TimeLimitToDestination;
+			passenger_obj["Net_TimeLimitToDestinationFromStart"] = *TimeLimitToDestinationFromStart;
+
+			json::object destination_location_obj;
+			destination_location_obj["X"] = static_cast<int>(std::round(DestinationLocation->X()));
+			destination_location_obj["Y"] = static_cast<int>(std::round(DestinationLocation->Y()));
+			destination_location_obj["Z"] = static_cast<int>(std::round(DestinationLocation->Z()));
+			passenger_obj["Net_DestinationLocation"] = destination_location_obj;
+			json::object start_location_obj;
+			start_location_obj["X"] = static_cast<int>(std::round(StartLocation->X()));
+			start_location_obj["Y"] = static_cast<int>(std::round(StartLocation->Y()));
+			start_location_obj["Z"] = static_cast<int>(std::round(StartLocation->Z()));
+			passenger_obj["Net_StartLocation"] = start_location_obj;
+
+			event_data["Passenger"] = passenger_obj;
+			return true;
+		}
+	);
 }
 
 auto MotorTownMods::on_lua_start(
