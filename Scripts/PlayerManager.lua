@@ -286,22 +286,13 @@ local function HandleTeleportPlayer(session)
   return json.stringify { error = "Invalid payload" }, nil, 400
 end
 
-webhook.RegisterEventHook(
-  "ServerSetMoney",
-  function(context, Money)
-    return {
-      PlayerId = GetPlayerUniqueId(context:get()),
-      Money = Money:get()
-    }
-  end
-)
-
 return {
   HandleGetPlayerStates = HandleGetPlayerStates,
   GetMyCurrentTransform = GetMyCurrentTransform,
   PlayerStateToTable = PlayerStateToTable,
   HandleTeleportPlayer = HandleTeleportPlayer,
   HandleTransferMoneyToPlayer = HandleTransferMoneyToPlayer,
+  HandleSetPlayerName = HandleSetPlayerName,
   HandlePlayerSendChat = HandlePlayerSendChat,
   HandleMutePlayer = HandleMutePlayer,
 }
