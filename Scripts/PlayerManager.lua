@@ -179,6 +179,26 @@ local function HandleTransferMoneyToPlayer(session)
   return json.stringify { error = "Invalid payload" }, nil, 400
 end
 
+local function HandleSetPlayerName(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return json.stringify { error = string.format("Invalid character guid %s", characterGuid) }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if data and data.name then
+    local PC = GetPlayerControllerFromGuid(characterGuid)
+    if not PC:IsValid() or not PC.PlayerState:IsValid() then
+      return json.stringify { error = string.format("Invalid player controller %s", characterGuid) }, nil, 400
+    end
+    PC.PlayerState.PlayerNamePrivate = data.name
+    PC:SetName(data.name)
+
+    return nil, nil, 200
+  end
+  return json.stringify { error = "Invalid payload" }, nil, 400
+end
+
 local function HandlePlayerSendChat(session)
   local playerId = session.pathComponents[2]
   if not playerId then
