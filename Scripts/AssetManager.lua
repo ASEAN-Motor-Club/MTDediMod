@@ -60,6 +60,7 @@ local function SpawnActor(assetPath, location, rotation, tag)
     end
     if actor:IsValid() then
       LogOutput("DEBUG", "Spawned actor %s", actor:GetFullName())
+      actor:SetReplicates(true)
 
       if not assetTag then
         local str = SplitString(actor:GetFullName())
