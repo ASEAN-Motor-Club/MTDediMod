@@ -278,6 +278,18 @@ local function HandleSetServerConfig(session)
   if body.bAllowCorporation ~= nil then
     gameState.Net_ServerConfig.bAllowCorporation = body.bAllowCorporation
   end
+  if body.MaxHousingPlotRentalDays ~= nil then
+    gameState.Net_ServerConfig.MaxHousingPlotRentalDays = body.MaxHousingPlotRentalDays
+  end
+  if body.bAllowAdminToRemoveAdmin ~= nil then
+    gameState.Net_ServerConfig.bAllowAdminToRemoveAdmin = body.bAllowAdminToRemoveAdmin
+  end
+  if body.bAllowModdedVehicle ~= nil then
+    gameState.Net_ServerConfig.bAllowModdedVehicle = body.bAllowModdedVehicle
+  end
+  if body.bAllowPlayerToJoinWithCompanyVehicles ~= nil then
+    gameState.Net_ServerConfig.bAllowPlayerToJoinWithCompanyVehicles = body.bAllowPlayerToJoinWithCompanyVehicles
+  end
   return nil, nil, 200
 end
 
