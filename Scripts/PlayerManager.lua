@@ -269,7 +269,15 @@ local function HandleTeleportPlayer(session)
               return json.stringify { error = string.format("Failed to teleport player %s: Player is inside a vehicle", playerId) }, nil, 400
             elseif pawn:IsA(vehicleClass) then
               ---@cast pawn AMTVehicle
-              PC:ServerResetVehicleAt(pawn, location, rotation, true, true)
+              local bResetTrailers = true
+              if data.bResetTrailers ~= nil then
+                bResetTrailers = data.bResetTrailers
+              end
+              local bResetCarriedVehicles = true
+              if data.bResetCarriedVehicles ~= nil then
+                bResetCarriedVehicles = data.bResetCarriedVehicles
+              end
+              PC:ClientResetVehicleAt(pawn, location, rotation, bResetTrailers, bResetCarriedVehicles)
             else
               error("Failed to teleport player")
             end

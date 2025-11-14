@@ -293,6 +293,13 @@ local function HandleSetServerConfig(session)
   return nil, nil, 200
 end
 
+ExecuteWithDelay(5000, function()
+  local banker = FindFirstOf('Banker_C')
+  if banker and banker:IsValid() then
+    banker:K2_DestroyActor()
+  end
+end)
+
 return {
     HandleGetServerState = HandleGetServerState,
     HandleGetZoneState = HandleGetZoneState,

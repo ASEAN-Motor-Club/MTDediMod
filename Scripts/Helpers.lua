@@ -487,6 +487,21 @@ function ItemInventoryToTable(item)
   return data
 end
 
+function TableToItemInventory(item)
+  local data = item
+  local slots = {}
+
+  for i, slot in ipairs(data.Slots) do
+    table.insert(slots, {
+      Key = FName(slot.Key),
+      NumStack = slot.NumStack
+    })
+  end
+  data.Slots = slots
+
+  return data
+end
+
 ---Deep set table value
 ---@param input table
 ---@param fields string[]

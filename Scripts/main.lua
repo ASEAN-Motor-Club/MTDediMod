@@ -74,9 +74,11 @@ local function LoadWebserver()
 
     -- Vehicle management
     server.registerHandler("/vehicles", "GET", vehicleManager.HandleGetVehicles)
+    server.registerHandler("/tagged_vehicles", "GET", vehicleManager.HandleGetVehiclesByTag)
     server.registerHandler("/vehicles", "PATCH", vehicleManager.HandleSetVehicleParameter)
     server.registerHandler("/vehicles/*/despawn", "POST", vehicleManager.HandleDespawnVehicle)
     server.registerHandler("/player_vehicles/*/despawn", "POST", vehicleManager.HandleDespawnPlayerVehicle)
+    server.registerHandler("/player_vehicles/*/detach", "POST", vehicleManager.HandleDetachPlayerVehicle)
     server.registerHandler("/player_vehicles/*/decal", "GET", vehicleManager.HandleGetPlayerVehicleDecal)
     server.registerHandler("/player_vehicles/*/decal", "POST", vehicleManager.HandleSetPlayerVehicleDecal)
     server.registerHandler("/player_vehicles/*/list", "GET", vehicleManager.HandleGetPlayerVehicles)
@@ -85,6 +87,8 @@ local function LoadWebserver()
     server.registerHandler("/dealers/spawn", "POST", vehicleManager.HandleCreateVehicleDealerSpawnPoint)
     server.registerHandler("/garages", "GET", vehicleManager.HandleGetGarages)
     server.registerHandler("/garages/spawn", "POST", vehicleManager.HandleSpawnGarage)
+    -- rename to POST /vehicles
+    server.registerHandler("/vehicles/spawn", "POST", vehicleManager.HandleSpawnVehicle)
     server.registerHandler("/rp_sessions/*", "GET", vehicleManager.HandleGetRPMode)
     server.registerHandler("/rp_sessions/*/toggle", "POST", vehicleManager.HandleSetRPMode)
     server.registerHandler("/player_vehicles/*/exit", "GET", vehicleManager.HandlePlayerExitVehicle)
@@ -95,6 +99,7 @@ local function LoadWebserver()
 
     -- UI management
     server.registerHandler("/messages/popup", "POST", widgetManager.HandleShowPopupMessage)
+    server.registerHandler("/messages/system", "POST", widgetManager.HandleShowSystemMessage)
     server.registerHandler("/messages/announce", "POST", chatManager.HandleAnnounceMessage)
 
     -- Company management

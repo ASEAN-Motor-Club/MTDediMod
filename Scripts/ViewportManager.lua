@@ -152,6 +152,19 @@ local function ShowMessagePopupToCharacter(message, characterGuid)
   end)
 end
 
+local function ShowSystemMessageToCharacter(message, characterGuid)
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return nil
+  end
+
+  ExecuteInGameThreadSync(function()
+    if PC:IsValid() then
+      PC:ClientShowSystemMessage(FText(message))
+    end
+  end)
+end
+
 ---Set hot bar position
 ---@param position HotBarLocation
 local function SetHotBarPosition(position)
@@ -193,6 +206,18 @@ local function HandleShowPopupMessage(session)
   return nil, nil, 400
 end
 
+local function HandleShowSystemMessage(session)
+  local content = json.parse(session.content)
+  if content and type(content) == "table" then
+    if content.message and content.characterGuid then
+      ShowSystemMessageToCharacter(content.message, content.characterGuid)
+      return nil, nil, 204
+    end
+    return json.stringify { message = "Missing params" }, nil, 400
+  end
+  return nil, nil, 400
+end
+
 -- Console commands
 
 ---@type table<string, ModConfigKey>
@@ -222,5 +247,6 @@ end)
 -- Register event hooks
 
 return {
-  HandleShowPopupMessage = HandleShowPopupMessage
+  HandleShowPopupMessage = HandleShowPopupMessage,
+  HandleShowSystemMessage = HandleShowSystemMessage,
 }
