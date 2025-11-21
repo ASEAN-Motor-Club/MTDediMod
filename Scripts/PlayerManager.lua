@@ -36,6 +36,10 @@ local function PlayerStateToTable(playerState)
     end)
 
     data.Location = VectorToTable(playerState.Location)
+    local pawn = playerState:GetPawn()
+    if pawn:IsValid() then
+      data.Rotation = RotatorToTable(pawn:K2_GetActorRotation())
+    end
     data.VehicleKey = playerState.VehicleKey:ToString()
   end
 
@@ -106,10 +110,11 @@ end
 
 local function PlayerSendChat(uniqueId, message)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
-  if not PC:IsValid() then return false end
-  LogOutput("INFO", "PlayerSendChat")
-  ExecuteInGameThread(function()
-    PC:ServerSendChat(message, 0)
+  ExecuteInGameThreadSync(function()
+    LogOutput("INFO", "PlayerSendChat")
+    if PC:IsValid() then
+      PC:ServerSendChat(message, 0)
+    end
   end)
   return true
 end
@@ -191,8 +196,12 @@ local function HandleSetPlayerName(session)
     if not PC:IsValid() or not PC.PlayerState:IsValid() then
       return json.stringify { error = string.format("Invalid player controller %s", characterGuid) }, nil, 400
     end
-    PC.PlayerState.PlayerNamePrivate = data.name
-    PC:SetName(data.name)
+    ExecuteInGameThreadSync(function()
+      if not PC:IsValid() or not PC.PlayerState:IsValid() then
+        PC.PlayerState.PlayerNamePrivate = data.name
+        PC:SetName(data.name)
+      end
+    end)
 
     return nil, nil, 200
   end

@@ -868,10 +868,12 @@ local function VehicleOwnerSettingToTable(setting)
   data.bLocked = setting.bLocked
   data.DriveAllowedPlayers = setting.DriveAllowedPlayers
 
-  data.LevelRequirementsToDrive = {} ---@type number[]
-  setting.LevelRequirementsToDrive:ForEach(function(index, element)
-    table.insert(data.LevelRequirementsToDrive, element:get())
-  end)
+  if setting.LevelRequirementsToDrive:IsValid() then
+    data.LevelRequirementsToDrive = {} ---@type number[]
+    setting.LevelRequirementsToDrive:ForEach(function(index, element)
+      table.insert(data.LevelRequirementsToDrive, element:get())
+    end)
+  end
 
   data.VehicleOwnerProfitShare = setting.VehicleOwnerProfitShare
 
@@ -966,7 +968,9 @@ local function VehicleDecalToTable(decal)
   if decal.DecalLayers:IsValid() then
     decal.DecalLayers:ForEach(function(index, element)
       local layer = element:get()
-      table.insert(data, VehicleDecalLayerToTable(layer))
+      if layer:IsValid() then
+        table.insert(data, VehicleDecalLayerToTable(layer))
+      end
     end)
   end
 
@@ -998,26 +1002,36 @@ local function VehiclePartToTable(part)
   data.Damage = part.Damage
 
   data.FloatValues = {} ---@type number[]
-  part.FloatValues:ForEach(function(index, element)
-    table.insert(data.FloatValues, element:get())
-  end)
+  if part.FloatValues:IsValid() then
+    part.FloatValues:ForEach(function(index, element)
+      table.insert(data.FloatValues, element:get())
+    end)
+  end
 
   data.Int64Values = {} ---@type number[]
-  part.Int64Values:ForEach(function(index, element)
-    table.insert(data.Int64Values, element:get())
-  end)
+  if part.Int64Values:IsValid() then
+    part.Int64Values:ForEach(function(index, element)
+      table.insert(data.Int64Values, element:get())
+    end)
+  end
 
   data.StringValues = {} ---@type string[]
-  part.StringValues:ForEach(function(index, element)
-    table.insert(data.StringValues, element:get():ToString())
-  end)
+  if part.StringValues:IsValid() then
+    part.StringValues:ForEach(function(index, element)
+      table.insert(data.StringValues, element:get():ToString())
+    end)
+  end
 
   data.VectorValues = {} ---@type table[]
-  part.VectorValues:ForEach(function(index, element)
-    table.insert(data.VectorValues, VectorToTable(element:get()))
-  end)
+  if part.VectorValues:IsValid() then
+    part.VectorValues:ForEach(function(index, element)
+      table.insert(data.VectorValues, VectorToTable(element:get()))
+    end)
+  end
 
-  data.ItemInventory = ItemInventoryToTable(part.ItemInventory)
+  if part.ItemInventory:IsValid() then
+    data.ItemInventory = ItemInventoryToTable(part.ItemInventory)
+  end
 
   return data
 end
@@ -1025,7 +1039,11 @@ end
 local function TableToVehiclePart(part)
   local data = part
 
-  data.Key = FName(part.Key)
+  if part.partKey ~= nil then
+    data.Key = FName(part.partKey)
+  else
+    data.Key = FName(part.Key)
+  end
   data.ItemInventory = TableToItemInventory(part.ItemInventory)
 
   return data
@@ -1561,10 +1579,10 @@ local function GetVehiclesByTag(tags)
         table.insert(parts, VehiclePartToTable(element:get()))
       end)
       table.insert(arr, {
-        FullName = vehicle:GetFullName(),
-        ClassFullName = vehicle:GetClass():GetFullName(),
-        Location = vehicle:K2_GetActorLocation(),
-        Rotation = vehicle:K2_GetActorRotation(),
+        fullName = vehicle:GetFullName(),
+        classFullName = vehicle:GetClass():GetFullName(),
+        position = vehicle:K2_GetActorLocation(),
+        rotation = vehicle:K2_GetActorRotation(),
         decal = VehicleDecalToTable(vehicle.Net_Decal),
         customization = VehicleCustomizationToTable(vehicle.Customization),
         parts = parts,
@@ -1603,7 +1621,7 @@ local function DespawnVehicleById(id, uniqueId)
 
       if PC:IsValid() and playerState.bIsAdmin then
         if playerState.bIsHost then
-          ExecuteInGameThread(function()
+          ExecuteInGameThreadSync(function()
             PC:ServerDespawnVehicle(vehicle, 0)
           end)
           return true
@@ -1938,6 +1956,13 @@ local function HandleDespawnPlayerVehicle(session)
   local content = json.parse(session.content)
 
   local PC = GetPlayerControllerFromUniqueId(playerId)
+  if not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+  if not PC.Net_SpawnedVehicles:IsValid() then
+    return json.stringify { error = "Invalid player vehicles" }, nil, 400
+  end
+
   if PC:IsValid() then
     local vehiclesToDespawn = {}
 
@@ -1949,7 +1974,7 @@ local function HandleDespawnPlayerVehicle(session)
         local curr = PC.LastVehicle
         while curr ~= nil and curr:IsValid() and curr.Net_Hooks:IsValid() do
           local v = curr
-          activeVehicles[curr.Net_VehicleId] = v
+          activeVehicles[tostring(curr.Net_VehicleId)] = v
           curr = nil
           v.Net_Hooks:ForEach(function(i, val)
             local hook = val:get()
@@ -1962,8 +1987,8 @@ local function HandleDespawnPlayerVehicle(session)
       if content.all or content.others ~= nil then
         PC.Net_SpawnedVehicles:ForEach(function(index, element)
           local vehicle = element:get()
-          if vehicle:IsValid() and (content.others == nil or activeVehicles[vehicle.Net_VehicleId] == nil) then
-            vehiclesToDespawn[vehicle.Net_VehicleId] = vehicle
+          if vehicle:IsValid() and (content.others == nil or activeVehicles[tostring(vehicle.Net_VehicleId)] == nil) then
+            vehiclesToDespawn[tostring(vehicle.Net_VehicleId)] = vehicle
           end
         end)
       end
@@ -1976,24 +2001,19 @@ local function HandleDespawnPlayerVehicle(session)
       PC.Net_SpawnedVehicles:ForEach(function(index, element)
         local vehicle = element:get()
         if vehicle:IsValid() and vehicle.Net_VehicleId == content.vehicleId then
-          vehiclesToDespawn[vehicle.Net_VehicleId] = vehicle
+          vehiclesToDespawn[tostring(vehicle.Net_VehicleId)] = vehicle
         end
       end)
     end
 
-    for vehicleId, vehicle in pairs(vehiclesToDespawn) do
-      ExecuteInGameThread(function()
-        if vehicle:IsValid() then
+    ExecuteInGameThreadSync(function()
+      for vehicleId, vehicle in pairs(vehiclesToDespawn) do
+        LogOutput('INFO', 'Despawning vehicle %s', vehicleId)
+        if vehicle:IsValid() and PC:IsValid() and not vehicle:IsActorBeingDestroyed() then
           PC:ServerDespawnVehicle(vehicle, 0)
         end
-      end)
-    end
-
-    if content.message ~= nil then
-      ExecuteInGameThreadSync(function()
-        PC:ClientShowSystemMessage(FText(content.message))
-      end)
-    end
+      end
+    end)
 
     return json.stringify { Status = "ok" }, nil, 200
   end
@@ -2027,6 +2047,60 @@ local function HandleGetPlayerVehicleDecal(session)
   return json.stringify { error = "Invalid player controller" }, nil, 400
 end
 
+
+local function HandleSetWorldVehicleDecal(session)
+  local className = session.pathComponents[2]
+  local content = json.parse(session.content)
+  local vs = FindAllOf(className)
+
+  for i, vehicle in ipairs(vs) do
+    LogOutput('INFO', vehicle:GetFullName())
+    if vehicle:IsValid() then
+      if vehicle.bForSale then
+        goto continue_loop
+      end
+      local decal = TableToVehicleDecal(content.decal)
+      vehicle.Net_Decal.DecalLayers:Empty()
+      for index, value in ipairs(decal.DecalLayers) do
+        vehicle.Net_Decal.DecalLayers[index] = value
+      end
+      vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
+
+      if content.customization then
+        LogOutput("INFO", "Setting customization")
+        vehicle.Customization.BodyMaterialIndex = content.customization.BodyMaterialIndex
+        if vehicle.Customization.BodyColors:IsValid() then
+          vehicle.Customization.BodyColors:Empty()
+          for i, bc in ipairs(content.customization.BodyColors) do
+            vehicle.Customization.BodyColors[i].MaterialSlotName = FName(bc.MaterialSlotName)
+            vehicle.Customization.BodyColors[i].Color = bc.Color
+          end
+        end
+      end
+
+      if content.parts ~= nil then
+        ExecuteInGameThreadSync(function()
+          LogOutput("INFO", "Setting parts")
+          if not vehicle:IsValid() or not vehicle.Net_Parts:IsValid() then
+            return
+          end
+          vehicle.Net_Parts:Empty()
+          for i, part in ipairs(content.parts) do
+            vehicle.Net_Parts[i] = TableToVehiclePart(part)
+            vehicle.Net_Parts[i].StringValues = part.StringValues
+            vehicle.Net_Parts[i].FloatValues = part.FloatValues
+            vehicle.Net_Parts[i].Int64Values = part.Int64Values
+            vehicle.Net_Parts[i].VectorValues = part.VectorValues
+          end
+          vehicle:ServerSetParts(vehicle.Net_Parts)
+        end)
+      end
+    end
+
+    ::continue_loop::
+  end
+end
+
 local function HandleSetPlayerVehicleDecal(session)
   local playerId = session.pathComponents[2]
   local content = json.parse(session.content)
@@ -2054,38 +2128,54 @@ local function HandleSetPlayerVehicleDecal(session)
   return json.stringify { error = "Invalid player controller" }, nil, 400
 end
 
-local function PlayerVehicleToTable(vehicle)
+local function PlayerVehicleToTable(vehicle, complete)
   local vehicleInfo = {}
   vehicleInfo["vehicleId"] = vehicle.Net_VehicleId
   if vehicle.NetLC_ColdState:IsValid() then
     vehicleInfo["bIsAIDriving"] = vehicle.NetLC_ColdState.bIsAIDriving
   end
-  vehicleInfo["companyGuid"] = GuidToString(vehicle.Net_CompanyGuid)
+  LogOutput("INFO", "Getting company guid and name")
+  if vehicle.Net_CompanyGuid:IsValid() then
+    vehicleInfo["companyGuid"] = GuidToString(vehicle.Net_CompanyGuid)
+  end
   vehicleInfo["companyName"] = vehicle.Net_CompanyName:ToString()
   vehicleInfo["position"] = vehicle:K2_GetActorLocation()
   vehicleInfo["rotation"] = vehicle:K2_GetActorRotation()
   vehicleInfo["fullName"] = vehicle:GetFullName()
-  vehicleInfo["classFullName"] = vehicle:GetClass():GetFullName()
-  if vehicle.Net_Decal:IsValid() then
-    vehicleInfo["decal"] = VehicleDecalToTable(vehicle.Net_Decal)
+  LogOutput("INFO", "Getting class name")
+  local vehicleClass = vehicle:GetClass()
+  if vehicleClass:IsValid() then
+    vehicleInfo["classFullName"] = vehicleClass:GetFullName()
   end
-  if vehicle.Customization:IsValid() then
-    vehicleInfo["customization"] = VehicleCustomizationToTable(vehicle.Customization)
-  end
-  vehicleInfo["parts"] = {}
-  if vehicle.Net_Parts:IsValid() then
-    vehicle.Net_Parts:ForEach(function(index, element)
-      local part = element:get()
-      if part:IsValid() then
-        table.insert(vehicleInfo["parts"], VehiclePartToTable(part))
-      end
-    end)
+  if complete then
+    if vehicle.Net_VehicleOwnerSetting:IsValid() then
+      vehicleInfo["Net_VehicleOwnerSetting"] = VehicleOwnerSettingToTable(vehicle.Net_VehicleOwnerSetting)
+    end
+    LogOutput("INFO", "Getting decal")
+    if vehicle.Net_Decal:IsValid() then
+      vehicleInfo["decal"] = VehicleDecalToTable(vehicle.Net_Decal)
+    end
+    LogOutput("INFO", "Getting customization")
+    if vehicle.Customization:IsValid() then
+      vehicleInfo["customization"] = VehicleCustomizationToTable(vehicle.Customization)
+    end
+    LogOutput("INFO", "Getting parts")
+    vehicleInfo["parts"] = {}
+    if vehicle.Net_Parts:IsValid() then
+      vehicle.Net_Parts:ForEach(function(index, element)
+        local part = element:get()
+        if part:IsValid() then
+          table.insert(vehicleInfo["parts"], VehiclePartToTable(part))
+        end
+      end)
+    end
   end
   return vehicleInfo
 end
 
 local function HandleGetPlayerVehicles(session)
   local playerId = session.pathComponents[2]
+  local complete = session.queryComponents.complete ~= nil
 
   local PC = GetPlayerControllerFromUniqueId(playerId)
   if not PC:IsValid() then
@@ -2099,28 +2189,30 @@ local function HandleGetPlayerVehicles(session)
   local lastPlayerVehicleId = nil
   local activeVehicles = {}
 
-  if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
+  LogOutput("INFO", "Recursively getting trailers")
+  if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
     lastPlayerVehicleId = PC.LastVehicle.Net_VehicleId
 
     local curr = PC.LastVehicle
 
-    while curr ~= nil and curr.Net_Hooks:IsValid() do
+    while curr ~= nil and curr:IsValid() and not curr:IsActorBeingDestroyed() and curr.Net_Hooks:IsValid() do
       local v = curr
       table.insert(activeVehicles, v)
       curr = nil
       v.Net_Hooks:ForEach(function(i, val)
         local hook = val:get()
-        if hook:IsValid() and hook.Trailer:IsValid() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
+        if hook:IsValid() and hook.Trailer:IsValid() and not hook.Trailer:IsActorBeingDestroyed() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
           curr = hook.Trailer
         end
       end)
     end
   end
 
+  LogOutput("INFO", "Adding active vehicles")
   local vehicles = {}
   for index, vehicle in ipairs(activeVehicles) do
-    if vehicle:IsValid() then
-      local vehicleInfo = PlayerVehicleToTable(vehicle)
+    if vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() then
+      local vehicleInfo = PlayerVehicleToTable(vehicle, complete)
       vehicleInfo["isLastVehicle"] = true
       vehicleInfo["index"] = index - 1
       vehicles[tostring(vehicle.Net_VehicleId)] = vehicleInfo
@@ -2128,10 +2220,11 @@ local function HandleGetPlayerVehicles(session)
   end
 
   if session.queryComponents.active == nil then
+    LogOutput("INFO", "Adding spawned vehicles")
     PC.Net_SpawnedVehicles:ForEach(function(index, element)
       local vehicle = element:get()
-      if vehicle:IsValid() and vehicles[vehicle.Net_VehicleId] == nil then
-        local vehicleInfo = PlayerVehicleToTable(vehicle)
+      if vehicle:IsValid() and vehicles[tostring(vehicle.Net_VehicleId)] == nil then
+        local vehicleInfo = PlayerVehicleToTable(vehicle, complete)
         vehicleInfo["isLastVehicle"] = false
         vehicleInfo["index"] = 0
         vehicles[tostring(vehicle.Net_VehicleId)] = vehicleInfo
@@ -2143,6 +2236,38 @@ end
 
 
 local rpPlayers = {}
+
+LoopAsync(1000, function()
+  for characterGuid, isRpMode in pairs(rpPlayers) do
+    if isRpMode then
+      local PC = GetPlayerControllerFromGuid(characterGuid)
+      if PC:IsValid() then
+        local vehicle = PC.LastVehicle
+        if vehicle:IsValid() and vehicle.NetLC_ColdState:IsValid() and vehicle.NetLC_ColdState.bIsAIDriving then
+          local position = vehicle:K2_GetActorLocation()
+          if position.X ~= 0 and position.Y ~= 0 and position.Z ~= 0 then
+            ExecuteInGameThreadSync(function()
+              if PC:IsValid() and vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() then
+                vehicle.NetLC_ColdState.bIsAIDriving = false
+                PC:ServerExitVehicle()
+              end
+            end)
+            ExecuteInGameThreadSync(function()
+              if PC:IsValid() and vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() then
+                PC:ServerEnterVehicle(vehicle, 1, -1, false)
+              end
+            end)
+            ExecuteInGameThreadSync(function()
+              if PC:IsValid() then
+                PC:ClientShowSystemMessage(FText("You may not use autopilot in RP mode. Toggle autopilot again to turn it off."))
+              end
+            end)
+          end
+        end
+      end
+    end
+  end
+end)
 
 local function HandlePlayerExitVehicle(session)
   local characterGuid = session.pathComponents[2]
@@ -2172,21 +2297,29 @@ local function HandleSetRPMode(session)
   end
 
   if rpPlayers[characterGuid] == nil or content.state == true then
-      if content.despawn then
-        PC.Net_SpawnedVehicles:ForEach(function(index, element)
-          local vehicle = element:get()
-          if vehicle:IsValid() then
-              ExecuteInGameThread(function()
-                  PC:ServerDespawnVehicle(vehicle, 0)
-              end)
-          end
-        end)
-      end
-      rpPlayers[characterGuid] = true
-      return json.stringify { isRpMode = true }, nil, 200
+    if content.despawn then
+      ExecuteInGameThreadSync(function()
+        if PC:IsValid() and PC.Net_SpawnedVehicles:IsValid() then
+          local lastVehicleId = nil
+          --if PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
+          --  lastVehicleId = PC.LastVehicle.Net_VehicleId
+          --  PC:ServerDespawnVehicle(PC.LastVehicle, 0)
+          --end
+          PC.Net_SpawnedVehicles:ForEach(function(index, element)
+            local vehicle = element:get()
+            LogOutput("INFO", "Despawning vehicle for RP mode")
+            if vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() and vehicle.Net_VehicleId ~= lastVehicleId then
+              PC:ServerDespawnVehicle(vehicle, 0)
+            end
+          end)
+        end
+      end)
+    end
+    rpPlayers[characterGuid] = true
+    return json.stringify { isRpMode = true }, nil, 200
   else
-      rpPlayers[characterGuid] = nil
-      return json.stringify { isRpMode = false }, nil, 200
+    rpPlayers[characterGuid] = nil
+    return json.stringify { isRpMode = false }, nil, 200
   end
 
   return nil, nil, 200
@@ -2197,21 +2330,90 @@ local function HandleSpawnVehicle(session)
   local content = json.parse(session.content)
 
   if content ~= nil and type(content) == "table" and content.AssetPath and content.Location then
+    if content.driverGuid ~= nil then
+      local PC = GetPlayerControllerFromGuid(content.driverGuid)
+      if PC:IsValid() then
+        local pawn = PC:K2_GetPawn()
+        if pawn:IsValid() then
+          content.Rotation = RotatorToTable(pawn:K2_GetActorRotation())
+          content.Location = VectorToTable(pawn:K2_GetActorLocation())
+          content.Location.Z = content.Location.Z - 95
+        end
+      end
+    end
     local spawned, tag, vehicle = assetManager.SpawnActor(content.AssetPath, content.Location, content.Rotation, content.tag)
+    LogOutput("INFO", "Spawned vehicle")
 
     if spawned then
-      if content.customization then
-        vehicle.Customization.BodyMaterialIndex = content.customization.BodyMaterialIndex
-        vehicle.Customization.BodyColors:Empty()
-        for i, bc in ipairs(content.customization.BodyColors) do
-          vehicle.Customization.BodyColors[i].MaterialSlotName = FName(bc.MaterialSlotName)
-          vehicle.Customization.BodyColors[i].Color = bc.Color
+      local function setOwnerSetting(PC)
+        LogOutput("INFO", "Setting profit share")
+        if not vehicle:IsValid() then
+          return
+        end
+        if not vehicle.Net_VehicleOwnerSetting:IsValid() then
+          return
+        end
+        local ownerSettings = {
+          bLocked = false,
+          DriveAllowedPlayers = 0,
+          VehicleOwnerProfitShare = content.profitShare or 0.0,
+          LevelRequirementsToDrive = vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive,
+        }
+        vehicle.Net_VehicleOwnerSetting = ownerSettings
+        -- Temporarily set the driver as the owner to set the owner setting
+        -- There's a problem with setting profitShare with other methods
+        vehicle.Net_OwnerPlayerState = PC.PlayerState
+        PC:ServerSetOwnerVehicleSetting(vehicle, ownerSettings)
+        vehicle.Net_OwnerPlayerState = CreateInvalidObject()
+
+        if vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive:IsValid() then
+          vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive:ForEach(function(index, el)
+            el:set(1)
+          end)
+        end
+        LogOutput("INFO", "Profit share set 2")
+      end
+
+      if content.tags ~= nil  and vehicle.Tags:IsValid() then
+        LogOutput("INFO", "Setting tags")
+        for i, tag in ipairs(content.tags) do
+          vehicle.Tags[#vehicle.Tags+1] = FName(tag)
         end
       end
 
-      if content.decal then
-        ExecuteInGameThread(function()
-          if not vehicle:IsValid() then
+      if content.drivable ~= nil then
+        vehicle.bDrivable = content.drivable
+      end
+
+      if content.customization then
+        LogOutput("INFO", "Setting customization")
+        vehicle.Customization.BodyMaterialIndex = content.customization.BodyMaterialIndex
+        if vehicle.Customization.BodyColors:IsValid() then
+          vehicle.Customization.BodyColors:Empty()
+          for i, bc in ipairs(content.customization.BodyColors) do
+            vehicle.Customization.BodyColors[i].MaterialSlotName = FName(bc.MaterialSlotName)
+            vehicle.Customization.BodyColors[i].Color = bc.Color
+          end
+        end
+      end
+
+      if content.companyGuid and content.companyName then
+        LogOutput("INFO", "Setting company")
+        vehicle.Net_CompanyGuid = StringToGuid(content.companyGuid)
+        vehicle.Net_OwnerCompanyGuid = StringToGuid(content.companyGuid)
+        vehicle.Net_CompanyName = content.companyName
+      elseif content.accountNickname then
+        vehicle.Net_AccountNickname = content.accountNickname
+      end
+
+      if content.forSale ~= nil then
+        vehicle.bForSale = content.forSale
+      end
+
+      if content.decal ~= nil then
+        ExecuteInGameThreadSync(function()
+          LogOutput("INFO", "Setting decals")
+          if not vehicle:IsValid() or not vehicle.Net_Decal:IsValid() or not vehicle.Net_Decal.DecalLayers:IsValid() then
             return
           end
           local decal = TableToVehicleDecal(content.decal)
@@ -2220,16 +2422,41 @@ local function HandleSpawnVehicle(session)
             vehicle.Net_Decal.DecalLayers[index] = value
           end
           vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
-          if content.parts ~= nil then
-            vehicle.Net_Parts:Empty()
-            for i, part in ipairs(content.parts) do
-              vehicle.Net_Parts[i] = TableToVehiclePart(part)
-              vehicle.Net_Parts[i].StringValues = part.StringValues
-              vehicle.Net_Parts[i].FloatValues = part.FloatValues
-              vehicle.Net_Parts[i].Int64Values = part.Int64Values
-              vehicle.Net_Parts[i].VectorValues = part.VectorValues
+        end)
+      end
+
+      if content.parts ~= nil then
+        ExecuteInGameThreadSync(function()
+          LogOutput("INFO", "Setting parts")
+          if not vehicle:IsValid() or not vehicle.Net_Parts:IsValid() then
+            return
+          end
+          vehicle.Net_Parts:Empty()
+          for i, part in ipairs(content.parts) do
+            vehicle.Net_Parts[i] = TableToVehiclePart(part)
+            vehicle.Net_Parts[i].StringValues = part.StringValues
+            vehicle.Net_Parts[i].FloatValues = part.FloatValues
+            vehicle.Net_Parts[i].Int64Values = part.Int64Values
+            vehicle.Net_Parts[i].VectorValues = part.VectorValues
+          end
+        end)
+        ExecuteInGameThreadSync(function()
+          vehicle:ServerSetParts(vehicle.Net_Parts)
+        end)
+      end
+
+      if content.driverGuid ~= nil then
+        ExecuteInGameThreadSync(function()
+          LogOutput("INFO", "Setting driver")
+          if not vehicle:IsValid() then
+            return
+          end
+          local PC = GetPlayerControllerFromGuid(content.driverGuid)
+          if PC:IsValid() then
+            if PC.PlayerState:IsValid() then
+              setOwnerSetting(PC)
             end
-            vehicle:ServerSetParts(vehicle.Net_Parts)
+            PC:ServerEnterVehicle(vehicle, 1, -1, false)
           end
         end)
       end
@@ -2249,6 +2476,7 @@ return {
   HandleGetPlayerVehicles = HandleGetPlayerVehicles,
   HandleGetPlayerVehicleDecal = HandleGetPlayerVehicleDecal,
   HandleSetPlayerVehicleDecal = HandleSetPlayerVehicleDecal,
+  HandleSetWorldVehicleDecal = HandleSetWorldVehicleDecal,
   HandleDespawnVehicle = HandleDespawnVehicle,
   HandleDetachPlayerVehicle = HandleDetachPlayerVehicle,
   HandleDespawnPlayerVehicle = HandleDespawnPlayerVehicle,

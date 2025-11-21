@@ -10,7 +10,7 @@ local socket = require("socket")
 ---@return boolean
 ---@return string? AssetTag
 ---@return AActor? SpawnedActor
-local function SpawnActor(assetPath, location, rotation, tag)
+local function SpawnActor(assetPath, location, rotation, tag, scale)
   local world = UEHelpers.GetWorld()
   if world and world:IsValid() then
     local staticMeshActorClass = StaticFindObject("/Script/Engine.StaticMeshActor")
@@ -83,7 +83,14 @@ local function SpawnActor(assetPath, location, rotation, tag)
         -- Set actor to movable
         actor:SetMobility(2)
         if actor.StaticMeshComponent:SetStaticMesh(object) then
-          actor:SetReplicates(true)
+          if scale then
+            actor.StaticMeshComponent:SetWorldScale3D({
+              X = scale and scale.X or 1,
+              Y = scale and scale.Y or 1,
+              Z = scale and scale.Z or 1,
+            })
+          end
+          actor.StaticMeshComponent:SetIsReplicated(true)
         else
           error("Failed to set " .. object:GetFullName())
         end
@@ -160,7 +167,7 @@ local function HandleSpawnActor(session)
       local assetTags = {}
       for index, value in ipairs(content) do
         if value and value.AssetPath and value.Location then
-          local spawned, tag = SpawnActor(value.AssetPath, value.Location, value.Rotation, value.tag)
+          local spawned, tag = SpawnActor(value.AssetPath, value.Location, value.Rotation, value.tag, value.scale)
           if spawned then
             table.insert(assetTags, tag)
           else
@@ -171,7 +178,7 @@ local function HandleSpawnActor(session)
       return json.stringify { data = assetTags }
     else
       if content and content.AssetPath and content.Location then
-        local spawned, tag = SpawnActor(content.AssetPath, content.Location, content.Rotation, content.tag)
+        local spawned, tag = SpawnActor(content.AssetPath, content.Location, content.Rotation, content.tag, content.scale)
         if spawned then
           return json.stringify { data = { tag } }
         else
