@@ -11,6 +11,8 @@ Commands["/despawn"] = function(PC, args)
   end
 end
 
+Commands["/d"] = Commands["/despawn"]
+
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then
     local parts = SplitString(message, " ")
