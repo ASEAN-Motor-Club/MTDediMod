@@ -50,12 +50,14 @@ local function GetServerState(zoneName)
         data.PolicePatrolRate = state.PolicePatrolRate
         data.ServerPlatformTimeSeconds = state.ServerPlatformTimeSeconds
 
-        local zones = {}
-        state.ZoneStates:ForEach(function(index, element)
-            local zone = element:get() ---@type FMTZoneState
-            table.insert(zones, ZoneToTable(zone))
-        end)
-        data.ZoneStates = zones
+        --local zones = {}
+        --if state.ZoneStates:IsValid() then
+        --  state.ZoneStates:ForEach(function(index, element)
+        --      local zone = element:get() ---@type FMTZoneState
+        --      table.insert(zones, ZoneToTable(zone))
+        --  end)
+        --end
+        --data.ZoneStates = zones
     end
     return data
 end

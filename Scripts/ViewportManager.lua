@@ -136,7 +136,7 @@ local function ShowMessagePopup(message, uniqueId)
         value:ClientShowPopupMessage(FText(message))
       end
     end
-  end)
+  end, "ShowMessagePopup")
 end
 
 local function ShowMessagePopupToCharacter(message, characterGuid)
@@ -149,7 +149,7 @@ local function ShowMessagePopupToCharacter(message, characterGuid)
     if PC:IsValid() then
       PC:ClientShowPopupMessage(FText(message))
     end
-  end)
+  end, "ShowMessagePopupToCharacter")
 end
 
 local function ShowSystemMessageToCharacter(message, characterGuid)
@@ -162,7 +162,7 @@ local function ShowSystemMessageToCharacter(message, characterGuid)
     if PC:IsValid() then
       PC:ClientShowSystemMessage(FText(message))
     end
-  end)
+  end, "ShowSystemMessageToCharacter")
 end
 
 ---Set hot bar position

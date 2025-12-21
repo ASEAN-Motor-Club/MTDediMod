@@ -91,7 +91,7 @@ local function TransferMoneyToPlayer(uniqueId, amount, message)
     if PC:IsValid() then
       PC:ClientAddMoney(amount, 'Context', FText(message), true, 'Context', 'Context')
     end
-  end)
+  end, "TransferMoneyToPlayer")
   return true
 end
 
@@ -103,7 +103,7 @@ local function TransferMoneyToCharacter(characterGuid, amount, message)
     if PC:IsValid() then
       PC:ClientAddMoney(amount, '', FText(message), true, '', '')
     end
-  end)
+  end, "TransferMoneyToCharacter")
   return true
 end
 
@@ -115,7 +115,7 @@ local function PlayerSendChat(uniqueId, message)
     if PC:IsValid() then
       PC:ServerSendChat(message, 0)
     end
-  end)
+  end, "PlayerSendChat")
   return true
 end
 
@@ -197,11 +197,11 @@ local function HandleSetPlayerName(session)
       return json.stringify { error = string.format("Invalid player controller %s", characterGuid) }, nil, 400
     end
     ExecuteInGameThreadSync(function()
-      if not PC:IsValid() or not PC.PlayerState:IsValid() then
+      if PC:IsValid() and PC.PlayerState:IsValid() then
         PC.PlayerState.PlayerNamePrivate = data.name
         PC:SetName(data.name)
       end
-    end)
+    end, "HandleSetPlayerName")
 
     return nil, nil, 200
   end
@@ -290,7 +290,7 @@ local function HandleTeleportPlayer(session)
             else
               error("Failed to teleport player")
             end
-          end)
+          end, "HandleTeleportPlayer")
 
           local msg = string.format("Teleported player %s to %s", playerId, json.stringify(location))
           return json.stringify { status = msg }

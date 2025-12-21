@@ -551,14 +551,15 @@ function MergeTable(base, append)
 end
 
 
-function ExecuteInGameThreadSync(fn)
+function ExecuteInGameThreadSync(fn, callerName)
+  callerName = callerName or "unknown"
   local wait = 0
   local isFinished = false
   ExecuteInGameThread(function()
-    LogOutput('INFO', 'ExecuteInGameThreadSync callback')
+    LogOutput('INFO', 'ExecuteInGameThreadSync callback: %s', callerName)
     fn()
     isFinished = true
-    LogOutput('INFO', 'finished ExecuteInGameThreadSync callback')
+    LogOutput('INFO', 'finished ExecuteInGameThreadSync callback: %s', callerName)
   end)
 
   while not isFinished and wait < 1000 do

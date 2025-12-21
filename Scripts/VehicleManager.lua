@@ -1623,7 +1623,7 @@ local function DespawnVehicleById(id, uniqueId)
         if playerState.bIsHost then
           ExecuteInGameThreadSync(function()
             PC:ServerDespawnVehicle(vehicle, 0)
-          end)
+          end, "DespawnVehicleById")
           return true
         else
           return webhook.CreateServerRequest(
@@ -1942,7 +1942,7 @@ local function HandleDetachPlayerVehicle(session)
             if content.message ~= nil then
               ExecuteInGameThreadSync(function()
                 PC:ClientShowSystemMessage(FText(content.message))
-              end)
+              end, "HandleDetachPlayerVehicle")
             end
           end
         end)
@@ -2006,14 +2006,14 @@ local function HandleDespawnPlayerVehicle(session)
       end)
     end
 
-    ExecuteInGameThreadSync(function()
-      for vehicleId, vehicle in pairs(vehiclesToDespawn) do
+    for vehicleId, vehicle in pairs(vehiclesToDespawn) do
+      ExecuteInGameThreadSync(function()
         LogOutput('INFO', 'Despawning vehicle %s', vehicleId)
-        if vehicle:IsValid() and PC:IsValid() and not vehicle:IsActorBeingDestroyed() then
-          PC:ServerDespawnVehicle(vehicle, 0)
+        if vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() then
+          vehicle:K2_DestroyActor()
         end
-      end
-    end)
+      end, "HandleDespawnPlayerVehicle")
+    end
 
     return json.stringify { Status = "ok" }, nil, 200
   end
@@ -2093,7 +2093,7 @@ local function HandleSetWorldVehicleDecal(session)
             vehicle.Net_Parts[i].VectorValues = part.VectorValues
           end
           vehicle:ServerSetParts(vehicle.Net_Parts)
-        end)
+        end, "HandleSetWorldVehicleDecal")
       end
     end
 
@@ -2237,11 +2237,11 @@ end
 
 local rpPlayers = {}
 
-LoopAsync(1000, function()
+LoopAsync(5000, function()
   for characterGuid, isRpMode in pairs(rpPlayers) do
     if isRpMode then
       local PC = GetPlayerControllerFromGuid(characterGuid)
-      if PC:IsValid() then
+      if PC:IsValid() and PC.PlayerState:IsValid() and PC.PlayerState.VehicleKey:ToString() ~= "None" then
         local vehicle = PC.LastVehicle
         if vehicle:IsValid() and vehicle.NetLC_ColdState:IsValid() and vehicle.NetLC_ColdState.bIsAIDriving then
           local position = vehicle:K2_GetActorLocation()
@@ -2251,17 +2251,12 @@ LoopAsync(1000, function()
                 vehicle.NetLC_ColdState.bIsAIDriving = false
                 PC:ServerExitVehicle()
               end
-            end)
-            ExecuteInGameThreadSync(function()
-              if PC:IsValid() and vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() then
-                PC:ServerEnterVehicle(vehicle, 1, -1, false)
-              end
-            end)
+            end, "RP mode autopilot ServerExitVehicle")
             ExecuteInGameThreadSync(function()
               if PC:IsValid() then
                 PC:ClientShowSystemMessage(FText("You may not use autopilot in RP mode. Toggle autopilot again to turn it off."))
               end
-            end)
+            end, "RP mode autopilot ClientShowSystemMessage")
           end
         end
       end
@@ -2275,7 +2270,9 @@ local function HandlePlayerExitVehicle(session)
   if not PC:IsValid() then
     return json.stringify { error = "Invalid player controller" }, nil, 400
   end
-  PC:ServerExitVehicle()
+  ExecuteInGameThreadSync(function()
+    PC:ServerExitVehicle()
+  end, "HandlePlayerExitVehicle")
   return nil, nil, 200
 end
 
@@ -2298,22 +2295,25 @@ local function HandleSetRPMode(session)
 
   if rpPlayers[characterGuid] == nil or content.state == true then
     if content.despawn then
+      local lastVehicleId = nil
       ExecuteInGameThreadSync(function()
-        if PC:IsValid() and PC.Net_SpawnedVehicles:IsValid() then
-          local lastVehicleId = nil
-          --if PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
-          --  lastVehicleId = PC.LastVehicle.Net_VehicleId
-          --  PC:ServerDespawnVehicle(PC.LastVehicle, 0)
-          --end
-          PC.Net_SpawnedVehicles:ForEach(function(index, element)
-            local vehicle = element:get()
+        if PC:IsValid() and PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
+          LogOutput("INFO", "Despawning last vehicle for RP mode")
+          lastVehicleId = PC.LastVehicle.Net_VehicleId
+          PC.LastVehicle:K2_DestroyActor()
+        end
+      end, "HandleSetRPMode despawn current vehicle")
+      if PC:IsValid() and PC.Net_SpawnedVehicles:IsValid() then
+        PC.Net_SpawnedVehicles:ForEach(function(index, element)
+          local vehicle = element:get()
+          ExecuteInGameThreadSync(function()
             LogOutput("INFO", "Despawning vehicle for RP mode")
             if vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() and vehicle.Net_VehicleId ~= lastVehicleId then
-              PC:ServerDespawnVehicle(vehicle, 0)
+              vehicle:K2_DestroyActor()
             end
-          end)
-        end
-      end)
+          end, "HandleSetRPMode despawn spawned vehicle")
+        end)
+      end
     end
     rpPlayers[characterGuid] = true
     return json.stringify { isRpMode = true }, nil, 200
@@ -2422,7 +2422,7 @@ local function HandleSpawnVehicle(session)
             vehicle.Net_Decal.DecalLayers[index] = value
           end
           vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
-        end)
+        end, "HandleSpawnVehicle ServerSetDecal")
       end
 
       if content.parts ~= nil then
@@ -2439,10 +2439,8 @@ local function HandleSpawnVehicle(session)
             vehicle.Net_Parts[i].Int64Values = part.Int64Values
             vehicle.Net_Parts[i].VectorValues = part.VectorValues
           end
-        end)
-        ExecuteInGameThreadSync(function()
           vehicle:ServerSetParts(vehicle.Net_Parts)
-        end)
+        end, "HandleSpawnVehicle assign parts")
       end
 
       if content.driverGuid ~= nil then
@@ -2458,7 +2456,7 @@ local function HandleSpawnVehicle(session)
             end
             PC:ServerEnterVehicle(vehicle, 1, -1, false)
           end
-        end)
+        end, "HandleSpawnVehicle ServerEnterVehicle")
       end
 
       return json.stringify { data = { tag }, actor = vehicle:GetFullName() }
@@ -2469,6 +2467,27 @@ local function HandleSpawnVehicle(session)
   return nil, nil, 400
 end
 
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(ctx, Vehicle)
+  local PC = ctx:get()
+  if not PC:IsValid() then
+    return
+  end
+  local playerState = PC.PlayerState
+  if not playerState:IsValid() then
+    return
+  end
+  local characterGuid = GuidToString(playerState.CharacterGuid)
+  if rpPlayers[characterGuid] ~= true then
+    return
+  end
+  local lastVehicle = Vehicle:get()
+  if not lastVehicle:IsValid() then
+    return
+  end
+
+  LogOutput("INFO", "Despawning because of resetting during RP mode")
+  PC:ServerDespawnVehicle(lastVehicle, 0)
+end)
 
 return {
   HandleGetVehicles = HandleGetVehicles,
