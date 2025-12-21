@@ -19,6 +19,7 @@ local chatManager = require("ChatManager")
 local widgetManager = require("ViewportManager")
 local companyManager = require("CompanyManager")
 local characterManager = require("CharacterManager")
+local Commands = require("Commands")
 
 local function LoadWebserver()
   local status, err = pcall(function()
