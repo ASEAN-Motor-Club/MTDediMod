@@ -2467,10 +2467,6 @@ local function HandleSpawnVehicle(session)
   return nil, nil, 400
 end
 
-RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle, ColdState, Multicast)
-  LogOutput("INFO", "ServerSyncColdState detected")
-end)
-
 RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(ctx, Vehicle)
   local PC = ctx:get()
   if not PC:IsValid() then
