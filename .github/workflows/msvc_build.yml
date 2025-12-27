@@ -1,19 +1,20 @@
-name: Build and Release on Tag
+name: Build and Release
 
 on:
   push:
+    branches:
+      - 'release/*'
   workflow_dispatch:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   build-core:
     runs-on: windows-2022
     outputs:
-      version: ${{ steps.package-build.outputs.version }}
-      majorMinorVersion: ${{ steps.package-build.outputs.majorMinorVersion }}
+      version: ${{ steps.version.outputs.version }}
+      majorMinorVersion: ${{ steps.version.outputs.majorMinorVersion }}
 
     steps:
       - name: Checkout working repository
@@ -21,6 +22,7 @@ jobs:
         with:
           path: MotorTownMods
           fetch-depth: 0
+          lfs: true
 
       - name: Checkout UE4SS
         uses: actions/checkout@v4
@@ -66,12 +68,13 @@ jobs:
           xmake build
 
       - name: Package build
-        id: package-build
+        id: version
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          if ($tag.StartsWith("v")) { $modVersion = $tag.Substring(1) } else { $modVersion = $tag }
-
+          $branch = "${{ github.ref_name }}"
+          $modVersion = $branch -replace 'release/', ''
+          if ($modVersion.StartsWith("v")) { $modVersion = $modVersion.Substring(1) }
+          
           [regex]$majorMinorRegex = '^([0-9]+\.[0-9]+)'
           $majorMinorVersion = $majorMinorRegex.Match($modVersion).Groups[1].Value
 
@@ -81,7 +84,9 @@ jobs:
           Copy-Item -Recurse .\MotorTownMods\Scripts .\output\MotorTownMods\
 
           $staticsFilePath = ".\output\MotorTownMods\Scripts\Statics.lua"
-          (Get-Content $staticsFilePath) -replace '(ModVersion\s*=\s*").*(")', ('${1}' + $modVersion + '${2}') | Set-Content $staticsFilePath
+          if (Test-Path $staticsFilePath) {
+            (Get-Content $staticsFilePath) -replace '(ModVersion\s*=\s*").*(")', ('${1}' + $modVersion + '${2}') | Set-Content $staticsFilePath
+          }
 
           Compress-Archive -Path .\output\MotorTownMods ".\MotorTownMods_v${modVersion}.zip"
 
@@ -90,6 +95,18 @@ jobs:
 
           (Get-Content -Path $env:GITHUB_EVENT_PATH | ConvertFrom-Json).head_commit.message > commit_msg.txt
           Get-Content commit_msg.txt | select -skip 2 > release_description.md
+
+      - name: Commit DLL to branch
+        working-directory: MotorTownMods
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git lfs install
+          mkdir -p dlls
+          cp ../Binaries/Game__Shipping__Win64/MotorTownMods/MotorTownMods.dll dlls/main.dll
+          git add dlls/main.dll
+          git commit -m "ci: update compiled DLL for ${{ steps.version.outputs.version }}" || echo "No changes"
+          git push origin HEAD:${{ github.ref }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -216,6 +233,7 @@ jobs:
     needs:
       - build-core
       - build-deps
+    if: success() && github.event_name != 'workflow_dispatch'
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -227,19 +245,11 @@ jobs:
           pattern: MotorTownMods_deps_*
           merge-multiple: true
 
-      - name: Delete old release assets
-        uses: mknejp/delete-release-assets@v1
-        continue-on-error: true
-        with:
-          token: ${{ github.token }}
-          tag: v${{ needs.build-core.outputs.majorMinorVersion }}
-          assets: "*"
-
       - name: Create/update release
         uses: softprops/action-gh-release@v2
         with:
           name: MotorTownMods v${{ needs.build-core.outputs.version }}
-          tag_name: v${{ needs.build-core.outputs.majorMinorVersion }}
+          tag_name: ${{ github.ref_name }}
           body_path: release_description.md
           files: "**/*.zip"
           make_latest: true
