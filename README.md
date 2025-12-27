@@ -82,6 +82,33 @@ Due to the webserver being ran on a separate thread, a stop command must be issu
 
 More detailed instructions can be found in the [docs](./docs).
 
+## Release Pipeline
+
+This repository uses an automated CI/CD pipeline via GitHub Actions to manage releases and compiled binaries.
+
+### Versioning & Branches
+
+We use a branch-based versioning system. All official releases are maintained on branches named `release/v<number>` (e.g., `release/v19`).
+
+ - **`master` branch**: Used for active development of Lua scripts and C++ source code.
+ - **`release/*` branches**: Used for stable deployments. These branches contain both the Lua scripts and the pre-compiled `dlls/main.dll`.
+
+### Automated Build Process
+
+When a push occurs on any branch matching `release/*`:
+1.  **GitHub Actions** triggers the `Build and Release` workflow.
+2.  It sets up a Windows environment with the necessary MSVC toolset and `xmake`.
+3.  The project is compiled into a `Shipping` DLL.
+4.  The compiled DLL is then **automatically committed and pushed** back to the same release branch.
+5.  A GitHub Release is created/updated with the packaged zip artifacts.
+
+### Git LFS
+
+Binary files, specifically `dlls/main.dll`, are tracked using **Git LFS**. Ensure you have Git LFS installed locally if you intend to work with these files:
+```bash
+git lfs install
+```
+
 ## Contributing
 
 More contributions are welcomed! Read how to contribute [here](./docs/CONTRIBUTING.md).
