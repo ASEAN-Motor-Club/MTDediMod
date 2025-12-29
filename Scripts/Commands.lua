@@ -33,14 +33,18 @@ local function HandleCommand(PC, message)
 end
 
 RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", function(PC, Message, Category)
+  LogOutput("INFO", "Incoming ServerSendChat")
   local playerController = PC:get()
   local message = Message:get():ToString()
+
+  LogOutput("INFO", "Message: %s", message)
 
   if not playerController:IsValid() or not playerController.PlayerState:IsValid() then
     return
   end
 
   if HandleCommand(playerController, message) then
+    LogOutput("INFO", "Hiding slash command %s", message)
     Category:set(2) -- 2 = Company (Hidden from public chat)
   end
 end)
