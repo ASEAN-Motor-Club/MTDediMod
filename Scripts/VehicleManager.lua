@@ -2325,22 +2325,6 @@ local function HandleSetRPMode(session)
   return nil, nil, 200
 end
 
-local function ToggleRPMode(PC)
-  if not PC.Net_SpawnedVehicles:IsValid() then
-    return false
-  end
-
-  if rpPlayers[characterGuid] == nil then
-    DespawnPlayerVehicle(PC)
-    rpPlayers[characterGuid] = true
-    return true
-  else
-    rpPlayers[characterGuid] = nil
-    return false
-  end
-end
-
-
 local function HandleSpawnVehicle(session)
   local content = json.parse(session.content)
 
@@ -2534,6 +2518,22 @@ local function DespawnPlayerVehicle(PC)
   end
   return count
 end
+
+local function ToggleRPMode(PC)
+  if not PC.Net_SpawnedVehicles:IsValid() then
+    return false
+  end
+
+  if rpPlayers[characterGuid] == nil then
+    DespawnPlayerVehicle(PC)
+    rpPlayers[characterGuid] = true
+    return true
+  else
+    rpPlayers[characterGuid] = nil
+    return false
+  end
+end
+
 
 return {
   DespawnPlayerVehicle = DespawnPlayerVehicle,
