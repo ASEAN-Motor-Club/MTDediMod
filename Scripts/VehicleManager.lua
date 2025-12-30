@@ -2524,6 +2524,12 @@ local function ToggleRPMode(PC)
     return false
   end
 
+  local playerState = PC.PlayerState
+  if not playerState:IsValid() then
+    return false
+  end
+  local characterGuid = GuidToString(playerState.CharacterGuid)
+
   if rpPlayers[characterGuid] == nil then
     DespawnPlayerVehicle(PC)
     rpPlayers[characterGuid] = true
