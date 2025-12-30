@@ -2,6 +2,36 @@ local vehicleManager = require("VehicleManager")
 
 local Commands = {}
 
+-- Alphanumeric characters for verification code (excluding ambiguous chars like 0/O, 1/I/l)
+local CODE_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+--- Generates a deterministic 4-character verification code based on player name and command name.
+--- Uses djb2 hash algorithm for consistent, reproducible codes.
+--- @param playerName string The player's name
+--- @param commandName string The command name (e.g., "/rp_mode")
+--- @return string A 4-character alphanumeric verification code
+local function GenerateVerificationCode(playerName, commandName)
+  local input = playerName .. ":" .. commandName
+  
+  -- djb2 hash algorithm
+  local hash = 5381
+  for i = 1, #input do
+    local char = string.byte(input, i)
+    hash = ((hash * 33) + char) % 2147483647  -- Keep within 32-bit range
+  end
+  
+  -- Convert hash to 4-character code
+  local code = ""
+  local numChars = #CODE_CHARS
+  for _ = 1, 4 do
+    local index = (hash % numChars) + 1
+    code = code .. string.sub(CODE_CHARS, index, index)
+    hash = math.floor(hash / numChars)
+  end
+  
+  return code
+end
+
 Commands["/despawn"] = function(PC, args)
   local count = vehicleManager.DespawnPlayerVehicle(PC)
   if count > 0 then
@@ -14,13 +44,41 @@ end
 Commands["/d"] = Commands["/despawn"]
 
 Commands["/rp_mode"] = function(PC, args)
-  if args[1] == "confirm" then
+  local playerName = PC.PlayerState:GetPlayerName():ToString()
+  local expectedCode = GenerateVerificationCode(playerName, "/rp_mode")
+  
+  if args[1] == nil then
+    -- No argument provided, show warning and verification code prompt
+    local msg = "<Title>RP Mode</>\n\n" ..
+      "<Warning>Warning:</> Enabling RP Mode will <Bold>despawn your current vehicle</>.\n\n" ..
+      "To confirm, type:\n" ..
+      "<Highlight>/rp_mode " .. expectedCode .. "</>"
+    PC:ClientShowPopupMessage(FText(msg))
+    LogOutput("INFO", "Player %s must confirm with: /rp_mode %s", playerName, expectedCode)
+    return
+  end
+  
+  if string.upper(args[1]) == expectedCode then
     local rpMode = vehicleManager.ToggleRPMode(PC)
     if rpMode then
-      LogOutput("INFO", "Set RP Mode = ON player %s", count, PC.PlayerState:GetPlayerName():ToString())
+      local msg = "<Title>RP Mode</>\n\n" ..
+        "<EffectGood>RP Mode is now ON</>\n\n" ..
+        "<Small>Your vehicle has been despawned.</>"
+      PC:ClientShowPopupMessage(FText(msg))
+      LogOutput("INFO", "Set RP Mode = ON player %s", playerName)
     else
-      LogOutput("INFO", "Set RP Mode = OFF player %s", count, PC.PlayerState:GetPlayerName():ToString())
+      local msg = "<Title>RP Mode</>\n\n" ..
+        "<EffectGood>RP Mode is now OFF</>"
+      PC:ClientShowPopupMessage(FText(msg))
+      LogOutput("INFO", "Set RP Mode = OFF player %s", playerName)
     end
+  else
+    local msg = "<Title>RP Mode</>\n\n" ..
+      "<Warning>Invalid verification code.</>\n\n" ..
+      "Your code is:\n" ..
+      "<Highlight>/rp_mode " .. expectedCode .. "</>"
+    PC:ClientShowPopupMessage(FText(msg))
+    LogOutput("INFO", "Invalid verification code for player %s. Expected: %s", playerName, expectedCode)
   end
 end
 
