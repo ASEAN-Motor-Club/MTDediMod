@@ -2558,5 +2558,6 @@ return {
   HandleSetVehicleParameter = HandleSetVehicleParameter,
   HandleGetRPMode = HandleGetRPMode,
   HandleSetRPMode = HandleSetRPMode,
+  ToggleRPMode = ToggleRPMode,
   HandlePlayerExitVehicle = HandlePlayerExitVehicle,
 }
