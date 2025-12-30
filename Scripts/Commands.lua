@@ -13,6 +13,19 @@ end
 
 Commands["/d"] = Commands["/despawn"]
 
+Commands["/rp_mode"] = function(PC, args)
+  if args[1] == "confirm" then
+    local rpMode = vehicleManager.ToggleRPMode(PC)
+    if rpMode then
+      LogOutput("INFO", "Set RP Mode = ON player %s", count, PC.PlayerState:GetPlayerName():ToString())
+    else
+      LogOutput("INFO", "Set RP Mode = OFF player %s", count, PC.PlayerState:GetPlayerName():ToString())
+    end
+  end
+end
+
+Commands["/rp"] = Commands["/rp_mode"]
+
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then
     local parts = SplitString(message, " ")
@@ -45,6 +58,6 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", funct
 
   if HandleCommand(playerController, message) then
     LogOutput("INFO", "Hiding slash command %s", message)
-    Category:set(2) -- 2 = Company (Hidden from public chat)
+    --Category:set(2) -- 2 = Company (Hidden from public chat)
   end
 end)
