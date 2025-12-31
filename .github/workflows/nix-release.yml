@@ -42,14 +42,25 @@ jobs:
           cd lua-5.4.8\src
           cl /c /O2 /MT /DLUA_COMPAT_5_3 *.c
           lib /out:lua54.lib lapi.obj lcode.obj lctype.obj ldebug.obj ldo.obj ldump.obj lfunc.obj lgc.obj llex.obj lmem.obj lobject.obj lopcodes.obj lparser.obj lstate.obj lstring.obj ltable.obj ltm.obj lundump.obj lvm.obj lzio.obj lauxlib.obj lbaselib.obj lcorolib.obj ldblib.obj liolib.obj lmathlib.obj loslib.obj lstrlib.obj ltablib.obj lutf8lib.obj loadlib.obj linit.obj
+          cl /O2 /MT lua.c lua54.lib /Fe:lua.exe
           mkdir %GITHUB_WORKSPACE%\lua\bin
           mkdir %GITHUB_WORKSPACE%\lua\include
           mkdir %GITHUB_WORKSPACE%\lua\lib
+          copy lua.exe %GITHUB_WORKSPACE%\lua\bin\
           copy lua.h %GITHUB_WORKSPACE%\lua\include\
           copy luaconf.h %GITHUB_WORKSPACE%\lua\include\
           copy lualib.h %GITHUB_WORKSPACE%\lua\include\
           copy lauxlib.h %GITHUB_WORKSPACE%\lua\include\
           copy lua54.lib %GITHUB_WORKSPACE%\lua\lib\
+
+      - name: Setup Lua PATH
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          "${{ github.workspace }}\lua\bin" | Out-File -FilePath "$env:GITHUB_PATH" -Append
+          "LUA=${{ github.workspace }}\lua\bin\lua.exe" | Out-File -FilePath "$env:GITHUB_ENV" -Append
+          "LUA_INCDIR=${{ github.workspace }}\lua\include" | Out-File -FilePath "$env:GITHUB_ENV" -Append
+          "LUA_LIBDIR=${{ github.workspace }}\lua\lib" | Out-File -FilePath "$env:GITHUB_ENV" -Append
 
       - uses: luarocks/gh-actions-luarocks@v6
         if: steps.cache.outputs.cache-hit != 'true'
