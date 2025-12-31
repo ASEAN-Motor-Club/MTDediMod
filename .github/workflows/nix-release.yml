@@ -126,6 +126,11 @@ jobs:
           key: xwin-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: xwin-${{ runner.os }}-
 
+      - name: Update Flake Lock
+        env:
+          NIX_CONFIG: "access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}"
+        run: nix flake update ue4ss
+
       - name: Configure
         env:
           NIX_CONFIG: "access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}"
