@@ -16,6 +16,7 @@ package/
 result
 .direnv/
 .envrc
+.env
 
 # VSCode (track settings, ignore user-specific)
 .vscode/*
