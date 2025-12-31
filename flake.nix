@@ -28,20 +28,35 @@
       perSystem = { system, ... }:
         let
           lib = ue4ss-cross.lib.${system};
+          configureScript = lib.mkConfigureScript {
+            modName = "MotorTownMods";
+            proxyPath = "C:\\Windows\\System32\\version.dll";
+          };
+          configureApp = {
+            type = "app";
+            program = "${configureScript}/bin/MotorTownMods-configure";
+          };
+
+          buildScript = lib.mkBuildScript {
+            modName = "MotorTownMods";
+          };
+          buildApp = {
+            type = "app";
+            program = "${buildScript}/bin/MotorTownMods-build";
+          };
         in
         {
           # Development shell with all cross-compile tools
           devShells.default = lib.mkDevShell {};
 
-          # Build script (run with `nix run`)
-          apps.default = {
-            type = "app";
-            program = "${lib.mkBuildScript {
-              modDir = ./src;
-              modName = "MotorTownMods";
-            }}/bin/MotorTownMods-build";
-          };
+          # Configure script
+          apps.configure = configureApp;
+
+          # Build script
+          apps.build = buildApp;
+
+          # Default to build
+          apps.default = buildApp;
         };
     };
 }
-
