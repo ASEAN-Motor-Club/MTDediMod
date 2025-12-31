@@ -1,5 +1,6 @@
 *.dll
 .xwin-cache
+.DS_Store
 
 # Build outputs
 build-cross/
