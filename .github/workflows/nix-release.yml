@@ -104,11 +104,11 @@ jobs:
 
       - name: Configure Git Auth
         run: |
-          # Configure git to use PAT for GitHub Fetching
+          # Configure git system-wide so Nix daemon also uses the PAT
           TOKEN="${{ secrets.UEPSEUDO_PAT }}"
-          git config --global url."https://x-access-token:$TOKEN@github.com/".insteadOf "git@github.com:"
-          git config --global url."https://x-access-token:$TOKEN@github.com/".insteadOf "ssh://git@github.com/"
-          git config --global url."https://x-access-token:$TOKEN@github.com/".insteadOf "https://github.com/"
+          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "git@github.com:"
+          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "ssh://git@github.com/"
+          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "https://github.com/"
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
