@@ -122,12 +122,18 @@ jobs:
           restore-keys: xwin-${{ runner.os }}-
 
       - name: Configure
+        env:
+          NIX_CONFIG: "access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}"
         run: nix run .#configure
 
       - name: Build
+        env:
+          NIX_CONFIG: "access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}"
         run: nix run .#build
 
       - name: Package
+        env:
+          NIX_CONFIG: "access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}"
         run: nix run .#package
 
       - name: Extract version
