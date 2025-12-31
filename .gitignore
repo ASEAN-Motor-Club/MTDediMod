@@ -13,5 +13,8 @@ result
 .direnv/
 .envrc
 
-# VSCode
-.vscode/
+# VSCode (track settings, ignore user-specific)
+.vscode/*
+!.vscode/settings.json
+!.vscode/c_cpp_properties.json
+!.vscode/extensions.json
