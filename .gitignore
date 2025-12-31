@@ -10,3 +10,7 @@ build/
 # Nix
 result
 .direnv/
+.envrc
+
+# VSCode
+.vscode/

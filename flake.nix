@@ -9,6 +9,7 @@
     ue4ss = {
       type = "git";
       url = "https://github.com/ASEAN-Motor-Club/RE-UE4SS.git";
+      rev = "740c61d030f14269d311cdcb4ae2b830df9f43de";
       submodules = true;
       flake = false;
     };

@@ -148,16 +148,17 @@
     "ue4ss": {
       "flake": false,
       "locked": {
-        "lastModified": 1762929554,
-        "narHash": "sha256-D7rDgS5hUotZb7rUPFESeBRhOhc4Df58lKRLaDm+1Ps=",
+        "lastModified": 1767157237,
+        "narHash": "sha256-0IgakVANwnzaWHhrbpbDL8CMXWu1UxbWWEChAP2ENrs=",
         "ref": "refs/heads/main",
-        "rev": "2238388cf44e098c370e340cea17442fa144ab09",
-        "revCount": 1680,
+        "rev": "740c61d030f14269d311cdcb4ae2b830df9f43de",
+        "revCount": 1831,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/ASEAN-Motor-Club/RE-UE4SS.git"
       },
       "original": {
+        "rev": "740c61d030f14269d311cdcb4ae2b830df9f43de",
         "submodules": true,
         "type": "git",
         "url": "https://github.com/ASEAN-Motor-Club/RE-UE4SS.git"
@@ -173,11 +174,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1767154901,
-        "narHash": "sha256-T6E1bbnvIGCc/YXJI+n8aXHAgW5XrBMSwhMxk1T4vcg=",
+        "lastModified": 1767163291,
+        "narHash": "sha256-FkLsr7V/bb0OhKMibA5dWkSxG9GqYik7f5j46yz06Wc=",
         "owner": "ASEAN-Motor-Club",
         "repo": "UE4SSCPPTemplate",
-        "rev": "a85b6e4bb8c6a1dd8b43222cf9c5ab8f9b03728a",
+        "rev": "4352c5151310321a760357a22620bb5702d0d8fe",
         "type": "github"
       },
       "original": {
