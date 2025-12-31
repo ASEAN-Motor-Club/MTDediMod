@@ -9,7 +9,8 @@
     ue4ss = {
       type = "git";
       url = "https://github.com/ASEAN-Motor-Club/RE-UE4SS.git";
-      rev = "740c61d030f14269d311cdcb4ae2b830df9f43de";
+      ref = "feat/reinstall-mods";
+      rev = "20c7f2b6023476b6167125e1689725ca4194e3b1";
       submodules = true;
       flake = false;
     };
@@ -25,7 +26,7 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
 
-      perSystem = { system, ... }:
+      perSystem = { system, pkgs, ... }:
         let
           lib = ue4ss-cross.lib.${system};
           configureScript = lib.mkConfigureScript {
@@ -57,7 +58,9 @@
         in
         {
           # Development shell with all cross-compile tools
-          devShells.default = lib.mkDevShell {};
+          devShells.default = (lib.mkDevShell {}).overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.gh ];
+          });
 
           # Configure script
           apps.configure = configureApp;
