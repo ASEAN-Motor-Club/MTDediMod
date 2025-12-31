@@ -1,1 +1,12 @@
 *.dll
+.xwin-cache
+
+# Build outputs
+build-cross/
+build/
+/CMakeLists.txt
+/toolchain.cmake
+
+# Nix
+result
+.direnv/
