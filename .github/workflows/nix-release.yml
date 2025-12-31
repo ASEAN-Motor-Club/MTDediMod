@@ -101,6 +101,13 @@ jobs:
           lfs: true
           token: ${{ secrets.UEPSEUDO_PAT }}
 
+      - name: Configure Git credentials for private submodules
+        run: |
+          TOKEN="${{ secrets.UEPSEUDO_PAT }}"
+          git config --global url."https://x-access-token:$TOKEN@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token:$TOKEN@github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://x-access-token:$TOKEN@github.com/".insteadOf "https://github.com/"
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
 
