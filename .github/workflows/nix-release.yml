@@ -1,0 +1,172 @@
+name: Nix Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ============================================================
+  # Job 1: Build Lua native dependencies (Windows - cached)
+  # ============================================================
+  build-lua-deps:
+    runs-on: windows-2022
+    steps:
+      - name: Cache Lua dependencies
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: shared.zip
+          key: lua-deps-socket-cjson-v1-${{ hashFiles('.github/workflows/nix-release.yml') }}
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          arch: x64
+
+      - name: Build Lua 5.4
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          curl -L -o lua.tar.gz https://www.lua.org/ftp/lua-5.4.8.tar.gz
+          tar -xzf lua.tar.gz
+          cd lua-5.4.8\src
+          cl /c /O2 /MT /DLUA_COMPAT_5_3 *.c
+          lib /out:lua54.lib lapi.obj lcode.obj lctype.obj ldebug.obj ldo.obj ldump.obj lfunc.obj lgc.obj llex.obj lmem.obj lobject.obj lopcodes.obj lparser.obj lstate.obj lstring.obj ltable.obj ltm.obj lundump.obj lvm.obj lzio.obj lauxlib.obj lbaselib.obj lcorolib.obj ldblib.obj liolib.obj lmathlib.obj loslib.obj lstrlib.obj ltablib.obj lutf8lib.obj loadlib.obj linit.obj
+          mkdir %GITHUB_WORKSPACE%\lua\bin
+          mkdir %GITHUB_WORKSPACE%\lua\include
+          mkdir %GITHUB_WORKSPACE%\lua\lib
+          copy lua.h %GITHUB_WORKSPACE%\lua\include\
+          copy luaconf.h %GITHUB_WORKSPACE%\lua\include\
+          copy lualib.h %GITHUB_WORKSPACE%\lua\include\
+          copy lauxlib.h %GITHUB_WORKSPACE%\lua\include\
+          copy lua54.lib %GITHUB_WORKSPACE%\lua\lib\
+
+      - uses: luarocks/gh-actions-luarocks@v6
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          withLuaPath: ${{ github.workspace }}\lua
+
+      - name: Install LuaSocket and Cjson
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          luarocks install --local luasocket CFLAGS="/MT"
+          luarocks install --local lua-cjson CFLAGS="/MT"
+          
+          New-Item -ItemType Directory shared
+          Copy-Item -Recurse -Force $env:APPDATA\luarocks\*\lua\5.4\* .\shared\
+          Compress-Archive -Path .\shared .\shared.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lua-deps
+          path: shared.zip
+          retention-days: 30
+
+  # ============================================================
+  # Job 2: Build mod with Nix (Linux - parallel)
+  # ============================================================
+  build-mod:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Setup Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Cache xwin
+        uses: actions/cache@v4
+        with:
+          path: .xwin-cache
+          key: xwin-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-keys: xwin-${{ runner.os }}-
+
+      - name: Configure
+        run: nix run .#configure
+
+      - name: Build
+        run: nix run .#build
+
+      - name: Package
+        run: nix run .#package
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Upload mod artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mod-package
+          path: MotorTownMods-package.zip
+          retention-days: 30
+
+  # ============================================================
+  # Job 3: Merge and release
+  # ============================================================
+  create-release:
+    needs: [build-lua-deps, build-mod]
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          merge-multiple: false
+
+      - name: Merge packages
+        run: |
+          VERSION="${{ needs.build-mod.outputs.version }}"
+          
+          # Extract mod package
+          unzip mod-package/MotorTownMods-package.zip -d release
+          
+          # Extract Lua deps into the Mods shared folder
+          unzip lua-deps/shared.zip -d lua-deps-extracted
+          mkdir -p release/ue4ss/Mods/shared
+          cp -r lua-deps-extracted/shared/* release/ue4ss/Mods/shared/
+          
+          # Create final zip
+          cd release
+          zip -r "../MotorTownMods_v${VERSION}.zip" .
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MotorTownMods v${{ needs.build-mod.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          files: MotorTownMods_v*.zip
+          generate_release_notes: true
+          make_latest: true

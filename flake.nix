@@ -14,7 +14,7 @@
       flake = false;
     };
     
-    # UE4SS cross-compile toolchain with our fork
+    # UE4SS cross-compile toolchain
     ue4ss-cross = {
       url = "github:ASEAN-Motor-Club/UE4SSCPPTemplate";
       inputs.ue4ss.follows = "ue4ss";  # Use our fork instead of upstream
@@ -44,6 +44,16 @@
             type = "app";
             program = "${buildScript}/bin/MotorTownMods-build";
           };
+
+          packageScript = lib.mkPackageScript {
+            modName = "MotorTownMods";
+            luaScriptsDir = "./Scripts";
+            enabledTxtPath = "./enabled.txt";
+          };
+          packageApp = {
+            type = "app";
+            program = "${packageScript}/bin/MotorTownMods-package";
+          };
         in
         {
           # Development shell with all cross-compile tools
@@ -54,6 +64,9 @@
 
           # Build script
           apps.build = buildApp;
+
+          # Package script - creates deployable zip
+          apps.package = packageApp;
 
           # Default to build
           apps.default = buildApp;
