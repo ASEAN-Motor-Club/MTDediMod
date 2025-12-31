@@ -47,6 +47,10 @@ target_link_libraries(MotorTownMods PRIVATE
 )
 
 # Include directories - UE4SS headers are provided by the Nix environment
+if(NOT DEFINED UE4SS_SOURCE_DIR AND DEFINED ENV{UE4SS_SOURCE_DIR})
+    set(UE4SS_SOURCE_DIR $ENV{UE4SS_SOURCE_DIR})
+endif()
+
 target_include_directories(MotorTownMods PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${UE4SS_SOURCE_DIR}/UE4SS/include
