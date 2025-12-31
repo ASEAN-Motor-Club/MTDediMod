@@ -99,11 +99,12 @@ jobs:
         with:
           fetch-depth: 0
           lfs: true
-          token: ${{ secrets.UEPSEUDO_PAT }}
+          submodules: false
           persist-credentials: false
 
-      - name: Configure Git credentials for private submodules
+      - name: Configure Git Auth
         run: |
+          # Configure git to use PAT for GitHub Fetching
           TOKEN="${{ secrets.UEPSEUDO_PAT }}"
           git config --global url."https://x-access-token:$TOKEN@github.com/".insteadOf "git@github.com:"
           git config --global url."https://x-access-token:$TOKEN@github.com/".insteadOf "ssh://git@github.com/"
