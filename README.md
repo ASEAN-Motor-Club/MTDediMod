@@ -22,35 +22,39 @@ For a full functionality of the mod, download and extract [luasocket](https://gi
 
 #### (Optional) C++ module
 
-The C++ module are included in the release. Any changes to the C++ files need a recompile. These steps are similar to [creating a C++ mod](https://docs.ue4ss.com/dev/guides/creating-a-c++-mod.html) tutorial. Please read them before proceeding for a full understanding of the project structure.
+The C++ module is included in the release. Any changes to the C++ files need a recompile.
 
-1. Clone the RE-UE4SS into the `ue4ss` directory.
+##### Cross-Compilation with Nix (Recommended)
 
-   ```shell
-   git -C <path/to/ue4ss> clone --recurse-submodules https://github.com/drpsyko101/RE-UE4SS.git
-   ```
+This project supports cross-compiling to Windows from macOS/Linux using Nix. No Windows machine or Visual Studio required!
 
-2. Create a `xmake.lua` file at `ue4ss/` directory with these contents:
+**Prerequisites:**
+- [Nix package manager](https://nixos.org/download.html) with flakes enabled
 
-   ```lua
-   includes("RE-UE4SS")
-   includes("MotorTownMods")
-   ```
+**Build Steps:**
 
-3. Configure the project with `xmake`:
+```bash
+# Enter the development shell
+nix develop
 
-   ```shell
-   xmake f -m "Game__Shipping__Win64" -y
-   ```
+# Run the build (downloads MSVC headers automatically via xwin)
+nix run
+```
 
-4. Generate the Visual Studio solution file:
+Your compiled DLL will be at `build-cross/MotorTownMods/MotorTownMods.dll`.
 
-   ```shell
-   xmake project -k vsxmake2022 -m "Game__Shipping__Win64" -y
-   ```
+Copy or symlink it to `ue4ss/Mods/MotorTownMods/dlls/main.dll`.
 
-5. Open the generated solution in `vsxmake2022/*.sln`, and right click on the `mods/MotorTownMods` in the solution explorer and click **Build**.
-6. If the build is successfull, copy or create symlink the generated `ue4ss\Binaries\Game__Shipping__Win64\MotorTownMods\MotorTownMods.dll` to `ue4ss/MotorTownMods/dlls/main.dll`.
+##### Alternative: Windows with CMake
+
+If you prefer building natively on Windows:
+
+1. Clone this repository
+2. Open the project in Visual Studio or use standard CMake commands
+3. Ensure Boost 1.87.0 is available (CMake will fetch it if not found)
+4. Build in Release mode
+5. Copy the DLL to `ue4ss/Mods/MotorTownMods/dlls/main.dll`
+
 
 ### Configuration
 
