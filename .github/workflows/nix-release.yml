@@ -104,11 +104,26 @@ jobs:
 
       - name: Configure Git Auth
         run: |
+          # Create .ssh directory with proper permissions
+          mkdir -p $HOME/.ssh
+          chmod 700 $HOME/.ssh
+          
+          # Create SSH config (even without keys, prevents errors)
+          cat > $HOME/.ssh/config << EOF
+          Host github.com
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+          EOF
+          chmod 600 $HOME/.ssh/config
+          
           # Configure git system-wide so Nix daemon also uses the PAT
           TOKEN="${{ secrets.UEPSEUDO_PAT }}"
           sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "git@github.com:"
           sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "ssh://git@github.com/"
           sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "https://github.com/"
+          
+          # Export env vars for sub-processes
+          echo "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config" >> $GITHUB_ENV
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
