@@ -1,6 +1,7 @@
 #include "modsmanager.h"
 
 #include <UE4SSProgram.hpp>
+#include "HookManager.h"
 
 static const char *modsReloadPath = "/mods/reload";
 
@@ -16,6 +17,8 @@ json::object ModsManager::GetResponseJson(http::request<http::string_body> req,
   json::object obj;
   if (req.target() == modsReloadPath) {
     if (req.method() == http::verb::post) {
+      // Unregister all hooks before reloading mods to prevent stale callbacks
+      HookManager::UnregisterAllHooks();
       UE4SSProgram::get_program().queue_reinstall_mods();
       statusCode = http::status::accepted;
       obj["status"] = "received mods reload signal";

@@ -1,13 +1,14 @@
 #pragma once
 
-#include "dllmain.h"
 #include <string>
 #include <optional>
 #include <functional>
-#include <stdexcept>
 #include <format>
+#include <vector>
+#include <utility>
 #include <Unreal/UObjectGlobals.hpp>
 #include <Unreal/UObject.hpp>
+#include <Unreal/UnrealCoreStructs.hpp>
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <boost/json.hpp> 
 #include "EventManager.h"
@@ -18,6 +19,9 @@ namespace json = boost::json;
 
 class HookManager
 {
+private:
+    // Storage for registered hooks: (function name, hook ID pair)
+    static inline std::vector<std::pair<std::wstring, std::pair<int, int>>> s_RegisteredHooks;
 public:
     /**
      * @brief A function that extracts hook-specific data.
@@ -85,13 +89,31 @@ public:
             EventManager::Get().AddEvent(std::move(event_payload));
         };
 
-        // 5. Register the hook
-        UObjectGlobals::RegisterHook(
+        // 5. Register the hook and store the hook IDs
+        auto hookIds = UObjectGlobals::RegisterHook(
             unreal_function_name.c_str(),
             pre_hook,
             [](UnrealScriptFunctionCallableContext&, void*) {}, // Empty post-hook
             nullptr
         );
+        s_RegisteredHooks.emplace_back(unreal_function_name, hookIds);
+        Output::send<LogLevel::Verbose>(STR("Registered hook for {} with IDs ({}, {})"), unreal_function_name, hookIds.first, hookIds.second);
+    }
+
+    /**
+     * @brief Unregisters all previously registered hooks.
+     * Call this before reinitializing hooks (e.g., on mod reload).
+     */
+    static void UnregisterAllHooks()
+    {
+        Output::send<LogLevel::Normal>(STR("Unregistering {} hooks..."), s_RegisteredHooks.size());
+        for (const auto& [funcName, hookIds] : s_RegisteredHooks)
+        {
+            UObjectGlobals::UnregisterHook(funcName.c_str(), hookIds);
+            Output::send<LogLevel::Verbose>(STR("Unregistered hook for {}"), funcName);
+        }
+        s_RegisteredHooks.clear();
+        Output::send<LogLevel::Normal>(STR("All hooks unregistered."));
     }
 
 private:
