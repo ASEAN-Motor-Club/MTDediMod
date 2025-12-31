@@ -108,11 +108,15 @@ jobs:
           mkdir -p $HOME/.ssh
           chmod 700 $HOME/.ssh
           
-          # Create SSH config (even without keys, prevents errors)
+          # Add GitHub's SSH host keys to known_hosts
+          ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> $HOME/.ssh/known_hosts
+          chmod 600 $HOME/.ssh/known_hosts
+          
+          # Create SSH config
           cat > $HOME/.ssh/config << EOF
           Host github.com
             StrictHostKeyChecking no
-            UserKnownHostsFile /dev/null
+            UserKnownHostsFile $HOME/.ssh/known_hosts
           EOF
           chmod 600 $HOME/.ssh/config
           
@@ -122,8 +126,8 @@ jobs:
           sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "ssh://git@github.com/"
           sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "https://github.com/"
           
-          # Export env vars for sub-processes
-          echo "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config" >> $GITHUB_ENV
+          # Export GIT_SSH_COMMAND with explicit known_hosts for sub-processes
+          echo "GIT_SSH_COMMAND=ssh -o UserKnownHostsFile=$HOME/.ssh/known_hosts -F $HOME/.ssh/config" >> $GITHUB_ENV
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
