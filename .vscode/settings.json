@@ -7,5 +7,9 @@
         "--clang-tidy",
         "--header-insertion=iwyu",
         "--completion-style=detailed"
+    ],
+    "Lua.workspace.library": [
+        "${workspaceFolder}/types/ue4ss",
+        "${workspaceFolder}/types/game"
     ]
 }

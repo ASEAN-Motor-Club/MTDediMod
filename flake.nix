@@ -59,7 +59,18 @@
         {
           # Development shell with all cross-compile tools
           devShells.default = (lib.mkDevShell {}).overrideAttrs (old: {
-            nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.gh ];
+            nativeBuildInputs = (old.nativeBuildInputs or []) ++ [
+              pkgs.gh
+              pkgs.lua-language-server
+            ];
+            shellHook = (old.shellHook or "") + ''
+              # Create symlink to UE4SS types for Lua IntelliSense
+              if [ -n "$UE4SS_SOURCE_DIR" ] && [ -d "$UE4SS_SOURCE_DIR/assets/Mods/shared" ]; then
+                mkdir -p types
+                ln -sfn "$UE4SS_SOURCE_DIR/assets/Mods/shared" types/ue4ss
+                echo "Created types/ue4ss symlink for Lua IntelliSense"
+              fi
+            '';
           });
 
           # Configure script

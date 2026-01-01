@@ -1,0 +1,25 @@
+{
+    "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
+    "runtime": {
+        "version": "Lua 5.4"
+    },
+    "workspace": {
+        "maxPreload": 50000,
+        "preloadFileSize": 5000,
+        "library": [
+            "types/ue4ss",
+            "types/game"
+        ],
+        "checkThirdParty": false
+    },
+    "diagnostics": {
+        "disable": [
+            "lowercase-global"
+        ]
+    },
+    "hint": {
+        "enable": true,
+        "paramName": "All",
+        "setType": true
+    }
+}

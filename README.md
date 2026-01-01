@@ -55,6 +55,17 @@ If you prefer building natively on Windows:
 4. Build in Release mode
 5. Copy the DLL to `ue4ss/Mods/MotorTownMods/dlls/main.dll`
 
+### Lua Type Annotations
+
+This project includes Lua type definitions for IDE IntelliSense support.
+
+See [docs/LuaTypeAnnotations.md](docs/LuaTypeAnnotations.md) for setup and usage.
+
+**Quick start:**
+1. Enter dev shell: `nix develop` (creates `types/ue4ss` symlink)
+2. Install [Lua extension](https://marketplace.visualstudio.com/items?itemName=sumneko.lua) in VSCode
+3. Open **MTDediMod** as your workspace root
+
 
 ### Configuration
 
