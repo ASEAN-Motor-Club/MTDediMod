@@ -1,9 +1,9 @@
 local UEHelpers = require("UEHelpers")
 local socket = require("socket")
 
-local myPlayerControllerCache = CreateInvalidObject() ---@cast myPlayerControllerCache APlayerController
+local myPlayerControllerCache = CreateInvalidObject() ---@cast myPlayerControllerCache AMotorTownPlayerController
 ---Get my own PlayerController
----@return APlayerController
+---@return AMotorTownPlayerController
 function GetMyPlayerController()
   if myPlayerControllerCache:IsValid() then
     return myPlayerControllerCache
@@ -21,7 +21,7 @@ function GetMyPlayerController()
       myPlayerControllerCache = playerController
     end
   end
-  return myPlayerControllerCache
+  return myPlayerControllerCache ---@type AMotorTownPlayerController
 end
 
 -- Importing functions to the global namespace of this mod just so that we don't have to retype 'UEHelpers.' over and over again.
@@ -227,6 +227,7 @@ end
 
 ---Get the player controller given the unique net ID
 ---@param uniqueId string Player state unique net ID
+---@return AMotorTownPlayerController
 function GetPlayerControllerFromUniqueId(uniqueId)
   local gameState = GetMotorTownGameState()
   if gameState:IsValid() then
@@ -237,17 +238,17 @@ function GetPlayerControllerFromUniqueId(uniqueId)
       if PS:IsValid() then
         local id = GetUniqueNetIdAsString(PS)
         if id == uniqueId then
-          return PS:GetPlayerController()
+          return PS:GetPlayerController() ---@type AMotorTownPlayerController
         end
       end
     end
   end
-  return CreateInvalidObject() ---@type APlayerController
+  return CreateInvalidObject() ---@type AMotorTownPlayerController
 end
 
----@deprecated Use `GetPlayerControllerFromUniqueId` to prevent dupes
 ---Get the player controller given the GUID
 ---@param guid string
+---@return AMotorTownPlayerController
 function GetPlayerControllerFromGuid(guid)
   local gameState = GetMotorTownGameState()
   if gameState:IsValid() then
@@ -255,11 +256,11 @@ function GetPlayerControllerFromGuid(guid)
       local PS = gameState.PlayerArray[i]
       ---@cast PS AMotorTownPlayerState
       if PS:IsValid() and GuidToString(PS.CharacterGuid) == guid then
-        return PS:GetPlayerController()
+        return PS:GetPlayerController() ---@type AMotorTownPlayerController
       end
     end
   end
-  return CreateInvalidObject() ---@type APlayerController
+  return CreateInvalidObject() ---@type AMotorTownPlayerController
 end
 
 ---Convert FMTCharacterId to JSON serializable table
@@ -411,7 +412,6 @@ function SplitString(inputstr, sep)
   return t
 end
 
----@deprecated Use `GetPlayerUniqueId` to prevent dupes
 ---Get a player controller guid
 ---@param playerController APlayerController
 function GetPlayerGuid(playerController)

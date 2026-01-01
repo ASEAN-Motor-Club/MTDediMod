@@ -341,7 +341,7 @@ end)
 webhook.RegisterEventHook(
   "ServerAddEvent",
   function(context, eventParam)
-    local PC = context:get() ---@type APlayerController
+    local PC = context:get() ---@type AMotorTownPlayerController
     local event = eventParam:get() ---@type FMTEvent
 
     LogOutput("DEBUG", "New event %s created", GuidToString(event.EventGuid))
@@ -356,7 +356,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerChangeEventState",
   function(context, eventParam, stateParam)
-    local PC = context:get() ---@type APlayerController
+    local PC = context:get() ---@type AMotorTownPlayerController
     local guid = eventParam:get() ---@type FGuid
     local eventState = stateParam:get() ---@type EMTEventState
     local eventGuid = GuidToString(guid)
@@ -377,7 +377,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerRemoveEvent",
   function(context, eventParam)
-    local PC = context:get() ---@type APlayerController
+    local PC = context:get() ---@type AMotorTownPlayerController
     local event = eventParam:get() ---@type FGuid
     local eventGuid = GuidToString(event)
 
@@ -393,7 +393,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerPassedRaceSection",
   function(context, eventGuid, sectionIndex, totalTimeSeconds, laptimeSeconds)
-    local PC = context:get() ---@cast PC APlayerController
+    local PC = context:get() ---@cast PC AMotorTownPlayerController
 
     if not PC:IsValid() then return end
 
@@ -413,7 +413,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerJoinEvent",
   function(context, eventGuid)
-    local PC = context:get() ---@cast PC APlayerController
+    local PC = context:get() ---@cast PC AMotorTownPlayerController
 
     if not PC:IsValid() then return end
 
@@ -433,7 +433,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerLeaveEvent",
   function(context, eventGuid)
-    local PC = context:get() ---@cast PC APlayerController
+    local PC = context:get() ---@cast PC AMotorTownPlayerController
 
     if not PC:IsValid() then return end
 

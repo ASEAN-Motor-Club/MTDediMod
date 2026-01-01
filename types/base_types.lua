@@ -12,3 +12,12 @@
 ---@alias PropertyClass UClass
 ---@alias LocalObject UObject
 ---@alias UObjectDerivative UObject
+
+-- ======================================
+-- Missing fields from generated types
+-- ======================================
+
+-- AMTCharacter.Net_Customization is missing from generated types
+-- Field exists at runtime but wasn't captured by TypeGenerator
+---@class AMTCharacter
+---@field Net_Customization FMTCharacterCustomization

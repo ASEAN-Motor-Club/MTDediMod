@@ -2054,6 +2054,7 @@ local function HandleSetWorldVehicleDecal(session)
   local vs = FindAllOf(className)
 
   for i, vehicle in ipairs(vs) do
+    ---@cast vehicle AMTVehicle
     LogOutput('INFO', vehicle:GetFullName())
     if vehicle:IsValid() then
       if vehicle.bForSale then
@@ -2342,6 +2343,7 @@ local function HandleSpawnVehicle(session)
       end
     end
     local spawned, tag, vehicle = assetManager.SpawnActor(content.AssetPath, content.Location, content.Rotation, content.tag)
+    ---@cast vehicle AMTVehicle
     LogOutput("INFO", "Spawned vehicle")
 
     if spawned then
@@ -2468,11 +2470,12 @@ local function HandleSpawnVehicle(session)
 end
 
 RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(ctx, Vehicle)
-  local PC = ctx:get()
+  local PC = ctx:get() ---@type AMotorTownPlayerController
   if not PC:IsValid() then
     return
   end
   local playerState = PC.PlayerState
+  ---@cast playerState AMotorTownPlayerState
   if not playerState:IsValid() then
     return
   end
