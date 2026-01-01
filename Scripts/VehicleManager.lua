@@ -1980,7 +1980,7 @@ local function HandleDespawnPlayerVehicle(session)
       local activeVehicles = {}
       if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
         lastPlayerVehicleId = PC.LastVehicle.Net_VehicleId
-        local curr = PC.LastVehicle
+        local curr = PC.LastVehicle ---@type AMTVehicle?
         while curr ~= nil and curr:IsValid() and curr.Net_Hooks:IsValid() do
           local v = curr
           activeVehicles[tostring(curr.Net_VehicleId)] = v
@@ -2212,7 +2212,7 @@ local function HandleGetPlayerVehicles(session)
   if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
     lastPlayerVehicleId = PC.LastVehicle.Net_VehicleId
 
-    local curr = PC.LastVehicle
+    local curr = PC.LastVehicle ---@type AMTVehicle?
 
     while curr ~= nil and curr:IsValid() and not curr:IsActorBeingDestroyed() and curr.Net_Hooks:IsValid() do
       local v = curr
@@ -2260,7 +2260,9 @@ LoopAsync(5000, function()
   for characterGuid, isRpMode in pairs(rpPlayers) do
     if isRpMode then
       local PC = GetPlayerControllerFromGuid(characterGuid)
-      if PC:IsValid() and PC.PlayerState:IsValid() and PC.PlayerState.VehicleKey:ToString() ~= "None" then
+      local playerState = PC.PlayerState
+      ---@cast playerState AMotorTownPlayerState
+      if PC:IsValid() and playerState:IsValid() and playerState.VehicleKey:ToString() ~= "None" then
         local vehicle = PC.LastVehicle
         if vehicle:IsValid() and vehicle.NetLC_ColdState:IsValid() and vehicle.NetLC_ColdState.bIsAIDriving then
           local position = vehicle:K2_GetActorLocation()
@@ -2281,6 +2283,7 @@ LoopAsync(5000, function()
       end
     end
   end
+  return false
 end)
 
 local function HandlePlayerExitVehicle(session)
@@ -2389,6 +2392,7 @@ local function HandleSpawnVehicle(session)
         -- There's a problem with setting profitShare with other methods
         vehicle.Net_OwnerPlayerState = PC.PlayerState
         PC:ServerSetOwnerVehicleSetting(vehicle, ownerSettings)
+        ---@diagnostic disable-next-line: assign-type-mismatch
         vehicle.Net_OwnerPlayerState = CreateInvalidObject()
 
         if vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive:IsValid() then
@@ -2494,6 +2498,7 @@ end
 
 RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(ctx, Vehicle)
   local PC = ctx:get() ---@type AMotorTownPlayerController
+  ---@diagnostic disable-next-line: undefined-field
   if not PC:IsValid() then
     return
   end
@@ -2523,7 +2528,7 @@ local function DespawnPlayerVehicle(PC)
   local count = 0
   if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
     local vehiclesToDespawn = {}
-    local curr = PC.LastVehicle
+    local curr = PC.LastVehicle ---@type AMTVehicle?
     while curr ~= nil and curr:IsValid() and curr.Net_Hooks:IsValid() do
       local v = curr
       table.insert(vehiclesToDespawn, v)
