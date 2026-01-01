@@ -20,7 +20,7 @@ if [ ! -L "$PROJECT_DIR/types/ue4ss" ]; then
 fi
 
 # Run type checking
-lua-language-server --check "$PROJECT_DIR" --checklevel Warning --configpath "$PROJECT_DIR/.luarc.json"
+lua-language-server --check "$PROJECT_DIR" --checklevel Error --configpath "$PROJECT_DIR/.luarc.json"
 
 # Check if report was generated
 LOG_PATH="${XDG_CACHE_HOME:-$HOME/.cache}/lua-language-server/log"

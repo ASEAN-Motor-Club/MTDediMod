@@ -8,14 +8,27 @@
         "preloadFileSize": 5000,
         "library": [
             "types/ue4ss",
-            "types/game"
+            "types/game",
+            "types/luasocket"
         ],
-        "checkThirdParty": false
+        "checkThirdParty": false,
+        "ignoreDir": [
+            "types/game"
+        ]
     },
     "diagnostics": {
         "disable": [
             "lowercase-global"
-        ]
+        ],
+        "severity": {
+            "undefined-doc-name": "Hint",
+            "local-limit": "Hint",
+            "inject-field": "Hint",
+            "miss-name": "Hint"
+        },
+        "groupSeverity": {
+            "types/game/*": "Hint"
+        }
     },
     "hint": {
         "enable": true,
