@@ -143,7 +143,7 @@ local function DeliveryToTable(delivery)
 end
 
 ---Convert UMTPassengerComponent to table
----@param delivery UMTPassengerComponent
+---@param passenger UMTPassengerComponent
 local function PassengerToTable(passenger)
   local data = {}
 
@@ -474,6 +474,7 @@ end
 webhook.RegisterEventHook(
   "ServerAcceptDelivery",
   function(PC, DeliveryId)
+    ---@cast PC APlayerController
     return {
       PlayerId = GetPlayerUniqueId(PC),
       DeliveryId = DeliveryId,
@@ -511,6 +512,7 @@ webhook.RegisterEventHook2(
 webhook.RegisterEventHook(
   "ServerCargoDumped",
   function (PC, cargo)
+    ---@cast PC APlayerController
     local playerId = GetPlayerUniqueId(PC)
     return {
       PlayerId = playerId,
@@ -522,6 +524,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerSignContract",
   function (PC, contract, companyGuid)
+    ---@cast PC AMotorTownPlayerController
     local characterGuid = GetPlayerGuid(PC)
     if not PC.Companies:IsValid() then
       return
@@ -552,6 +555,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerContractCargoDelivered",
   function (PC, contractGuid)
+    ---@cast PC AMotorTownPlayerController
     local characterGuid = GetPlayerGuid(PC)
     --local contract = nil
     --local finishedAmount = 0
@@ -588,6 +592,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerPassengerArrived",
   function (PC, passenger)
+    ---@cast PC AMotorTownPlayerController
     local characterGuid = GetPlayerGuid(PC)
     local data = PassengerToTable(passenger)
     return {
@@ -600,6 +605,7 @@ webhook.RegisterEventHook(
 webhook.RegisterEventHook(
   "ServerTowRequestArrived",
   function (PC, towRequest)
+    ---@cast PC AMotorTownPlayerController
     local characterGuid = GetPlayerGuid(PC)
     local data = TowRequestToTable(towRequest)
     return {
