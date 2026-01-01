@@ -3,7 +3,7 @@
 #include <string>
 #include <optional>
 #include <functional>
-#include <format>
+#include <fmt/format.h>
 #include <vector>
 #include <utility>
 #include <Unreal/UObjectGlobals.hpp>
@@ -138,7 +138,7 @@ private:
         }
 
         // Return the formatted string
-        return std::format(
+        return fmt::format(
             "{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
             CharacterGuid->A,
             (CharacterGuid->B >> 16),    // High 16 bits of B

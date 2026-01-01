@@ -175,11 +175,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1767243029,
-        "narHash": "sha256-DVX3pd4rV9Gxik49fkTuU4gYNPpddQOpXaXNVtxGay4=",
+        "lastModified": 1767264033,
+        "narHash": "sha256-rARdo8zvgRb8mhlIgavrwrdiXxz/ug+UCKgJ9sZMKT4=",
         "owner": "ASEAN-Motor-Club",
         "repo": "UE4SSCPPTemplate",
-        "rev": "b48ad6166d10732809179d636cca28ae02a3474c",
+        "rev": "5ac36501da17baf6479c58ef178626ed2ffe5290",
         "type": "github"
       },
       "original": {

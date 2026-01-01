@@ -30,9 +30,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Boost)
 
-# Collect source files
-file(GLOB_RECURSE SRC_FILES "*.cpp" "*.c" "*.cc")
-file(GLOB_RECURSE HDR_FILES "*.hpp" "*.h")
+# Source files - listed explicitly for proper compile_commands.json export
+# (file(GLOB) doesn't work reliably with external add_subdirectory)
+set(SRC_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/dllmain.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/EventManager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/EventsRoute.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/modsmanager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/statics.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/webroute.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/webserver.cpp"
+)
+
+set(HDR_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/dllmain.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/EventManager.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/EventsRoute.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/HookManager.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/modsmanager.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/statics.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/webroute.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/webserver.h"
+)
 
 # Create shared library
 add_library(MotorTownMods SHARED ${SRC_FILES} ${HDR_FILES})

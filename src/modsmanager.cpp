@@ -1,6 +1,7 @@
 #include "modsmanager.h"
 
 #include <UE4SSProgram.hpp>
+#include <fmt/format.h>
 #include "HookManager.h"
 
 static const char *modsReloadPath = "/mods/reload";
@@ -23,7 +24,18 @@ json::object ModsManager::GetResponseJson(http::request<http::string_body> req,
       statusCode = http::status::accepted;
       obj["status"] = "received mods reload signal";
       return obj;
+    } else {
+      // Path matches but method is not POST
+      statusCode = http::status::method_not_allowed;
+      obj["error"] = fmt::format("Method {} not allowed for {}", 
+                                  std::string(req.method_string()),
+                                  std::string(req.target()));
+      return obj;
     }
   }
+  
+  // Path didn't match exactly - shouldn't happen since IsMatchingRequest already checked
+  statusCode = http::status::not_found;
+  obj["error"] = fmt::format("Route not found: {}", std::string(req.target()));
   return obj;
 }
