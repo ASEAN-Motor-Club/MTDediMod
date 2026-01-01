@@ -1929,6 +1929,9 @@ end
 local function HandleDetachPlayerVehicle(session)
   local playerId = session.pathComponents[2]
   local content = json.parse(session.content)
+  if not content then
+    return json.stringify { error = "Invalid JSON body" }, nil, 400
+  end
 
   local PC = GetPlayerControllerFromGuid(playerId)
   if PC:IsValid() then
@@ -1937,6 +1940,7 @@ local function HandleDetachPlayerVehicle(session)
       if vehicle:IsValid() then
         vehicle.Net_Hooks:ForEach(function(i, val)
           local hook = val:get()
+          ---@diagnostic disable-next-line: need-check-nil
           if hook:IsValid() and hook.Trailer:IsValid() and hook.Trailer.Net_VehicleId == content.vehicleId then
             PC:ServerDetachTrailer(hook.Tractor, hook.Trailer)
             if content.message ~= nil then
@@ -1954,18 +1958,23 @@ end
 local function HandleDespawnPlayerVehicle(session)
   local playerId = session.pathComponents[2]
   local content = json.parse(session.content)
+  if not content then
+    return json.stringify { error = "Invalid JSON body" }, nil, 400
+  end
 
   local PC = GetPlayerControllerFromUniqueId(playerId)
   if not PC:IsValid() then
     return json.stringify { error = "Invalid player controller" }, nil, 400
   end
-  if not PC.Net_SpawnedVehicles:IsValid() then
-    return json.stringify { error = "Invalid player vehicles" }, nil, 400
+
+  if PC.LastVehicle == nil or not PC.LastVehicle:IsValid() then
+    return json.stringify { error = "No vehicle to despawn" }, nil, 400
   end
 
   if PC:IsValid() then
     local vehiclesToDespawn = {}
 
+    ---@diagnostic disable-next-line: need-check-nil
     if content.vehicleId == nil then
       local lastPlayerVehicleId = nil
       local activeVehicles = {}
@@ -2051,6 +2060,10 @@ end
 local function HandleSetWorldVehicleDecal(session)
   local className = session.pathComponents[2]
   local content = json.parse(session.content)
+  if not content then
+    return json.stringify { error = "Invalid JSON body" }, nil, 400
+  end
+  
   local vs = FindAllOf(className)
 
   for i, vehicle in ipairs(vs) do
@@ -2060,6 +2073,7 @@ local function HandleSetWorldVehicleDecal(session)
       if vehicle.bForSale then
         goto continue_loop
       end
+      ---@diagnostic disable-next-line: need-check-nil
       local decal = TableToVehicleDecal(content.decal)
       vehicle.Net_Decal.DecalLayers:Empty()
       for index, value in ipairs(decal.DecalLayers) do
@@ -2105,6 +2119,9 @@ end
 local function HandleSetPlayerVehicleDecal(session)
   local playerId = session.pathComponents[2]
   local content = json.parse(session.content)
+  if not content then
+    return json.stringify { error = "Invalid JSON body" }, nil, 400
+  end
 
   local PC = GetPlayerControllerFromUniqueId(playerId)
   if PC:IsValid() then
@@ -2113,6 +2130,7 @@ local function HandleSetPlayerVehicleDecal(session)
       return json.stringify { error = "Player is not in a vehicle" }, nil, 400
     end
     if vehicle:IsValid() then
+      ---@diagnostic disable-next-line: need-check-nil
       local decal = TableToVehicleDecal(content.decal)
       vehicle.Net_Decal.DecalLayers:Empty()
       for index, value in ipairs(decal.DecalLayers) do
@@ -2285,6 +2303,10 @@ end
 local function HandleSetRPMode(session)
   local characterGuid = session.pathComponents[2]
   local content = json.parse(session.content)
+  if not content then
+    return json.stringify { error = "Invalid JSON body" }, nil, 400
+  end
+
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if not PC:IsValid() then
     return json.stringify { error = "Invalid player controller" }, nil, 400
@@ -2294,6 +2316,7 @@ local function HandleSetRPMode(session)
     return json.stringify { error = "Invalid player vehicles" }, nil, 400
   end
 
+  ---@diagnostic disable-next-line: need-check-nil
   if rpPlayers[characterGuid] == nil or content.state == true then
     if content.despawn then
       local lastVehicleId = nil

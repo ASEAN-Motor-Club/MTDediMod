@@ -17,11 +17,13 @@ local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then
     local parts = SplitString(message, " ")
     if #parts > 0 then
+      ---@diagnostic disable-next-line: need-check-nil
       local commandName = parts[1]
       local handler = Commands[commandName]
       if handler then
         local args = {}
         for i = 2, #parts do
+          ---@diagnostic disable-next-line: need-check-nil
           table.insert(args, parts[i])
         end
         handler(PC, args)
