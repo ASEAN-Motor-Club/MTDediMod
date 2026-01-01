@@ -21,3 +21,17 @@
 -- Field exists at runtime but wasn't captured by TypeGenerator
 ---@class AMTCharacter
 ---@field Net_Customization FMTCharacterCustomization
+
+-- ======================================
+-- UE4/UE5 Version-Specific Type Extensions
+-- ======================================
+
+-- FHitResult has different fields depending on Unreal Engine version
+-- These extensions provide cross-version compatibility
+---@class FHitResult
+---@field Actor RemoteUnrealParam<AActor>  -- UE 4.x
+---@field HitObjectHandle FHitResultHandle  -- UE 5.x
+
+---@class FHitResultHandle
+---@field Actor RemoteUnrealParam<AActor>  -- UE 5.0-5.3
+---@field ReferenceObject RemoteUnrealParam<UObject>  -- UE 5.4+
