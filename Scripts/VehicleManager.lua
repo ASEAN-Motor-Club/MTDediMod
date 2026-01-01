@@ -1029,6 +1029,7 @@ local function VehiclePartToTable(part)
     end)
   end
 
+  ---@diagnostic disable-next-line: undefined-field
   if part.ItemInventory:IsValid() then
     data.ItemInventory = ItemInventoryToTable(part.ItemInventory)
   end
@@ -1657,6 +1658,7 @@ local function SpawnVehicleDealer(location, rotation, vehicleClass, vehicleParam
       if vehicleParam.Customization then
         local Customization = vehicleParam.Customization
         for i, bc in ipairs(Customization.BodyColors) do
+            ---@diagnostic disable-next-line: param-type-mismatch
             bc.MaterialSlotName = FName(bc.MaterialSlotName)
             Customization.BodyColors[i] = bc
         end
@@ -2264,6 +2266,7 @@ LoopAsync(5000, function()
       ---@cast playerState AMotorTownPlayerState
       if PC:IsValid() and playerState:IsValid() and playerState.VehicleKey:ToString() ~= "None" then
         local vehicle = PC.LastVehicle
+        ---@diagnostic disable-next-line: undefined-field
         if vehicle:IsValid() and vehicle.NetLC_ColdState:IsValid() and vehicle.NetLC_ColdState.bIsAIDriving then
           local position = vehicle:K2_GetActorLocation()
           if position.X ~= 0 and position.Y ~= 0 and position.Z ~= 0 then
@@ -2378,6 +2381,7 @@ local function HandleSpawnVehicle(session)
         if not vehicle:IsValid() then
           return
         end
+        ---@diagnostic disable-next-line: undefined-field
         if not vehicle.Net_VehicleOwnerSetting:IsValid() then
           return
         end
@@ -2442,6 +2446,7 @@ local function HandleSpawnVehicle(session)
       if content.decal ~= nil then
         ExecuteInGameThreadSync(function()
           LogOutput("INFO", "Setting decals")
+          ---@diagnostic disable-next-line: undefined-field
           if not vehicle:IsValid() or not vehicle.Net_Decal:IsValid() or not vehicle.Net_Decal.DecalLayers:IsValid() then
             return
           end
