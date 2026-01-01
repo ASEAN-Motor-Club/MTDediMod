@@ -50,7 +50,7 @@ cd motortown-server-flake
 Run type checking from the command line (requires `nix develop`):
 
 ```bash
-./scripts/check-types.sh
+./Scripts/check-types.sh
 ```
 
 ## Annotations Reference
