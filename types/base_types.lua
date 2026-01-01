@@ -35,3 +35,13 @@
 ---@class FHitResultHandle
 ---@field Actor RemoteUnrealParam<AActor>  -- UE 5.0-5.3
 ---@field ReferenceObject RemoteUnrealParam<UObject>  -- UE 5.4+
+
+-- ======================================
+-- UE4SS Type Definition Corrections
+-- ======================================
+
+-- TArray should inherit from RemoteObject as per UE4SS documentation
+-- https://docs.ue4ss.com/lua-api/classes/tarray.html
+-- The generated types incorrectly define it as just { [integer]: T }
+-- which provides array indexing but loses RemoteObject methods like IsValid()
+---@class TArray<T> : RemoteObject
