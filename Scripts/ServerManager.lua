@@ -271,9 +271,14 @@ end
 local function HandleSetServerConfig(session)
   local gameState = GetMotorTownGameState()
   if not gameState:IsValid() then
-    return false
+    return nil, nil, 503
   end
+  
   local body = json.parse(session.content)
+  if not body then
+    return json.stringify { error = "Invalid JSON body" }, nil, 400
+  end
+  
   if body.MaxVehiclePerPlayer ~= nil then
     gameState.Net_ServerConfig.MaxVehiclePerPlayer = body.MaxVehiclePerPlayer
   end
@@ -292,7 +297,7 @@ local function HandleSetServerConfig(session)
   if body.bAllowPlayerToJoinWithCompanyVehicles ~= nil then
     gameState.Net_ServerConfig.bAllowPlayerToJoinWithCompanyVehicles = body.bAllowPlayerToJoinWithCompanyVehicles
   end
-  return nil, nil, 200
+  return nil,nil, 200
 end
 
 ExecuteWithDelay(5000, function()
