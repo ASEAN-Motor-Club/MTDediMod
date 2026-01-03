@@ -10,7 +10,7 @@
       type = "git";
       url = "https://github.com/ASEAN-Motor-Club/RE-UE4SS.git";
       ref = "feat/reinstall-mods";
-      rev = "20c7f2b6023476b6167125e1689725ca4194e3b1";
+      rev = "29c1b62f5cd5b144a92189d2d2298142010bb984";
       submodules = true;
       flake = false;
     };
