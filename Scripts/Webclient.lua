@@ -136,7 +136,7 @@ end
 -- This will slot in between webserver loops.
 local delay = (tonumber(os.getenv("MOD_SERVER_PROCESS_AMOUNT")) or 5) * 100
 if delay > 0 and webhookEvents[1] ~= "none" and webhookUrl then
-    LoopInGameThreadWithDelay(delay, function()
+    LoopAsync(delay, function()
         if #requests > 0 then
             local payloads = {} ---@type table[]
             local callbacks = {} ---@type fun(status: boolean)[]

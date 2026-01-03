@@ -2258,7 +2258,7 @@ end
 
 local rpPlayers = {}
 
-LoopInGameThreadWithDelay(5000, function()
+LoopAsync(5000, function()
   for characterGuid, isRpMode in pairs(rpPlayers) do
     if isRpMode then
       local PC = GetPlayerControllerFromGuid(characterGuid)
@@ -2286,6 +2286,7 @@ LoopInGameThreadWithDelay(5000, function()
       end
     end
   end
+  return false
 end)
 
 local function HandlePlayerExitVehicle(session)
