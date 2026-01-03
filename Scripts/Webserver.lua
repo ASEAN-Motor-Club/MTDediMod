@@ -612,8 +612,7 @@ local function run(bindHost, bindPort)
 
     init(bindHost, bindPort)
     isServerRunning = true
-    local serverLoopHandle
-    serverLoopHandle = LoopInGameThreadWithDelay(1, function()
+    LoopAsync(1, function()
         -- Not sure why, but executing process back to back reduces the latency
         -- Increasing the amount of process further decreases total latency but will block async thread by the amount * timeout
         -- Best to keep the amount low to allow for other function to use ExecuteAsync
@@ -624,8 +623,8 @@ local function run(bindHost, bindPort)
         end
         if not isServerRunning then
             LogOutput("INFO", "Webserver stopped")
-            CancelDelayedAction(serverLoopHandle)
         end
+        return not isServerRunning
     end)
 end
 

@@ -61,6 +61,8 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
     if actor:IsValid() then
       LogOutput("DEBUG", "Spawned actor %s", actor:GetFullName())
       actor:SetReplicates(true)
+      -- Increase network relevancy distance so remote players can see this actor (~500m)
+      actor:SetNetCullDistanceSquared(2500000000) -- 50000^2
 
       if not assetTag then
         local str = SplitString(actor:GetFullName())
@@ -91,6 +93,8 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
             })
           end
           actor.StaticMeshComponent:SetIsReplicated(true)
+          -- Increase render distance so mesh is visible from afar (~500m)
+          actor.StaticMeshComponent:SetCullDistance(50000)
         else
           error("Failed to set " .. object:GetFullName())
         end
