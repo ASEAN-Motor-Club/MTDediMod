@@ -49,6 +49,7 @@
           packageScript = lib.mkPackageScript {
             modName = "MotorTownMods";
             luaScriptsDir = "./Scripts";
+            sharedLuaDir = "./shared";
             enabledTxtPath = "./enabled.txt";
           };
           packageApp = {

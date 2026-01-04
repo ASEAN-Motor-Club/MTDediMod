@@ -2525,6 +2525,51 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt",
 end)
 
 
+---Toggle RP mode for a player controller
+---@param PC AMotorTownPlayerController
+---@return boolean isRpMode The new RP mode state
+local function ToggleRPMode(PC)
+  if not PC:IsValid() or not PC.PlayerState:IsValid() then
+    return false
+  end
+  
+  local playerState = PC.PlayerState
+  ---@cast playerState AMotorTownPlayerState
+  local characterGuid = GuidToString(playerState.CharacterGuid)
+  
+  if rpPlayers[characterGuid] == true then
+    -- Disable RP mode
+    rpPlayers[characterGuid] = nil
+    return false
+  else
+    -- Enable RP mode - despawn vehicles first
+    if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
+      local lastVehicleId = PC.LastVehicle.Net_VehicleId
+      ExecuteInGameThreadSync(function()
+        if PC:IsValid() and PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
+          LogOutput("INFO", "Despawning last vehicle for RP mode")
+          PC.LastVehicle:K2_DestroyActor()
+        end
+      end, "ToggleRPMode despawn current vehicle")
+      
+      if PC:IsValid() and PC.Net_SpawnedVehicles:IsValid() then
+        PC.Net_SpawnedVehicles:ForEach(function(index, element)
+          local vehicle = element:get()
+          ExecuteInGameThreadSync(function()
+            if vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() and vehicle.Net_VehicleId ~= lastVehicleId then
+              LogOutput("INFO", "Despawning vehicle for RP mode")
+              vehicle:K2_DestroyActor()
+            end
+          end, "ToggleRPMode despawn spawned vehicle")
+        end)
+      end
+    end
+    
+    rpPlayers[characterGuid] = true
+    return true
+  end
+end
+
 ---Despawn player's last vehicle and attached trailers
 ---@param PC AMotorTownPlayerController
 ---@return number count The number of vehicles despawned
@@ -2579,4 +2624,5 @@ return {
   HandleGetRPMode = HandleGetRPMode,
   HandleSetRPMode = HandleSetRPMode,
   HandlePlayerExitVehicle = HandlePlayerExitVehicle,
+  ToggleRPMode = ToggleRPMode,
 }
