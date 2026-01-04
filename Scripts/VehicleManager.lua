@@ -2258,6 +2258,9 @@ end
 
 local rpPlayers = {}
 
+-- DISABLED: LoopAsync causing server crashes
+-- TODO: Investigate and fix the crash before re-enabling
+--[[
 LoopAsync(5000, function()
   for characterGuid, isRpMode in pairs(rpPlayers) do
     if isRpMode then
@@ -2288,6 +2291,7 @@ LoopAsync(5000, function()
   end
   return false
 end)
+--]]
 
 local function HandlePlayerExitVehicle(session)
   local characterGuid = session.pathComponents[2]
@@ -2443,46 +2447,41 @@ local function HandleSpawnVehicle(session)
         vehicle.bForSale = content.forSale
       end
 
-      if content.decal ~= nil then
-        ExecuteInGameThreadSync(function()
+      ExecuteInGameThreadSync(function()
+        if not vehicle:IsValid() then
+          return
+        end
+
+        if content.decal ~= nil then
           LogOutput("INFO", "Setting decals")
           ---@diagnostic disable-next-line: undefined-field
-          if not vehicle:IsValid() or not vehicle.Net_Decal:IsValid() or not vehicle.Net_Decal.DecalLayers:IsValid() then
-            return
+          if vehicle.Net_Decal:IsValid() and vehicle.Net_Decal.DecalLayers:IsValid() then
+            local decal = TableToVehicleDecal(content.decal)
+            vehicle.Net_Decal.DecalLayers:Empty()
+            for index, value in ipairs(decal.DecalLayers) do
+              vehicle.Net_Decal.DecalLayers[index] = value
+            end
+            vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
           end
-          local decal = TableToVehicleDecal(content.decal)
-          vehicle.Net_Decal.DecalLayers:Empty()
-          for index, value in ipairs(decal.DecalLayers) do
-            vehicle.Net_Decal.DecalLayers[index] = value
-          end
-          vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
-        end, "HandleSpawnVehicle ServerSetDecal")
-      end
+        end
 
-      if content.parts ~= nil then
-        ExecuteInGameThreadSync(function()
+        if content.parts ~= nil then
           LogOutput("INFO", "Setting parts")
-          if not vehicle:IsValid() or not vehicle.Net_Parts:IsValid() then
-            return
+          if vehicle.Net_Parts:IsValid() then
+            vehicle.Net_Parts:Empty()
+            for i, part in ipairs(content.parts) do
+              vehicle.Net_Parts[i] = TableToVehiclePart(part)
+              vehicle.Net_Parts[i].StringValues = part.StringValues
+              vehicle.Net_Parts[i].FloatValues = part.FloatValues
+              vehicle.Net_Parts[i].Int64Values = part.Int64Values
+              vehicle.Net_Parts[i].VectorValues = part.VectorValues
+            end
+            vehicle:ServerSetParts(vehicle.Net_Parts)
           end
-          vehicle.Net_Parts:Empty()
-          for i, part in ipairs(content.parts) do
-            vehicle.Net_Parts[i] = TableToVehiclePart(part)
-            vehicle.Net_Parts[i].StringValues = part.StringValues
-            vehicle.Net_Parts[i].FloatValues = part.FloatValues
-            vehicle.Net_Parts[i].Int64Values = part.Int64Values
-            vehicle.Net_Parts[i].VectorValues = part.VectorValues
-          end
-          vehicle:ServerSetParts(vehicle.Net_Parts)
-        end, "HandleSpawnVehicle assign parts")
-      end
+        end
 
-      if content.driverGuid ~= nil then
-        ExecuteInGameThreadSync(function()
+        if content.driverGuid ~= nil then
           LogOutput("INFO", "Setting driver")
-          if not vehicle:IsValid() then
-            return
-          end
           local PC = GetPlayerControllerFromGuid(content.driverGuid)
           if PC:IsValid() then
             if PC.PlayerState:IsValid() then
@@ -2490,8 +2489,8 @@ local function HandleSpawnVehicle(session)
             end
             PC:ServerEnterVehicle(vehicle, 1, -1, false)
           end
-        end, "HandleSpawnVehicle ServerEnterVehicle")
-      end
+        end
+      end, "HandleSpawnVehicle")
 
       return json.stringify { data = { tag }, actor = vehicle:GetFullName() }
     else
