@@ -1,6 +1,6 @@
 #include "EventsRoute.h"
 #include "EventManager.h"
-#include <fmt/format.h>
+#include <format>
 
 // Match requests specifically for the "/events" endpoint
 bool EventsRoute::IsMatchingRequest(http::request<http::string_body> req)
@@ -16,7 +16,7 @@ json::object EventsRoute::GetResponseJson(http::request<http::string_body> req, 
     // Only allow GET requests for events
     if (req.method() != http::verb::get) {
         statusCode = http::status::method_not_allowed;
-        response["error"] = fmt::format("Method {} not allowed for /events", 
+        response["error"] = std::format("Method {} not allowed for /events", 
                                         std::string(req.method_string()));
         return response;
     }

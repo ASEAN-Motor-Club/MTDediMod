@@ -4,7 +4,7 @@
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <Helpers/String.hpp>
 #include <Unreal/UObjectGlobals.hpp>
-#include <fmt/format.h>
+#include <format>
 #include "statics.h"
 #include "modsmanager.h"
 #include "EventsRoute.h"
@@ -117,7 +117,7 @@ std::string Webserver::handle_request(http::request<http::string_body> req, http
 		return json::serialize(response_json);
 	}
 
-	response_json["error"] = fmt::format("Route not found: {} {}",
+	response_json["error"] = std::format("Route not found: {} {}",
 		std::string(req.method_string()),
 		std::string(req.target()));
 	statusCode = http::status::not_found;
