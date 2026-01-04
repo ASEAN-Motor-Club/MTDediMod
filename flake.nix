@@ -17,7 +17,7 @@
     
     # UE4SS cross-compile toolchain
     ue4ss-cross = {
-      url = "github:ASEAN-Motor-Club/UE4SSCPPTemplate";
+      url = "github:ASEAN-Motor-Club/UE4SSCPPTemplate/ea481afa8e5489593ad8f933c50713045b506125";
       inputs.ue4ss.follows = "ue4ss";  # Use our fork instead of upstream
     };
   };
