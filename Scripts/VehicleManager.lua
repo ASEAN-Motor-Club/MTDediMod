@@ -2104,10 +2104,18 @@ local function HandleSetWorldVehicleDecal(session)
           vehicle.Net_Parts:Empty()
           for i, part in ipairs(content.parts) do
             vehicle.Net_Parts[i] = TableToVehiclePart(part)
-            vehicle.Net_Parts[i].StringValues = part.StringValues
-            vehicle.Net_Parts[i].FloatValues = part.FloatValues
-            vehicle.Net_Parts[i].Int64Values = part.Int64Values
-            vehicle.Net_Parts[i].VectorValues = part.VectorValues
+            if part.StringValues ~= nil then
+              vehicle.Net_Parts[i].StringValues = part.StringValues
+            end
+            if part.FloatValues ~= nil then
+              vehicle.Net_Parts[i].FloatValues = part.FloatValues
+            end
+            if part.Int64Values ~= nil then
+              vehicle.Net_Parts[i].Int64Values = part.Int64Values
+            end
+            if part.VectorValues ~= nil then
+              vehicle.Net_Parts[i].VectorValues = part.VectorValues
+            end
           end
           vehicle:ServerSetParts(vehicle.Net_Parts)
         end, "HandleSetWorldVehicleDecal")
@@ -2360,6 +2368,10 @@ local function HandleSetRPMode(session)
 end
 
 
+local function HandleSpawnVehicle_old()
+  return nil, nil, 400
+end
+
 local function HandleSpawnVehicle(session)
   local content = json.parse(session.content)
 
@@ -2465,20 +2477,28 @@ local function HandleSpawnVehicle(session)
           end
         end
 
-        if content.parts ~= nil then
-          LogOutput("INFO", "Setting parts")
-          if vehicle.Net_Parts:IsValid() then
-            vehicle.Net_Parts:Empty()
-            for i, part in ipairs(content.parts) do
-              vehicle.Net_Parts[i] = TableToVehiclePart(part)
-              vehicle.Net_Parts[i].StringValues = part.StringValues
-              vehicle.Net_Parts[i].FloatValues = part.FloatValues
-              vehicle.Net_Parts[i].Int64Values = part.Int64Values
-              vehicle.Net_Parts[i].VectorValues = part.VectorValues
-            end
-            vehicle:ServerSetParts(vehicle.Net_Parts)
-          end
-        end
+        --if content.parts ~= nil then
+          --LogOutput("INFO", "Setting parts")
+          --if vehicle.Net_Parts:IsValid() then
+            --vehicle.Net_Parts:Empty()
+            --for i, part in ipairs(content.parts) do
+              --vehicle.Net_Parts[i] = TableToVehiclePart(part)
+              --if part.StringValues ~= nil then
+                --vehicle.Net_Parts[i].StringValues = part.StringValues
+              --end
+              --if part.FloatValues ~= nil then
+                --vehicle.Net_Parts[i].FloatValues = part.FloatValues
+              --end
+              --if part.Int64Values ~= nil then
+                --vehicle.Net_Parts[i].Int64Values = part.Int64Values
+              --end
+              --if part.VectorValues ~= nil then
+                --vehicle.Net_Parts[i].VectorValues = part.VectorValues
+              --end
+            --end
+            --vehicle:ServerSetParts(vehicle.Net_Parts)
+          --end
+        --end
 
         if content.driverGuid ~= nil then
           LogOutput("INFO", "Setting driver")
@@ -2492,6 +2512,19 @@ local function HandleSpawnVehicle(session)
         end
       end, "HandleSpawnVehicle")
 
+      --ExecuteInGameThreadWithDelay(100, function()
+        --if content.parts ~= nil then
+          --LogOutput("INFO", "Setting parts")
+          --if vehicle.Net_Parts:IsValid() then
+            --vehicle.Net_Parts:Empty()
+            --for i, part in ipairs(content.parts) do
+              --vehicle.Net_Parts[i] = TableToVehiclePart(part)
+            --end
+            --vehicle:ServerSetParts(vehicle.Net_Parts)
+          --end
+        --end
+      --end)
+
       return json.stringify { data = { tag }, actor = vehicle:GetFullName() }
     else
       error("Failed to spawn asset " .. content.AssetPath)
@@ -2500,29 +2533,29 @@ local function HandleSpawnVehicle(session)
   return nil, nil, 400
 end
 
-RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(ctx, Vehicle)
-  local PC = ctx:get() ---@type AMotorTownPlayerController
-  ---@diagnostic disable-next-line: undefined-field
-  if not PC:IsValid() then
-    return
-  end
-  local playerState = PC.PlayerState
-  ---@cast playerState AMotorTownPlayerState
-  if not playerState:IsValid() then
-    return
-  end
-  local characterGuid = GuidToString(playerState.CharacterGuid)
-  if rpPlayers[characterGuid] ~= true then
-    return
-  end
-  local lastVehicle = Vehicle:get()
-  if not lastVehicle:IsValid() then
-    return
-  end
-
-  LogOutput("INFO", "Despawning because of resetting during RP mode")
-  PC:ServerDespawnVehicle(lastVehicle, 0)
-end)
+--RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(ctx, Vehicle)
+  --local PC = ctx:get() ---@type AMotorTownPlayerController
+  -----@diagnostic disable-next-line: undefined-field
+  --if not PC:IsValid() then
+    --return
+  --end
+  --local playerState = PC.PlayerState
+  -----@cast playerState AMotorTownPlayerState
+  --if not playerState:IsValid() then
+    --return
+  --end
+  --local characterGuid = GuidToString(playerState.CharacterGuid)
+  --if rpPlayers[characterGuid] ~= true then
+    --return
+  --end
+  --local lastVehicle = Vehicle:get()
+  --if not lastVehicle:IsValid() then
+    --return
+  --end
+--
+  --LogOutput("INFO", "Despawning because of resetting during RP mode")
+  --PC:ServerDespawnVehicle(lastVehicle, 0)
+--end)
 
 
 ---Toggle RP mode for a player controller
