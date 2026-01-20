@@ -79,7 +79,7 @@ end
 
 
 ---TransferMoneyToPlayer
----@param uniqueId string? Filter by player state unique net ID
+---@param uniqueId string Filter by player state unique net ID
 ---@param amount integer The amount to transfer (potentially negative)
 ---@param message string The message that comes with the transfer
 ---@return boolean
@@ -87,12 +87,12 @@ local function TransferMoneyToPlayer(uniqueId, amount, message)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
   if PC == nil or not PC:IsValid() then return false end
   LogOutput("INFO", "TransferMoneyToPlayer")
-  ExecuteInGameThreadSync(function()
+  ExecuteInGameThread(function()
     if PC:IsValid() then
       ---@diagnostic disable-next-line: param-type-mismatch
       PC:ClientAddMoney(amount, 'Context', FText(message), true, 'Context', 'Context')
     end
-  end, "TransferMoneyToPlayer")
+  end)
   return true
 end
 

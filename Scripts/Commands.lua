@@ -43,47 +43,6 @@ end
 
 Commands["/d"] = Commands["/despawn"]
 
-Commands["/rp_mode"] = function(PC, args)
-  local playerName = PC.PlayerState:GetPlayerName():ToString()
-  local expectedCode = GenerateVerificationCode(playerName, "/rp_mode")
-  
-  if args[1] == nil then
-    -- No argument provided, show warning and verification code prompt
-    local msg = "<Title>RP Mode</>\n\n" ..
-      "<Warning>Warning:</> Enabling RP Mode will <Bold>despawn your current vehicle</>.\n\n" ..
-      "To confirm, type:\n" ..
-      "<Highlight>/rp_mode " .. expectedCode .. "</>"
-    PC:ClientShowPopupMessage(FText(msg))
-    LogOutput("INFO", "Player %s must confirm with: /rp_mode %s", playerName, expectedCode)
-    return
-  end
-  
-  if string.upper(args[1]) == expectedCode then
-    local rpMode = vehicleManager.ToggleRPMode(PC)
-    if rpMode then
-      local msg = "<Title>RP Mode</>\n\n" ..
-        "<EffectGood>RP Mode is now ON</>\n\n" ..
-        "<Small>Your vehicle has been despawned.</>"
-      PC:ClientShowPopupMessage(FText(msg))
-      LogOutput("INFO", "Set RP Mode = ON player %s", playerName)
-    else
-      local msg = "<Title>RP Mode</>\n\n" ..
-        "<EffectGood>RP Mode is now OFF</>"
-      PC:ClientShowPopupMessage(FText(msg))
-      LogOutput("INFO", "Set RP Mode = OFF player %s", playerName)
-    end
-  else
-    local msg = "<Title>RP Mode</>\n\n" ..
-      "<Warning>Invalid verification code.</>\n\n" ..
-      "Your code is:\n" ..
-      "<Highlight>/rp_mode " .. expectedCode .. "</>"
-    PC:ClientShowPopupMessage(FText(msg))
-    LogOutput("INFO", "Invalid verification code for player %s. Expected: %s", playerName, expectedCode)
-  end
-end
-
-Commands["/rp"] = Commands["/rp_mode"]
-
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then
     local parts = SplitString(message, " ")
@@ -113,7 +72,5 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", funct
     return
   end
 
-  if HandleCommand(playerController, message) then
-    -- Category:set(2) -- 2 = Company (Hidden from public chat) - BUGGY
-  end
+  HandleCommand(playerController, message)
 end)

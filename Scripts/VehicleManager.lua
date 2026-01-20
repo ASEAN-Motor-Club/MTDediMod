@@ -1957,82 +1957,6 @@ local function HandleDetachPlayerVehicle(session)
   end
 end
 
-local function HandleDespawnPlayerVehicle(session)
-  local playerId = session.pathComponents[2]
-  local content = json.parse(session.content)
-  if not content then
-    return json.stringify { error = "Invalid JSON body" }, nil, 400
-  end
-
-  local PC = GetPlayerControllerFromUniqueId(playerId)
-  if not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
-  end
-
-  if PC.LastVehicle == nil or not PC.LastVehicle:IsValid() then
-    return json.stringify { error = "No vehicle to despawn" }, nil, 400
-  end
-
-  if PC:IsValid() then
-    local vehiclesToDespawn = {}
-
-    ---@diagnostic disable-next-line: need-check-nil
-    if content.vehicleId == nil then
-      local lastPlayerVehicleId = nil
-      local activeVehicles = {}
-      if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
-        lastPlayerVehicleId = PC.LastVehicle.Net_VehicleId
-        local curr = PC.LastVehicle ---@type AMTVehicle?
-        while curr ~= nil and curr:IsValid() and curr.Net_Hooks:IsValid() do
-          local v = curr
-          activeVehicles[tostring(curr.Net_VehicleId)] = v
-          curr = nil
-          v.Net_Hooks:ForEach(function(i, val)
-            local hook = val:get()
-            if hook:IsValid() and hook.Trailer:IsValid() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
-              curr = hook.Trailer
-            end
-          end)
-        end
-      end
-      if content.all or content.others ~= nil then
-        PC.Net_SpawnedVehicles:ForEach(function(index, element)
-          local vehicle = element:get()
-          if vehicle:IsValid() and (content.others == nil or activeVehicles[tostring(vehicle.Net_VehicleId)] == nil) then
-            vehiclesToDespawn[tostring(vehicle.Net_VehicleId)] = vehicle
-          end
-        end)
-      end
-      if content.others == nil then
-        for vehicleId, vehicle in pairs(activeVehicles) do
-          vehiclesToDespawn[vehicleId] = vehicle
-        end
-      end
-    else
-      PC.Net_SpawnedVehicles:ForEach(function(index, element)
-        local vehicle = element:get()
-        if vehicle:IsValid() and vehicle.Net_VehicleId == content.vehicleId then
-          vehiclesToDespawn[tostring(vehicle.Net_VehicleId)] = vehicle
-        end
-      end)
-    end
-
-    for vehicleId, vehicle in pairs(vehiclesToDespawn) do
-      ExecuteInGameThreadSync(function()
-        LogOutput('INFO', 'Despawning vehicle %s', vehicleId)
-        if vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() then
-          vehicle:K2_DestroyActor()
-        end
-      end, "HandleDespawnPlayerVehicle")
-    end
-
-    return json.stringify { Status = "ok" }, nil, 200
-  end
-
-  return json.stringify { error = "Invalid payload provided" }, nil, 400
-end
-
-
 local function HandleGetPlayerVehicleDecal(session)
   local playerId = session.pathComponents[2]
 
@@ -2264,42 +2188,6 @@ local function HandleGetPlayerVehicles(session)
 end
 
 
-local rpPlayers = {}
-
--- DISABLED: LoopAsync causing server crashes
--- TODO: Investigate and fix the crash before re-enabling
---[[
-LoopAsync(5000, function()
-  for characterGuid, isRpMode in pairs(rpPlayers) do
-    if isRpMode then
-      local PC = GetPlayerControllerFromGuid(characterGuid)
-      local playerState = PC.PlayerState
-      ---@cast playerState AMotorTownPlayerState
-      if PC:IsValid() and playerState:IsValid() and playerState.VehicleKey:ToString() ~= "None" then
-        local vehicle = PC.LastVehicle
-        ---@diagnostic disable-next-line: undefined-field
-        if vehicle:IsValid() and vehicle.NetLC_ColdState:IsValid() and vehicle.NetLC_ColdState.bIsAIDriving then
-          local position = vehicle:K2_GetActorLocation()
-          if position.X ~= 0 and position.Y ~= 0 and position.Z ~= 0 then
-            ExecuteInGameThreadSync(function()
-              if PC:IsValid() and vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() then
-                vehicle.NetLC_ColdState.bIsAIDriving = false
-                PC:ServerExitVehicle()
-              end
-            end, "RP mode autopilot ServerExitVehicle")
-            ExecuteInGameThreadSync(function()
-              if PC:IsValid() then
-                PC:ClientShowSystemMessage(FText("You may not use autopilot in RP mode. Toggle autopilot again to turn it off."))
-              end
-            end, "RP mode autopilot ClientShowSystemMessage")
-          end
-        end
-      end
-    end
-  end
-  return false
-end)
---]]
 
 local function HandlePlayerExitVehicle(session)
   local characterGuid = session.pathComponents[2]
@@ -2313,64 +2201,6 @@ local function HandlePlayerExitVehicle(session)
   return nil, nil, 200
 end
 
-local function HandleGetRPMode(session)
-  local characterGuid = session.pathComponents[2]
-  return json.stringify { isRpMode = rpPlayers[characterGuid] == true }, nil, 200
-end
-
-local function HandleSetRPMode(session)
-  local characterGuid = session.pathComponents[2]
-  local content = json.parse(session.content)
-  if not content then
-    return json.stringify { error = "Invalid JSON body" }, nil, 400
-  end
-
-  local PC = GetPlayerControllerFromGuid(characterGuid)
-  if not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
-  end
-
-  if not PC.Net_SpawnedVehicles:IsValid() then
-    return json.stringify { error = "Invalid player vehicles" }, nil, 400
-  end
-
-  ---@diagnostic disable-next-line: need-check-nil
-  if rpPlayers[characterGuid] == nil or content.state == true then
-    if content.despawn then
-      local lastVehicleId = nil
-      ExecuteInGameThreadSync(function()
-        if PC:IsValid() and PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
-          LogOutput("INFO", "Despawning last vehicle for RP mode")
-          lastVehicleId = PC.LastVehicle.Net_VehicleId
-          PC.LastVehicle:K2_DestroyActor()
-        end
-      end, "HandleSetRPMode despawn current vehicle")
-      if PC:IsValid() and PC.Net_SpawnedVehicles:IsValid() then
-        PC.Net_SpawnedVehicles:ForEach(function(index, element)
-          local vehicle = element:get()
-          ExecuteInGameThreadSync(function()
-            LogOutput("INFO", "Despawning vehicle for RP mode")
-            if vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() and vehicle.Net_VehicleId ~= lastVehicleId then
-              vehicle:K2_DestroyActor()
-            end
-          end, "HandleSetRPMode despawn spawned vehicle")
-        end)
-      end
-    end
-    rpPlayers[characterGuid] = true
-    return json.stringify { isRpMode = true }, nil, 200
-  else
-    rpPlayers[characterGuid] = nil
-    return json.stringify { isRpMode = false }, nil, 200
-  end
-
-  return nil, nil, 200
-end
-
-
-local function HandleSpawnVehicle_old()
-  return nil, nil, 400
-end
 
 local function HandleSpawnVehicle(session)
   local content = json.parse(session.content)
@@ -2533,76 +2363,6 @@ local function HandleSpawnVehicle(session)
   return nil, nil, 400
 end
 
---RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(ctx, Vehicle)
-  --local PC = ctx:get() ---@type AMotorTownPlayerController
-  -----@diagnostic disable-next-line: undefined-field
-  --if not PC:IsValid() then
-    --return
-  --end
-  --local playerState = PC.PlayerState
-  -----@cast playerState AMotorTownPlayerState
-  --if not playerState:IsValid() then
-    --return
-  --end
-  --local characterGuid = GuidToString(playerState.CharacterGuid)
-  --if rpPlayers[characterGuid] ~= true then
-    --return
-  --end
-  --local lastVehicle = Vehicle:get()
-  --if not lastVehicle:IsValid() then
-    --return
-  --end
---
-  --LogOutput("INFO", "Despawning because of resetting during RP mode")
-  --PC:ServerDespawnVehicle(lastVehicle, 0)
---end)
-
-
----Toggle RP mode for a player controller
----@param PC AMotorTownPlayerController
----@return boolean isRpMode The new RP mode state
-local function ToggleRPMode(PC)
-  if not PC:IsValid() or not PC.PlayerState:IsValid() then
-    return false
-  end
-  
-  local playerState = PC.PlayerState
-  ---@cast playerState AMotorTownPlayerState
-  local characterGuid = GuidToString(playerState.CharacterGuid)
-  
-  if rpPlayers[characterGuid] == true then
-    -- Disable RP mode
-    rpPlayers[characterGuid] = nil
-    return false
-  else
-    -- Enable RP mode - despawn vehicles first
-    if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
-      local lastVehicleId = PC.LastVehicle.Net_VehicleId
-      ExecuteInGameThreadSync(function()
-        if PC:IsValid() and PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
-          LogOutput("INFO", "Despawning last vehicle for RP mode")
-          PC.LastVehicle:K2_DestroyActor()
-        end
-      end, "ToggleRPMode despawn current vehicle")
-      
-      if PC:IsValid() and PC.Net_SpawnedVehicles:IsValid() then
-        PC.Net_SpawnedVehicles:ForEach(function(index, element)
-          local vehicle = element:get()
-          ExecuteInGameThreadSync(function()
-            if vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() and vehicle.Net_VehicleId ~= lastVehicleId then
-              LogOutput("INFO", "Despawning vehicle for RP mode")
-              vehicle:K2_DestroyActor()
-            end
-          end, "ToggleRPMode despawn spawned vehicle")
-        end)
-      end
-    end
-    
-    rpPlayers[characterGuid] = true
-    return true
-  end
-end
-
 ---Despawn player's last vehicle and attached trailers
 ---@param PC AMotorTownPlayerController
 ---@return number count The number of vehicles despawned
@@ -2643,7 +2403,6 @@ return {
   HandleSetWorldVehicleDecal = HandleSetWorldVehicleDecal,
   HandleDespawnVehicle = HandleDespawnVehicle,
   HandleDetachPlayerVehicle = HandleDetachPlayerVehicle,
-  HandleDespawnPlayerVehicle = HandleDespawnPlayerVehicle,
   HandleCreateVehicleDealerSpawnPoint = HandleCreateVehicleDealerSpawnPoint,
   HandleGetGarages = HandleGetGarages,
   HandleSpawnGarage = HandleSpawnGarage,
@@ -2654,8 +2413,5 @@ return {
   VehicleMirrorPositionToTable = VehicleMirrorPositionToTable,
   VehicleSettingToTable = VehicleSettingToTable,
   HandleSetVehicleParameter = HandleSetVehicleParameter,
-  HandleGetRPMode = HandleGetRPMode,
-  HandleSetRPMode = HandleSetRPMode,
   HandlePlayerExitVehicle = HandlePlayerExitVehicle,
-  ToggleRPMode = ToggleRPMode,
 }
