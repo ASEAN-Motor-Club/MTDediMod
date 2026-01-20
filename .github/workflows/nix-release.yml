@@ -16,60 +16,6 @@ permissions:
 
 jobs:
   # ============================================================
-  # Job 0: Detect what files changed to skip unnecessary builds
-  # ============================================================
-  detect-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      cpp_changed: ${{ steps.changes.outputs.cpp_changed }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect C++ changes
-        id: changes
-        run: |
-          # For tags, compare against the previous tag
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            # Get the previous tag
-            PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-            if [ -z "$PREV_TAG" ]; then
-              echo "No previous tag found, assuming C++ changed"
-              echo "cpp_changed=true" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-            BASE_REF="$PREV_TAG"
-          else
-            # For workflow_dispatch, compare against the latest release tag
-            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-            if [ -z "$LATEST_TAG" ]; then
-              echo "No tags found, assuming C++ changed"
-              echo "cpp_changed=true" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-            BASE_REF="$LATEST_TAG"
-          fi
-          
-          echo "Comparing against: $BASE_REF"
-          
-          # Check if any C++/build files changed
-          CPP_PATTERNS="src/|CMakeLists.txt|flake.nix|flake.lock|toolchain.cmake"
-          CHANGED_FILES=$(git diff --name-only "$BASE_REF"..HEAD || echo "")
-          
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
-          
-          if echo "$CHANGED_FILES" | grep -qE "$CPP_PATTERNS"; then
-            echo "C++/build files changed"
-            echo "cpp_changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "No C++/build files changed, only scripts"
-            echo "cpp_changed=false" >> $GITHUB_OUTPUT
-          fi
-
-  # ============================================================
   # Job 1: Build Lua native dependencies (Windows - cached)
   # ============================================================
   build-lua-deps:
@@ -140,10 +86,9 @@ jobs:
           retention-days: 30
 
   # ============================================================
-  # Job 2: Build mod with Nix (Linux - parallel)
+  # Job 2: Build mod with Nix (Linux)
   # ============================================================
   build-mod:
-    needs: detect-changes
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -175,7 +120,6 @@ jobs:
         uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Cache xwin
-        if: needs.detect-changes.outputs.cpp_changed == 'true'
         uses: actions/cache@v4
         with:
           path: .xwin-cache
@@ -183,46 +127,19 @@ jobs:
           restore-keys: xwin-${{ runner.os }}-
 
       - name: Update Flake Lock
-        if: needs.detect-changes.outputs.cpp_changed == 'true'
         env:
           NIX_CONFIG: "access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}"
         run: nix flake update ue4ss
 
       - name: Configure
-        if: needs.detect-changes.outputs.cpp_changed == 'true'
         env:
           NIX_CONFIG: "access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}"
         run: nix run .#configure
 
       - name: Build
-        if: needs.detect-changes.outputs.cpp_changed == 'true'
         env:
           NIX_CONFIG: "access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}"
         run: nix run .#build
-
-      # When C++ hasn't changed, download UE4SS from previous release
-      - name: Download previous release (skip C++ build)
-        if: needs.detect-changes.outputs.cpp_changed == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "C++ files unchanged, downloading UE4SS from latest release..."
-          
-          # Get the latest release
-          LATEST_TAG=$(git describe --tags --abbrev=0)
-          
-          # Download and extract the release zip
-          gh release download "$LATEST_TAG" --pattern "MotorTownMods_*.zip" --dir .
-          unzip -q MotorTownMods_*.zip -d previous-release
-          
-          # Copy the UE4SS binaries to where package script expects them
-          mkdir -p build-cross/Output/Game/Binaries/Win64
-          cp -r previous-release/ue4ss/* build-cross/Output/Game/Binaries/Win64/ || true
-          cp previous-release/ue4ss/UE4SS.dll build-cross/Output/Game/Binaries/Win64/ || true
-          cp previous-release/ue4ss/dwmapi.dll build-cross/Output/Game/Binaries/Win64/ || true
-          
-          echo "Copied UE4SS binaries from $LATEST_TAG"
-          ls -la build-cross/Output/Game/Binaries/Win64/
 
       - name: Package
         env:
