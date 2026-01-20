@@ -551,12 +551,30 @@ function MergeTable(base, append)
 end
 
 
-function ExecuteInGameThreadSync(fn, callerName)
-  callerName = callerName or "unknown"
+local socket = RequireSafe("socket") ---@type Socket?
+---Halts CPU operation for the given duration
+---@param ms integer Duration to sleep in miliseconds
+function Sleep(ms)
+  if ms ~= 0 then
+    if socket then
+      socket.sleep(ms / 1000)
+    end
+  end
+end
+
+---Execute given function in the GameThread
+---@param exec fun()
+function ExecuteInGameThreadSync(exec)
+  local wait = 0
+  local isProcessing = true
   ExecuteInGameThread(function()
-    LogOutput('INFO', 'ExecuteInGameThreadSync callback: %s', callerName)
-    fn()
-    LogOutput('INFO', 'finished ExecuteInGameThreadSync callback: %s', callerName)
-  end, EGameThreadMethod.EngineTick)
+    exec()
+    isProcessing = false
+  end)
+
+  while isProcessing and wait < 1000 do
+    wait = wait + 1
+    Sleep(1)
+  end
 end
 
