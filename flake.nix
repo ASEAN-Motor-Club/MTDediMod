@@ -31,6 +31,7 @@
     ragenix.inputs.nixpkgs.follows = "nixpkgs";
     quadlet-nix.url = "github:SEIAROTg/quadlet-nix";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    opencode.url = "github:anomalyco/opencode";
   };
 
   outputs = inputs @ {
@@ -38,6 +39,7 @@
     nixpkgs,
     nixpkgs-unstable,
     flake-parts,
+    opencode,
     amc-backend,
     amc-peripheral,
     motortown-server,
@@ -451,11 +453,11 @@
             ./machines/asean-mt-server/configuration.nix
             ragenix.nixosModules.default
 
-            # Use opencode from nixpkgs-unstable (1.2.x) — stable has 0.0.46 which lacks serve/web
+            # Use opencode from the official flake — nixpkgs versions are too old
             ({pkgs, ...}: {
               nixpkgs.overlays = [
                 (final: prev: {
-                  opencode = nixpkgs-unstable.legacyPackages.${prev.system}.opencode;
+                  opencode = opencode.packages.${prev.system}.default;
                 })
               ];
             })
