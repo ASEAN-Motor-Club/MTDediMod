@@ -217,11 +217,12 @@
     description = "OpenCode Serve (Headless API)";
     after = ["network.target"];
     wantedBy = ["multi-user.target"];
-    path = with pkgs; [git openssh gh ripgrep fzf coreutils jq];
+    path = with pkgs; [git openssh gh ripgrep fzf coreutils jq openssl curl];
 
     environment = {
       HOME = "/var/lib/opencode";
-      GIT_SSH_COMMAND = "ssh -i ${config.age.secrets.coding-agent-deploy-key.path} -o StrictHostKeyChecking=accept-new";
+      GITHUB_APP_ID = "2922326";
+      GITHUB_INSTALLATION_ID = "111712229";
     };
 
     serviceConfig = {
@@ -235,12 +236,40 @@
     };
 
     script = ''
-      # GH_TOKEN for gh CLI (PR creation)
-      export GH_TOKEN="$(cat ${config.age.secrets.coding-agent-gh-token.path})"
+      set -euo pipefail
 
-      # Configure git identity
-      git config --global user.name "AMC Coding Agent"
-      git config --global user.email "agent@aseanmotorclub.com"
+      # --- Generate GitHub App installation token ---
+      APP_KEY="${config.age.secrets.coding-agent-app-key.path}"
+      NOW=$(date +%s)
+      IAT=$((NOW - 60))
+      EXP=$((NOW + 600))
+
+      # Base64url encode helper
+      b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
+
+      HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | b64url)
+      PAYLOAD=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$GITHUB_APP_ID\"}" | b64url)
+      SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$APP_KEY" | b64url)
+      JWT="$HEADER.$PAYLOAD.$SIGNATURE"
+
+      # Exchange JWT for installation access token
+      RESPONSE=$(curl -s -X POST \
+        -H "Authorization: Bearer $JWT" \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/app/installations/$GITHUB_INSTALLATION_ID/access_tokens")
+
+      export GH_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
+      if [ "$GH_TOKEN" = "null" ] || [ -z "$GH_TOKEN" ]; then
+        echo "ERROR: Failed to get installation token: $RESPONSE"
+        exit 1
+      fi
+      echo "GitHub App token acquired"
+
+      # Configure git to use HTTPS with token
+      git config --global user.name "AMC Coding Agent[bot]"
+      git config --global user.email "2922326+amc-coding-agent[bot]@users.noreply.github.com"
+      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "https://github.com/"
+      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "git@github.com:"
 
       exec ${pkgs.opencode}/bin/opencode serve --hostname 127.0.0.1 --port 4096
     '';

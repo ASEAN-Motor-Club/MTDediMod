@@ -503,13 +503,8 @@
                 file = ./secrets/oauth2-proxy.age;
                 mode = "400";
               };
-              age.secrets.coding-agent-deploy-key = {
-                file = ./secrets/coding-agent-deploy-key.age;
-                owner = "opencode";
-                mode = "600";
-              };
-              age.secrets.coding-agent-gh-token = {
-                file = ./secrets/coding-agent-gh-token.age;
+              age.secrets.coding-agent-app-key = {
+                file = ./secrets/coding-agent-app-key.age;
                 owner = "opencode";
                 mode = "400";
               };
