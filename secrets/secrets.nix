@@ -13,4 +13,6 @@ in {
   "github-runner-ssh.age".publicKeys = [owner asean-mt-server peripheral];
   "peripheral-bots.age".publicKeys = [owner peripheral];
   "discordlink-bot-token.age".publicKeys = [owner peripheral asean-mt-server];
+  "opencode.age".publicKeys = [owner asean-mt-server];
+  "oauth2-proxy.age".publicKeys = [owner asean-mt-server];
 }

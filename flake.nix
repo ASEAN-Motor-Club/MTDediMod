@@ -484,7 +484,16 @@
                 owner = "github-runner-amc-deploy";
                 path = "/var/lib/github-runner-amc-deploy/.ssh/id_ed25519";
               };
+              age.secrets.opencode = {
+                file = ./secrets/opencode.age;
+                mode = "400";
+              };
+              age.secrets.oauth2-proxy = {
+                file = ./secrets/oauth2-proxy.age;
+                mode = "400";
+              };
             })
+
 
             self.nixosModules.motortown-server
             self.nixosModules.motortown-server-containers

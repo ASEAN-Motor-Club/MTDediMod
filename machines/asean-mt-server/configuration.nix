@@ -188,4 +188,90 @@
       };
     };
   };
+
+  # === OpenCode ===
+  users.users.opencode = {
+    isSystemUser = true;
+    group = "opencode";
+    home = "/var/lib/opencode";
+    createHome = true;
+  };
+  users.groups.opencode = {};
+
+  # Headless API server (Tailscale-internal + localhost)
+  systemd.services.opencode-serve = {
+    description = "OpenCode Serve (Headless API)";
+    after = ["network.target"];
+    wantedBy = ["multi-user.target"];
+    serviceConfig = {
+      Type = "simple";
+      User = "opencode";
+      Group = "opencode";
+      WorkingDirectory = "/var/lib/opencode/workspace";
+      EnvironmentFile = config.age.secrets.opencode.path;
+      Environment = "HOME=/var/lib/opencode";
+      ExecStart = "${pkgs.opencode}/bin/opencode serve --hostname 127.0.0.1 --port 4096";
+      Restart = "on-failure";
+      RestartSec = 5;
+    };
+  };
+
+  # Browser UI
+  systemd.services.opencode-web = {
+    description = "OpenCode Web UI";
+    after = ["network.target" "opencode-serve.service"];
+    wantedBy = ["multi-user.target"];
+    serviceConfig = {
+      Type = "simple";
+      User = "opencode";
+      Group = "opencode";
+      WorkingDirectory = "/var/lib/opencode/workspace";
+      EnvironmentFile = config.age.secrets.opencode.path;
+      Environment = "HOME=/var/lib/opencode";
+      ExecStart = "${pkgs.opencode}/bin/opencode web --hostname 127.0.0.1 --port 4097";
+      Restart = "on-failure";
+      RestartSec = 5;
+    };
+  };
+
+  # Ensure workspace directory exists
+  systemd.tmpfiles.rules = [
+    "d /var/lib/opencode/workspace 0755 opencode opencode -"
+  ];
+
+
+  # oauth2-proxy: GitHub authentication for OpenCode web UI
+  services.oauth2-proxy = {
+    enable = true;
+    httpAddress = "http://127.0.0.1:4180";
+    reverseProxy = true;
+    upstream = "http://127.0.0.1:4097";
+    provider = "github";
+    github.org = "ASEAN-Motor-Club";
+    cookie.domain = "code.aseanmotorclub.com";
+    cookie.secure = true;
+    email.domains = ["*"];
+    setXauthrequest = true;
+    extraConfig = {
+      skip-provider-button = "true";
+    };
+    keyFile = config.age.secrets.oauth2-proxy.path;
+  };
+
+  # Nginx vhost for OpenCode web UI (behind oauth2-proxy)
+  services.nginx.virtualHosts."code.aseanmotorclub.com" = {
+    enableACME = true;
+    forceSSL = true;
+    locations."/" = {
+      proxyPass = "http://127.0.0.1:4180";
+      extraConfig = ''
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+      '';
+    };
+  };
 }
