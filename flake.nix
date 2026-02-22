@@ -451,6 +451,15 @@
             ./machines/asean-mt-server/configuration.nix
             ragenix.nixosModules.default
 
+            # Use opencode from nixpkgs-unstable (1.2.x) — stable has 0.0.46 which lacks serve/web
+            ({pkgs, ...}: {
+              nixpkgs.overlays = [
+                (final: prev: {
+                  opencode = nixpkgs-unstable.legacyPackages.${prev.system}.opencode;
+                })
+              ];
+            })
+
             ({...}: {
               imports = [
                 ragenix.nixosModules.default
