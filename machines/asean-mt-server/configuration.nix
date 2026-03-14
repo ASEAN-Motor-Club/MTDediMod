@@ -182,8 +182,8 @@
       dokuwiki-plugin-infobox = pkgs.stdenv.mkDerivation {
         name = "infobox";
         src = pkgs.fetchzip {
-          url = "https://github.com/Kanaru92/DokuWiki-InfoBox/archive/refs/heads/main.zip";
-          sha256 = "sha256-0te3irbkhSA6VxLQq3qIY49y5AgEKm5LgvZGJrOMjAU=";
+          url = "https://github.com/Kanaru92/DokuWiki-InfoBox/archive/9e9b4c22289540b28728a8e7e16a871fa549906f.zip";
+          sha256 = "sha256-N6ReTPlpN1xOQ1UkhkJa7jKnHFGUg/K3hP4kZHJY8i8=";
         };
         sourceRoot = ".";
         installPhase = "mkdir -p $out; cp -R source/* $out/;";
