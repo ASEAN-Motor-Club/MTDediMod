@@ -112,9 +112,6 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}
 
       - name: Setup Nix Cache
         uses: DeterminateSystems/magic-nix-cache-action@main
