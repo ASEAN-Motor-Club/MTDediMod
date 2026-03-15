@@ -34,7 +34,12 @@ in {
   # --- Daily database backup ---
   # Runs pg_dump inside the amc-backend container, writes to host filesystem
   systemd.services.amc-dbBackup = {
-    serviceConfig.Type = "oneshot";
+    path = ["/run/current-system/sw"];
+    serviceConfig = {
+      Type = "oneshot";
+      Nice = 19;
+      IOSchedulingClass = "idle";
+    };
     script = ''
       set -eo pipefail
       export $(cat ${config.age.secrets.backend.path} | xargs)
@@ -68,6 +73,7 @@ in {
 
   # Crash-level failure notification
   systemd.services.amc-dbBackupFailureNotify = {
+    path = ["/run/current-system/sw"];
     serviceConfig.Type = "oneshot";
     script = ''
       export $(cat ${config.age.secrets.backend.path} | xargs)
@@ -77,7 +83,12 @@ in {
 
   # --- Backup verification ---
   systemd.services.amc-dbBackupVerify = {
-    serviceConfig.Type = "oneshot";
+    path = ["/run/current-system/sw"];
+    serviceConfig = {
+      Type = "oneshot";
+      Nice = 19;
+      IOSchedulingClass = "idle";
+    };
     script = ''
       set -eo pipefail
       export $(cat ${config.age.secrets.backend.path} | xargs)
@@ -115,10 +126,15 @@ in {
   # --- Restore service ---
   # Usage: systemctl start amc-dbRestore@20260315
   systemd.services."amc-dbRestore@" = {
+    path = ["/run/current-system/sw"];
     environment = {
       BACKUP_DATE = "%i";
     };
-    serviceConfig.Type = "oneshot";
+    serviceConfig = {
+      Type = "oneshot";
+      Nice = 19;
+      IOSchedulingClass = "idle";
+    };
     script = ''
       dumpFile="${backupDir}/amc.$BACKUP_DATE.dump"
       if [ ! -f "$dumpFile" ]; then
