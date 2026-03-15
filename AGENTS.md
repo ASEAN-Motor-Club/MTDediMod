@@ -46,10 +46,18 @@ Runs radio station and peripheral Discord bots as a regular systemd service.
 
 ## Deployment
 
-Deployment is done by running `nixos-rebuild` from the root flake. The NixOS configurations are in `machines/`.
+Deployment is done using the `deploy` script from the root of the monorepo. The script lives in `devShells.default`, so use `nix develop`:
+
+```bash
+nix develop --command deploy root@asean-mt-server   # Deploy to main server
+nix develop --command deploy root@amc-peripheral    # Deploy to peripheral server
+```
+
+The script wraps `nixos-rebuild switch` with `--override-input` to use local submodule checkouts (`amc-backend/`, `amc-peripheral/`, `motortown-server-flake/`), `--build-host` to build on the target, and `--fast` to skip evaluation caching. See [`nix/deploy.nix`](nix/deploy.nix).
 
 ## Skills
 
 | Skill | Description |
 |-------|-------------|
 | [server-access](.agents/skills/server-access/SKILL.md) | SSH access, container access, and debugging on AMC servers |
+| [secrets-management](.agents/skills/secrets-management/SKILL.md) | Managing ragenix-encrypted secrets |
