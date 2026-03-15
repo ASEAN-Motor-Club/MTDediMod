@@ -104,23 +104,16 @@ jobs:
 
       - name: Configure Git Auth
         run: |
-          # Configure git auth ONLY for private repos (ASEAN-Motor-Club, Re-UE4SS)
-          # Do NOT rewrite all github.com URLs — that breaks public repo fetches
           TOKEN="${{ secrets.UEPSEUDO_PAT }}"
-
-          # Rewrite SSH and HTTPS URLs for private orgs only
-          for ORG in ASEAN-Motor-Club Re-UE4SS; do
-            sudo git config --system url."https://x-access-token:$TOKEN@github.com/$ORG/".insteadOf "git@github.com:$ORG/"
-            sudo git config --system url."https://x-access-token:$TOKEN@github.com/$ORG/".insteadOf "ssh://git@github.com/$ORG/"
-            sudo git config --system url."https://x-access-token:$TOKEN@github.com/$ORG/".insteadOf "https://github.com/$ORG/"
-          done
-
-          # Write netrc for the Nix daemon (runs as root)
-          echo "machine github.com login x-access-token password $TOKEN" | sudo tee /root/.netrc > /dev/null
-          sudo chmod 600 /root/.netrc
+          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "git@github.com:"
+          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "ssh://git@github.com/"
+          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "https://github.com/"
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}
 
       - name: Setup Nix Cache
         uses: DeterminateSystems/magic-nix-cache-action@main
@@ -132,17 +125,14 @@ jobs:
           key: xwin-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: xwin-${{ runner.os }}-
 
-
-
-
       - name: Configure
-        run: nix run .#configure
+        run: nix run --no-update-lock-file .#configure
 
       - name: Build
-        run: nix run .#build
+        run: nix run --no-update-lock-file .#build
 
       - name: Package
-        run: nix run .#package
+        run: nix run --no-update-lock-file .#package
 
       - name: Extract version
         id: version
