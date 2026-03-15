@@ -128,7 +128,7 @@
                 enableMods = true;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "test";
-                modVersion = "v0.31.0-rc8";
+                modVersion = "v0.31.0-rc11";
                 enableExternalMods = {
                   qxZap_CranyUnlocked_P = true;
                   MajasDetailWorks7_17_P = true;
