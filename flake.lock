@@ -98,19 +98,19 @@
     "ue4ss": {
       "flake": false,
       "locked": {
-        "lastModified": 1767177190,
-        "narHash": "sha256-BMYZ0+RSve6yyAGeaBpGu7rKwQ9BLizZN3wq26jjkUE=",
+        "lastModified": 1773447772,
+        "narHash": "sha256-Kocdndrl/T9I7nhEzTa1fo+V9BarymxqCRA917JFup4=",
         "ref": "refs/heads/main",
-        "rev": "20c7f2b6023476b6167125e1689725ca4194e3b1",
-        "revCount": 1832,
+        "rev": "0bfec09ee30b7c4cda8aa151e2fdb15cbe6c10c9",
+        "revCount": 1945,
         "submodules": true,
         "type": "git",
-        "url": "https://github.com/ASEAN-Motor-Club/RE-UE4SS.git"
+        "url": "https://github.com/UE4SS-RE/RE-UE4SS.git"
       },
       "original": {
         "submodules": true,
         "type": "git",
-        "url": "https://github.com/ASEAN-Motor-Club/RE-UE4SS.git"
+        "url": "https://github.com/UE4SS-RE/RE-UE4SS.git"
       }
     }
   },

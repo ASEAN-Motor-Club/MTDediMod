@@ -6,7 +6,6 @@
 #include <Unreal/UObjectGlobals.hpp>
 #include <format>
 #include "statics.h"
-#include "modsmanager.h"
 #include "EventsRoute.h"
 
 // Workaround against multiple check definitions
@@ -30,7 +29,6 @@ Webserver::Webserver() {
 		Port = atoi(val);
 	}
 
-	responses.push_back(std::make_shared<ModsManager>());
 	responses.push_back(std::make_shared<EventsRoute>());
 
 	serverThread = boost::thread(&Webserver::run_server, this, Port);

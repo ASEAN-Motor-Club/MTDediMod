@@ -36,8 +36,15 @@ MotorTownMods::MotorTownMods()
 	Output::send<LogLevel::Verbose>(STR("[{}] mod loaded\n"), ModName);
 }
 
+MotorTownMods::~MotorTownMods()
+{
+	HookManager::UnregisterAllHooks();
+}
+
 auto MotorTownMods::on_unreal_init() -> void
 {
+	HookManager::UnregisterAllHooks(); // Prevent duplicate hooks on hot-reload if destructor wasn't fully processed
+
 	// Init API server
 	auto server = Webserver::Get();
 	HookManager::RegisterPlayerEventHook(

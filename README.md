@@ -91,7 +91,7 @@ Most of the server settings can be configured using environment variables:
 Due to the webserver being ran on a separate thread, a stop command must be issued before reloading the mods.
 
 1. Send **POST** `/stop` to the `MOD_SERVER_PORT` server. A message `Webserver stopped` will show up in the `UE4SS.log` indicating the webserver has stopped.
-2. Send **POST** `/mods/reload` to the `MOD_MANAGEMENT_PORT` server. This will reload all the Lua mods including this mod.
+2. Send **POST** `/mods/reload` to the `MOD_SERVER_PORT` server. This will reload all the Lua mods including this mod.
 
 ## Documentation
 

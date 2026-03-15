@@ -9,10 +9,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Custom UE4SS fork (known-working main branch)
     ue4ss = {
       type = "git";
-      url = "https://github.com/ASEAN-Motor-Club/RE-UE4SS.git";
+      url = "https://github.com/UE4SS-RE/RE-UE4SS.git";
       submodules = true;
       flake = false;
     };
@@ -80,6 +79,13 @@
           modName = "MotorTownMods";
           buildType = "Game__Shipping__Win64";
           proxyPath = "C:\\Windows\\System32\\version.dll";
+
+          # Legacy v0.30.0 release used to extract pre-built Lua binaries (luasocket, cjson, etc.)
+          luaBinaries = pkgs.fetchzip {
+            url = "https://github.com/ASEAN-Motor-Club/MTDediMod/releases/download/v0.30.0/MotorTownMods_v0.30.0.zip";
+            hash = "sha256-YEQMtij/WoSEAVVVYgdA4kP5zkzhkHc2gTc3hKbyHCQ=";
+            stripRoot = false;
+          };
 
           configureScript = pkgs.writeShellApplication {
             name = "${modName}-configure";
@@ -240,6 +246,14 @@ EOF
                 # Copy contents into the shared folder (next to UEHelpers)
                 cp -r "$SHARED_LUA_DIR"/* "$PACKAGE_DIR/ue4ss/Mods/shared/"
                 echo "✓ Copied project shared Lua libraries from $SHARED_LUA_DIR"
+              fi
+
+              # Copy legacy Lua binaries (socket, mime, cjson, etc.) from HTTP download
+              if [ -d "${luaBinaries}/ue4ss/Mods/shared" ]; then
+                # Copying selectively replacing only missing binaries/scripts to avoid overwriting newer MTHelpers 
+                # (actually just copying socket, mime, cjson, ltn12, json2lua, lua2json)
+                cp -rn "${luaBinaries}/ue4ss/Mods/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
+                echo "✓ Injected legacy Lua binary dependencies (socket, cjson, etc) from HTTP download"
               fi
 
               # Create mods.txt

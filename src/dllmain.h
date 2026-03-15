@@ -9,7 +9,7 @@ class MotorTownMods : public RC::CppUserModBase
 {
 public:
 	MotorTownMods();
-	~MotorTownMods() override {};
+	~MotorTownMods() override;
 
 	auto on_update() -> void override {};
 
