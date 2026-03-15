@@ -9,7 +9,8 @@
         "library": [
             "types/ue4ss",
             "types/game",
-            "types/luasocket"
+            "types/luasocket",
+            "types/types"
         ],
         "checkThirdParty": false,
         "ignoreDir": [

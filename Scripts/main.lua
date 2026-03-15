@@ -41,6 +41,10 @@ local function LoadWebserver()
     server.registerHandler("/version", "GET", serverManager.HandleGetModVersion, false)
     server.registerHandler("/status/general", "GET", serverManager.HandleGetServerState)
     server.registerHandler("/status/general/*", "GET", serverManager.HandleGetZoneState)
+    server.registerHandler("/dump/lua_types", "POST", function(session)
+        GenerateLuaTypes()
+        return json.stringify { status = "lua types generated" }, nil, 200
+    end)
     server.registerHandler("/mods/reload", "POST", function(session)
         RestartCurrentMod()
         return json.stringify { status = "received mods reload signal" }, nil, 202

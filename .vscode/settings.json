@@ -10,6 +10,7 @@
     ],
     "Lua.workspace.library": [
         "${workspaceFolder}/types/ue4ss",
-        "${workspaceFolder}/types/game"
+        "${workspaceFolder}/types/game",
+        "${workspaceFolder}/types/types"
     ]
 }
