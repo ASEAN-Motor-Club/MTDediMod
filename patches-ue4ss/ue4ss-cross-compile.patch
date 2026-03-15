@@ -1,0 +1,63 @@
+diff --git a/UE4SS/proxy_generator/proxy/CMakeLists.txt b/UE4SS/proxy_generator/proxy/CMakeLists.txt
+--- a/UE4SS/proxy_generator/proxy/CMakeLists.txt
++++ b/UE4SS/proxy_generator/proxy/CMakeLists.txt
+@@ -63,17 +63,33 @@ endif()
+ # Generate proxy files
+ if(USING_EXPORT_FILE)
+     # Using pre-generated export file
+-    add_custom_command(
+-        OUTPUT
+-            "${CMAKE_CURRENT_BINARY_DIR}/dllmain.cpp"
+-            "${CMAKE_CURRENT_BINARY_DIR}/${PROXY_NAME}.asm"
+-            "${CMAKE_CURRENT_BINARY_DIR}/${PROXY_NAME}.def"
+-        COMMAND "$<TARGET_FILE:proxy_generator>" ${UE4SS_PROXY_PATH} ${CMAKE_CURRENT_BINARY_DIR}
+-        DEPENDS
+-            proxy_generator
+-            ${UE4SS_PROXY_PATH}
+-        COMMENT "Generating proxy files from export file: ${UE4SS_PROXY_PATH}"
+-    )
++    if(CMAKE_CROSSCOMPILING)
++        # Cross-compiling: use Python script instead of native executable
++        add_custom_command(
++            OUTPUT
++                "${CMAKE_CURRENT_BINARY_DIR}/dllmain.cpp"
++                "${CMAKE_CURRENT_BINARY_DIR}/${PROXY_NAME}.asm"
++                "${CMAKE_CURRENT_BINARY_DIR}/${PROXY_NAME}.def"
++            COMMAND "python3" "${CMAKE_CURRENT_SOURCE_DIR}/../proxy_generator.py" ${UE4SS_PROXY_PATH} ${CMAKE_CURRENT_BINARY_DIR}
++            DEPENDS
++                "${CMAKE_CURRENT_SOURCE_DIR}/../proxy_generator.py"
++                ${UE4SS_PROXY_PATH}
++            COMMENT "Generating proxy files from export file (python, cross-compile): ${UE4SS_PROXY_PATH}"
++        )
++    else()
++        # Native build: use compiled proxy_generator
++        add_custom_command(
++            OUTPUT
++                "${CMAKE_CURRENT_BINARY_DIR}/dllmain.cpp"
++                "${CMAKE_CURRENT_BINARY_DIR}/${PROXY_NAME}.asm"
++                "${CMAKE_CURRENT_BINARY_DIR}/${PROXY_NAME}.def"
++            COMMAND "$<TARGET_FILE:proxy_generator>" ${UE4SS_PROXY_PATH} ${CMAKE_CURRENT_BINARY_DIR}
++            DEPENDS
++                proxy_generator
++                ${UE4SS_PROXY_PATH}
++            COMMENT "Generating proxy files from export file: ${UE4SS_PROXY_PATH}"
++        )
++    endif()
+ elseif(CMAKE_CROSSCOMPILING)
+     # Cross-compiling without export file - try to find one
+     set(FALLBACK_EXPORT "${CMAKE_CURRENT_SOURCE_DIR}/../exports/${PROXY_NAME}.exports")
+@@ -83,11 +99,11 @@ elseif(CMAKE_CROSSCOMPILING)
+                 "${CMAKE_CURRENT_BINARY_DIR}/dllmain.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/${PROXY_NAME}.asm"
+                 "${CMAKE_CURRENT_BINARY_DIR}/${PROXY_NAME}.def"
+-            COMMAND "$<TARGET_FILE:proxy_generator>" ${FALLBACK_EXPORT} ${CMAKE_CURRENT_BINARY_DIR}
++            COMMAND "python3" "${CMAKE_CURRENT_SOURCE_DIR}/../proxy_generator.py" ${FALLBACK_EXPORT} ${CMAKE_CURRENT_BINARY_DIR}
+             DEPENDS
+-                proxy_generator
++                "${CMAKE_CURRENT_SOURCE_DIR}/../proxy_generator.py"
+                 ${FALLBACK_EXPORT}
+-            COMMENT "Generating proxy files from fallback export: ${FALLBACK_EXPORT}"
++            COMMENT "Generating proxy files from fallback export (python): ${FALLBACK_EXPORT}"
+         )
+     else()
+         message(FATAL_ERROR "Cross-compilation requires export file for ${PROXY_NAME}, but none found")

@@ -4,67 +4,293 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
-    
-    # Custom UE4SS fork
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    # Custom UE4SS fork (known-working main branch)
     ue4ss = {
       type = "git";
       url = "https://github.com/ASEAN-Motor-Club/RE-UE4SS.git";
-      ref = "feat/reinstall-mods";
-      rev = "20c7f2b6023476b6167125e1689725ca4194e3b1";
       submodules = true;
       flake = false;
     };
-    
-    # UE4SS cross-compile toolchain
-    ue4ss-cross = {
-      url = "github:ASEAN-Motor-Club/UE4SSCPPTemplate/ea481afa8e5489593ad8f933c50713045b506125";
-      inputs.ue4ss.follows = "ue4ss";  # Use our fork instead of upstream
-    };
   };
 
-  outputs = inputs@{ flake-parts, ue4ss-cross, ... }:
+  outputs = inputs@{ flake-parts, ue4ss, fenix, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
 
       perSystem = { system, pkgs, ... }:
         let
-          lib = ue4ss-cross.lib.${system};
-          configureScript = lib.mkConfigureScript {
-            modName = "MotorTownMods";
-            proxyPath = "C:\\Windows\\System32\\version.dll";
-          };
-          configureApp = {
-            type = "app";
-            program = "${configureScript}/bin/MotorTownMods-configure";
+          # === Cross-compilation toolchain (inlined from UE4SSCPPTemplate) ===
+
+          # Configure Rust toolchain with MSVC target support
+          rustToolchain = with fenix.packages.${system}; combine [
+            minimal.toolchain
+            targets.x86_64-pc-windows-msvc.latest.rust-std
+          ];
+
+          # Dependencies required for cross-compilation
+          crossCompileBuildInputs = with pkgs; [
+            cmake
+            ninja
+            llvmPackages.clang-unwrapped
+            llvmPackages.bintools
+            llvmPackages.llvm
+            rustToolchain
+            git
+            xwin
+            openssl
+            pkg-config
+            libiconv
+            python3
+            lld
+          ];
+
+          # Patched UE4SS source with cross-compile support
+          patchedUE4SS = pkgs.stdenv.mkDerivation {
+            name = "ue4ss-patched";
+            src = ue4ss;
+
+            phases = [ "unpackPhase" "patchPhase" "installPhase" ];
+
+            patches = [ ./patches-ue4ss/ue4ss-cross-compile.patch ];
+
+            installPhase = ''
+              mkdir -p $out
+              cp -r . $out
+
+              # Overlay custom proxy generator files
+              mkdir -p $out/UE4SS/proxy_generator/exports
+              cp ${./proxy_generator/proxy_generator.py} $out/UE4SS/proxy_generator/proxy_generator.py
+              cp -r ${./proxy_generator/exports}/* $out/UE4SS/proxy_generator/exports/
+            '';
           };
 
-          buildScript = lib.mkBuildScript {
-            modName = "MotorTownMods";
-          };
-          buildApp = {
-            type = "app";
-            program = "${buildScript}/bin/MotorTownMods-build";
+          # Environment variables for cross-compilation
+          crossCompileEnv = ''
+            export CLANG_UNWRAPPED_BIN="${pkgs.llvmPackages.clang-unwrapped}/bin/clang"
+            export CLANG_CL_UNWRAPPED_BIN="${pkgs.llvmPackages.clang-unwrapped}/bin/clang-cl"
+            export UE4SS_SOURCE_DIR="${patchedUE4SS}"
+          '';
+
+          # === Mod-specific configuration ===
+          modName = "MotorTownMods";
+          buildType = "Game__Shipping__Win64";
+          proxyPath = "C:\\Windows\\System32\\version.dll";
+
+          configureScript = pkgs.writeShellApplication {
+            name = "${modName}-configure";
+            runtimeInputs = crossCompileBuildInputs;
+            text = ''
+              # Setup environment
+              ${crossCompileEnv}
+              export BUILD_TYPE="${buildType}"
+              export UE4SS_PROXY_PATH="${proxyPath}"
+
+              # Create CMakeLists.txt wrapper
+              cat > CMakeLists.txt <<EOF
+cmake_minimum_required(VERSION 3.22)
+project(UE4SSWrapper)
+if(NOT UE4SS_SOURCE_DIR)
+    set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
+endif()
+add_subdirectory("''${UE4SS_SOURCE_DIR}" RE-UE4SS)
+add_subdirectory("src" ${modName})
+EOF
+
+              # Run setup script (downloads MSVC headers via xwin and runs cmake -B)
+              ${builtins.readFile ./setup_cross_compile.sh}
+            '';
           };
 
-          packageScript = lib.mkPackageScript {
-            modName = "MotorTownMods";
-            luaScriptsDir = "./Scripts";
-            sharedLuaDir = "./shared";
-            enabledTxtPath = "./enabled.txt";
+          buildScript = pkgs.writeShellApplication {
+            name = "${modName}-build";
+            runtimeInputs = crossCompileBuildInputs;
+            text = ''
+              # Setup environment
+              ${crossCompileEnv}
+
+              if [ ! -d "build-cross" ]; then
+                echo "Error: build-cross directory not found. Please run 'nix run .#configure' first."
+                exit 1
+              fi
+
+              # Build
+              CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+              cmake --build build-cross -j"''${NIX_BUILD_CORES:-$CORES}" "$@"
+
+              echo "Build complete. Output in build-cross/${buildType}/"
+            '';
           };
-          packageApp = {
-            type = "app";
-            program = "${packageScript}/bin/MotorTownMods-package";
+
+          packageScript = pkgs.writeShellApplication {
+            name = "${modName}-package";
+            runtimeInputs = with pkgs; [ coreutils zip gnused ];
+            text = ''
+              set -e
+
+              MOD_NAME="${modName}"
+              BUILD_TYPE="${buildType}"
+              PACKAGE_DIR="package"
+              LUA_SCRIPTS_DIR="./Scripts"
+              SHARED_LUA_DIR="./shared"
+              INCLUDE_SETTINGS="true"
+              ENABLED_TXT_PATH="./enabled.txt"
+              UE4SS_SETTINGS_SRC="${patchedUE4SS}/assets/UE4SS-settings.ini"
+
+              echo "=========================================="
+              echo "Packaging $MOD_NAME for distribution"
+              echo "=========================================="
+
+              # Verify build exists
+              if [ ! -d "build-cross" ]; then
+                echo "Error: build-cross directory not found. Please run 'nix run .#build' first."
+                exit 1
+              fi
+
+              # Find proxy DLL
+              PROXY_DLL=""
+              for proxy in "version.dll" "dwmapi.dll"; do
+                if [ -f "build-cross/$BUILD_TYPE/bin/$proxy" ]; then
+                  PROXY_DLL="$proxy"
+                  break
+                fi
+              done
+
+              if [ -z "$PROXY_DLL" ]; then
+                echo "Error: No proxy DLL (version.dll or dwmapi.dll) found in build-cross/$BUILD_TYPE/bin/"
+                exit 1
+              fi
+
+              # Verify required files exist
+              if [ ! -f "build-cross/$BUILD_TYPE/bin/UE4SS.dll" ]; then
+                echo "Error: UE4SS.dll not found in build-cross/$BUILD_TYPE/bin/"
+                exit 1
+              fi
+
+              if [ ! -f "build-cross/$MOD_NAME/$MOD_NAME.dll" ]; then
+                echo "Error: $MOD_NAME.dll not found in build-cross/$MOD_NAME/"
+                exit 1
+              fi
+
+              echo "Found proxy DLL: $PROXY_DLL"
+              echo "Creating package structure..."
+
+              # Clean and create package directory
+              rm -rf "$PACKAGE_DIR"
+              mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/dlls"
+
+              # Copy proxy DLL to root (where game .exe is)
+              cp "build-cross/$BUILD_TYPE/bin/$PROXY_DLL" "$PACKAGE_DIR/"
+              echo "✓ Copied $PROXY_DLL"
+
+              # Copy UE4SS.dll to ue4ss/
+              cp "build-cross/$BUILD_TYPE/bin/UE4SS.dll" "$PACKAGE_DIR/ue4ss/"
+              echo "✓ Copied UE4SS.dll"
+
+              # Copy mod DLL (renamed to main.dll per UE4SS convention)
+              cp "build-cross/$MOD_NAME/$MOD_NAME.dll" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/dlls/main.dll"
+              echo "✓ Copied $MOD_NAME.dll -> dlls/main.dll"
+
+              # Copy Lua scripts
+              if [ -n "$LUA_SCRIPTS_DIR" ] && [ -d "$LUA_SCRIPTS_DIR" ]; then
+                mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts"
+                cp -r "$LUA_SCRIPTS_DIR"/* "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts/"
+                SCRIPT_COUNT=$(find "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts" -name "*.lua" | wc -l)
+                echo "✓ Copied $SCRIPT_COUNT Lua scripts"
+              fi
+
+              # Copy enabled.txt
+              if [ -n "$ENABLED_TXT_PATH" ] && [ -f "$ENABLED_TXT_PATH" ]; then
+                cp "$ENABLED_TXT_PATH" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/enabled.txt"
+              else
+                touch "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/enabled.txt"
+              fi
+              echo "✓ Created enabled.txt"
+
+              # Copy UE4SS settings
+              if [ "$INCLUDE_SETTINGS" = "true" ]; then
+                if [ -f "$UE4SS_SETTINGS_SRC" ]; then
+                  cp --no-preserve=mode,ownership "$UE4SS_SETTINGS_SRC" "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                  # Apply production patches (disable console and debug GUI)
+                  sed -i 's/^ConsoleEnabled\s*=.*/ConsoleEnabled = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                  sed -i 's/^GuiConsoleEnabled\s*=.*/GuiConsoleEnabled = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                  sed -i 's/^GuiConsoleVisible\s*=.*/GuiConsoleVisible = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                  sed -i 's/^EnableHotReloadSystem\s*=.*/EnableHotReloadSystem = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                  echo "✓ Copied and patched UE4SS-settings.ini from upstream"
+                else
+                  echo "⚠ Warning: Upstream UE4SS-settings.ini not found at $UE4SS_SETTINGS_SRC"
+                fi
+              fi
+
+              # Copy shared folder (contains UEHelpers and other Lua utilities)
+              UE4SS_SHARED_SRC="${patchedUE4SS}/assets/Mods/shared"
+              if [ -d "$UE4SS_SHARED_SRC" ]; then
+                cp --no-preserve=mode,ownership -r "$UE4SS_SHARED_SRC" "$PACKAGE_DIR/ue4ss/Mods/"
+                echo "✓ Copied shared folder (UEHelpers, Types.lua, etc.)"
+              else
+                echo "⚠ Warning: shared folder not found at $UE4SS_SHARED_SRC"
+              fi
+
+              # Copy project-local shared Lua libraries (e.g. MTHelpers)
+              if [ -n "$SHARED_LUA_DIR" ] && [ -d "$SHARED_LUA_DIR" ]; then
+                # Copy contents into the shared folder (next to UEHelpers)
+                cp -r "$SHARED_LUA_DIR"/* "$PACKAGE_DIR/ue4ss/Mods/shared/"
+                echo "✓ Copied project shared Lua libraries from $SHARED_LUA_DIR"
+              fi
+
+              # Create mods.txt
+              echo "$MOD_NAME : 1" > "$PACKAGE_DIR/ue4ss/Mods/mods.txt"
+              echo "✓ Created mods.txt"
+
+              # Create mods.json
+              cat > "$PACKAGE_DIR/ue4ss/Mods/mods.json" << EOF
+[
+    {
+        "mod_name": "$MOD_NAME",
+        "mod_enabled": true
+    }
+]
+EOF
+              echo "✓ Created mods.json"
+
+              echo ""
+              echo "Package structure:"
+              find "$PACKAGE_DIR" -type f | sort | sed 's/^/  /'
+
+              # Create zip
+              ZIP_NAME="$MOD_NAME-package.zip"
+              rm -f "$ZIP_NAME"
+              (cd "$PACKAGE_DIR" && zip -r "../$ZIP_NAME" .)
+
+              echo ""
+              echo "=========================================="
+              echo "✓ Package created: $ZIP_NAME"
+              echo "=========================================="
+              echo ""
+              echo "To deploy:"
+              echo "  1. Extract $ZIP_NAME to your game's executable directory"
+              echo "  2. The proxy DLL ($PROXY_DLL) should be next to the game .exe"
+              echo "  3. The ue4ss/ folder should be in the same directory"
+              echo ""
+            '';
           };
         in
         {
           # Development shell with all cross-compile tools
-          devShells.default = (lib.mkDevShell {}).overrideAttrs (old: {
-            nativeBuildInputs = (old.nativeBuildInputs or []) ++ [
-              pkgs.gh
-              pkgs.lua-language-server
-            ];
-            shellHook = (old.shellHook or "") + ''
+          devShells.default = pkgs.mkShell {
+            buildInputs = crossCompileBuildInputs ++ (with pkgs; [
+              gh
+              lua-language-server
+            ]);
+            shellHook = ''
+              echo "UE4SS Cross-Compile Environment loaded."
+              ${crossCompileEnv}
+              echo "UE4SS source at: $UE4SS_SOURCE_DIR"
+
               # Create symlink to UE4SS types for Lua IntelliSense
               if [ -n "$UE4SS_SOURCE_DIR" ] && [ -d "$UE4SS_SOURCE_DIR/assets/Mods/shared" ]; then
                 mkdir -p types
@@ -72,19 +298,31 @@
                 echo "Created types/ue4ss symlink for Lua IntelliSense"
               fi
             '';
-          });
+          };
 
           # Configure script
-          apps.configure = configureApp;
+          apps.configure = {
+            type = "app";
+            program = "${configureScript}/bin/${modName}-configure";
+          };
 
           # Build script
-          apps.build = buildApp;
+          apps.build = {
+            type = "app";
+            program = "${buildScript}/bin/${modName}-build";
+          };
 
           # Package script - creates deployable zip
-          apps.package = packageApp;
+          apps.package = {
+            type = "app";
+            program = "${packageScript}/bin/${modName}-package";
+          };
 
           # Default to build
-          apps.default = buildApp;
+          apps.default = {
+            type = "app";
+            program = "${buildScript}/bin/${modName}-build";
+          };
         };
     };
 }
