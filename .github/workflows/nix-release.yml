@@ -104,11 +104,20 @@ jobs:
 
       - name: Configure Git Auth
         run: |
-          # Configure git system-wide so Nix daemon also uses the PAT
+          # Configure git auth ONLY for private repos (ASEAN-Motor-Club, Re-UE4SS)
+          # Do NOT rewrite all github.com URLs — that breaks public repo fetches
           TOKEN="${{ secrets.UEPSEUDO_PAT }}"
-          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "git@github.com:"
-          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "ssh://git@github.com/"
-          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "https://github.com/"
+
+          # Rewrite SSH and HTTPS URLs for private orgs only
+          for ORG in ASEAN-Motor-Club Re-UE4SS; do
+            sudo git config --system url."https://x-access-token:$TOKEN@github.com/$ORG/".insteadOf "git@github.com:$ORG/"
+            sudo git config --system url."https://x-access-token:$TOKEN@github.com/$ORG/".insteadOf "ssh://git@github.com/$ORG/"
+            sudo git config --system url."https://x-access-token:$TOKEN@github.com/$ORG/".insteadOf "https://github.com/$ORG/"
+          done
+
+          # Write netrc for the Nix daemon (runs as root)
+          echo "machine github.com login x-access-token password $TOKEN" | sudo tee /root/.netrc > /dev/null
+          sudo chmod 600 /root/.netrc
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
