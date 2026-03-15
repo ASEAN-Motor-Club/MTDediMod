@@ -23,7 +23,7 @@
     psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'amc' AND pid <> pg_backend_pid();"
     dropdb --if-exists amc
     createdb amc
-    ${pg_restore} -j 4 -d amc "$DUMP_FILE"
+    pg_restore -j 4 -d amc "$DUMP_FILE"
   '';
 in {
   # Ensure backup directory exists on the host
@@ -50,7 +50,7 @@ in {
 
       RC=0
       nixos-container run amc-backend -- \
-        su -s /bin/sh postgres -c "${pg_dump} -Fc amc" \
+        su -s /bin/sh postgres -c "pg_dump -Fc amc" \
         > "$dumpFile" || RC=$?
 
       if [ $RC -eq 0 ]; then
