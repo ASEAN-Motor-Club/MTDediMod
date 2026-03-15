@@ -103,6 +103,13 @@
     # Only allow PFS-enabled ciphers with AES256
     sslCiphers = "AES256+EECDH:AES256+EDH:!aNULL";
 
+    # Catch-all: reject requests with unrecognized Host headers (e.g. direct IP access)
+    virtualHosts."_" = {
+      default = true;
+      rejectSSL = true;
+      locations."/".return = "444";
+    };
+
     virtualHosts."eco.aseanmotorclub.com" = {
       enableACME = true;
       forceSSL = true;
@@ -114,7 +121,7 @@
     };
     virtualHosts."server.aseanmotorclub.com" = {
       enableACME = true;
-      default = true;
+      forceSSL = true;
       locations = {
         "/api/player_positions/" = {
           proxyPass = "http://localhost:9000/api/player_positions/";
