@@ -117,7 +117,6 @@ auto MotorTownMods::on_unreal_init() -> void
 		"ServerResetVehicleAt"
 	);
 
-	/*
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerContractCargoDelivered"),
 		"ServerContractCargoDelivered",
@@ -187,7 +186,7 @@ auto MotorTownMods::on_unreal_init() -> void
 						event_data["Amount"] = *Amount;
 						const auto ItemProp = TopLevelContract->GetPropertyByNameInChain(STR("Item"));
 						const auto& Item = ItemProp->ContainerPtrToValuePtr<FString>(Contract);
-						event_data["Item"] = to_string(Item->GetCharArray());
+						event_data["Item"] = to_string(Item->GetCharArray().GetData());
 						const auto& CompletionPaymentProperty = static_cast<FStructProperty*>(TopLevelContract->GetPropertyByNameInChain(STR("CompletionPayment")));
 						const auto& CompletionPayment = CompletionPaymentProperty->ContainerPtrToValuePtr<void>(Contract);
 						const auto& TopLevelCompletionPayment = CompletionPaymentProperty->GetStruct();
@@ -202,7 +201,6 @@ auto MotorTownMods::on_unreal_init() -> void
 			return false;
 		}
 	);
-	*/
 
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerPassengerArrived"),
