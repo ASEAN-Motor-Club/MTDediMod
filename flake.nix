@@ -168,7 +168,7 @@
                 enableMods = true;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "test";
-                modVersion = "v0.31.2-rc1";
+                modVersion = "v0.31.2-rc2";
                 enableExternalMods = {
                   qxZap_CranyUnlocked_P = true;
                   MajasDetailWorks7_17_P = true;
@@ -407,6 +407,7 @@
             openFirewall = true;
             user = "steam";
             credentialsFile = config.age.secrets.steam.path;
+            discordWebhookEnvironmentFile = config.age.secrets.backend.path;
             relpServerHost = "localhost";
             environment = {
               MOD_SERVER_PORT = "5001";
