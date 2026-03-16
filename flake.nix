@@ -168,7 +168,7 @@
                 enableMods = true;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "test";
-                modVersion = "v0.31.2-rc2";
+                modVersion = "v0.31.2-rc3";
                 enableExternalMods = {
                   qxZap_CranyUnlocked_P = true;
                   MajasDetailWorks7_17_P = true;
@@ -715,6 +715,12 @@
                   hostPath = config.age.secrets.backend-staging.path;
                   isReadOnly = true;
                 };
+              };
+
+              # Prevent nspawn restart race (stale machine registration)
+              systemd.services."container@motortown-server-test".serviceConfig = {
+                RestartSec = "5s";
+                TimeoutStopSec = "30s";
               };
 
               # Expose RELP + PostgreSQL on tailscale interface
