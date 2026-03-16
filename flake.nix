@@ -56,8 +56,13 @@
         "aarch64-darwin"
       ];
       flake = {
-        nixosModules.gameSyslog = {lib, ...}: {
-          services.rsyslogd = {
+        nixosModules.gameSyslog = {lib, config, ...}: {
+          options.services.gameSyslog.relpPort = lib.mkOption {
+            type = lib.types.int;
+            default = 2514;
+            description = "RELP port for log forwarding";
+          };
+          config.services.rsyslogd = {
             enable = true;
             # We use mkBefore to ensure modules and templates are defined
             # before the individual services try to use them.
@@ -82,7 +87,7 @@
               Ruleset(name="mt-out") {
                 action(type="omrelp"
                   target="127.0.0.1"
-                  port="2514"
+                  port="${toString config.services.gameSyslog.relpPort}"
                   template="with_filename"
                 )
               }
@@ -106,22 +111,46 @@
             test = {
               imports = [
                 self.nixosModules.gameSyslog
+                amc-backend.nixosModules.backend
+                amc-backend.nixosModules.log-listener
               ];
-              config = lib.mkIf false {
-                programs.bash.promptInit = ''
-                  # Set a custom prompt color
-                  PS1='\[\e[38;5;40m\]\u\[\e[38;5;40m\]@\h\[\e[0m\]:\W '
-                '';
-                services.openssh.enable = true;
-                services.openssh.ports = [222];
-                users.users.root.openssh.authorizedKeys.keys = [
-                  ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJcMiNGgqQtOeACMso3CgZz2J3X8Ne8RxsZrQcsnoewU fmnxl-m2''
-                  ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO75UM3IHNzJKUxgABH6OHa/hxfQIoxTs+nGUtSU1TID''
-                ];
-                users.users.steam.openssh.authorizedKeys.keys = [
-                  ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJcMiNGgqQtOeACMso3CgZz2J3X8Ne8RxsZrQcsnoewU fmnxl-m2''
-                  ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO75UM3IHNzJKUxgABH6OHa/hxfQIoxTs+nGUtSU1TID''
-                ];
+              config = {
+                # Forward game server logs to the staging RELP listener on port 2515
+                # (runs inside this same container, not the host's listener on 2514)
+                services.gameSyslog.relpPort = 2515;
+
+                # GeoDjango native library paths (needed inside container)
+                environment.variables = {
+                  GEOS_LIBRARY_PATH = "${pkgs.geos}/lib/libgeos_c.so";
+                  GDAL_LIBRARY_PATH = "${pkgs.gdal}/lib/libgdal.so";
+                };
+
+                # Allow unfree for timescaledb
+                nixpkgs.config.allowUnfree = true;
+
+                # --- Staging backend ---
+                services.amc-backend = {
+                  enable = true;
+                  port = 9001;
+                  allowedHosts = [
+                    "test.aseanmotorclub.com"
+                    "localhost"
+                    "127.0.0.1"
+                  ];
+                  environmentFile = "/run/secrets/backend-staging";
+                  environment = {
+                    # Point at the test game server's ports inside this container
+                    GAME_SERVER_API_URL = "http://localhost:8081";
+                    MOD_SERVER_API_URL = "http://localhost:55001";
+                    WEBHOOK_SERVER_API_URL = "http://localhost:55000";
+                  };
+                };
+
+                # --- Staging log listener (RELP on port 2515) ---
+                services.amc-log-listener = {
+                  enable = true;
+                  relpPort = 2515;
+                };
               };
               motortown-server = {
                 enable = true;
@@ -161,6 +190,7 @@
                 queryPort = 27016;
                 user = "steam";
                 relpServerHost = "localhost";
+                relpServerPort = 2515;
                 environment = {
                   MOD_SERVER_PORT = "55001";
                   MOD_MANAGEMENT_PORT = "55000";
@@ -445,6 +475,7 @@
             (lib.strings.toInt config.services.motortown-server.environment.MOD_SERVER_PORT)
             config.services.motortown-server-containers.test.motortown-server.dedicatedServerConfig.HostWebAPIServerPort
             (lib.strings.toInt config.services.motortown-server-containers.test.motortown-server.environment.MOD_SERVER_PORT)
+            9001  # Staging backend API port
           ];
         };
 
@@ -512,6 +543,10 @@
                 file = ./secrets/backend.age;
                 mode = "400";
               };
+              age.secrets.backend-staging = {
+                file = ./secrets/backend-staging.age;
+                mode = "400";
+              };
             })
 
 
@@ -546,7 +581,7 @@
               # Allow unfree for timescaledb
               nixpkgs.config.allowUnfree = true;
 
-              # --- amc-backend service ---
+              # --- amc-backend service (production) ---
               services.amc-backend = {
                 enable = true;
                 port = 9000;
@@ -613,6 +648,50 @@
                     proxyPass = "http://127.0.0.1:9000";
                     recommendedProxySettings = true;
                   };
+                };
+              };
+
+              # --- nginx vhost for test.aseanmotorclub.com (staging backend) ---
+              services.nginx.virtualHosts."test.aseanmotorclub.com" = {
+                enableACME = true;
+                forceSSL = true;
+                locations = {
+                  "/" = {
+                    proxyPass = "http://127.0.0.1:9001/api/";
+                    recommendedProxySettings = true;
+                    extraConfig = ''
+                      add_header 'Access-Control-Allow-Origin' '*' always;
+                      add_header 'Access-Control-Allow-Methods' 'POST, PUT, DELETE, GET, PATCH, OPTIONS' always;
+                    '';
+                  };
+                  "/api" = {
+                    proxyPass = "http://127.0.0.1:9001";
+                    recommendedProxySettings = true;
+                    extraConfig = ''
+                      add_header 'Access-Control-Allow-Origin' '*' always;
+                      add_header 'Access-Control-Allow-Methods' 'POST, PUT, DELETE, GET, PATCH, OPTIONS' always;
+                    '';
+                  };
+                  "/admin" = {
+                    proxyPass = "http://127.0.0.1:9001";
+                    recommendedProxySettings = true;
+                  };
+                  "/static/" = let
+                    inherit (amc-backend.packages.${pkgs.system}) staticRoot;
+                  in {
+                    alias = "${staticRoot}/";
+                  };
+                };
+              };
+
+              # --- Test container: bind-mount staging secret + forward API port ---
+              containers.motortown-server-test = {
+                forwardPorts = [
+                  { containerPort = 9001; hostPort = 9001; protocol = "tcp"; }
+                ];
+                bindMounts."/run/secrets/backend-staging" = {
+                  hostPath = config.age.secrets.backend-staging.path;
+                  isReadOnly = true;
                 };
               };
 
