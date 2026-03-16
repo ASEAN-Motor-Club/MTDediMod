@@ -468,6 +468,12 @@
             };
           };
 
+          users.users."github-runner-amc-deploy" = {
+            isSystemUser = true;
+            group = "github-runner-amc-deploy";
+          };
+          users.groups."github-runner-amc-deploy" = {};
+
           services.github-runners."amc-deploy" = {
             enable = true;
             url = "https://github.com/ASEAN-Motor-Club/amc-server";
