@@ -109,14 +109,22 @@
           };
           services.motortown-server-containers = {
             test = {
+              privateNetwork = true;
+              hostAddress = "10.250.0.1";
+              localAddress = "10.250.0.2";
+              extraForwardPorts = [
+                { containerPort = 9001; hostPort = 9001; protocol = "tcp"; }
+                { containerPort = 8081; hostPort = 8081; protocol = "tcp"; }
+                { containerPort = 55001; hostPort = 55001; protocol = "tcp"; }
+              ];
               imports = [
                 self.nixosModules.gameSyslog
                 amc-backend.nixosModules.backend
                 amc-backend.nixosModules.log-listener
               ];
               config = {
-                # Forward game server logs to the staging RELP listener on port 2515
-                # (runs inside this same container, not the host's listener on 2514)
+                # Forward game server logs to the staging RELP listener
+                # (runs inside this same container)
                 services.gameSyslog.relpPort = 2515;
 
                 # GeoDjango native library paths (needed inside container)
@@ -128,12 +136,9 @@
                 # Allow unfree for timescaledb
                 nixpkgs.config.allowUnfree = true;
 
-                # --- Port overrides to avoid conflicts with host services ---
-                # Container shares the host network namespace, so PostgreSQL and Redis
-                # must use different ports than the host's production instances.
-                services.postgresql.settings.listen_addresses = pkgs.lib.mkForce "";  # Unix socket only, no TCP
-                services.postgresql.settings.port = pkgs.lib.mkForce 5433;
-                services.redis.servers."amc-backend".port = pkgs.lib.mkForce 6380;
+                # Private network: standard ports, no conflicts with host
+                # Trust the veth interface so the host can reach forwarded services
+                networking.firewall.trustedInterfaces = [ "eth0" ];
 
                 # --- Staging backend ---
                 services.amc-backend = {
@@ -146,13 +151,9 @@
                   ];
                   environmentFile = "/run/secrets/backend-staging";
                   environment = {
-                    # Point at the test game server's ports inside this container
                     GAME_SERVER_API_URL = "http://localhost:8081";
                     MOD_SERVER_API_URL = "http://localhost:55001";
                     WEBHOOK_SERVER_API_URL = "http://localhost:55000";
-                    # Use the non-conflicting PostgreSQL and Redis ports
-                    PGPORT = "5433";
-                    REDIS_PORT = "6380";
                   };
                 };
 
@@ -167,7 +168,7 @@
                 enableMods = true;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "test";
-                modVersion = "v0.31.1";
+                modVersion = "v0.31.2-rc1";
                 enableExternalMods = {
                   qxZap_CranyUnlocked_P = true;
                   MajasDetailWorks7_17_P = true;
@@ -483,9 +484,10 @@
           networking.firewall.interfaces."tailscale0".allowedTCPPorts = lib.mkIf config.services.tailscale.enable [
             config.services.motortown-server.dedicatedServerConfig.HostWebAPIServerPort
             (lib.strings.toInt config.services.motortown-server.environment.MOD_SERVER_PORT)
-            config.services.motortown-server-containers.test.motortown-server.dedicatedServerConfig.HostWebAPIServerPort
-            (lib.strings.toInt config.services.motortown-server-containers.test.motortown-server.environment.MOD_SERVER_PORT)
-            9001  # Staging backend API port
+            # Test container ports are forwarded via privateNetwork forwardPorts
+            9001   # Staging backend API (forwarded from container)
+            8081   # Test game API (forwarded from container)
+            55001  # Test mod server (forwarded from container)
           ];
         };
 
@@ -667,7 +669,7 @@
                 forceSSL = true;
                 locations = {
                   "/" = {
-                    proxyPass = "http://127.0.0.1:9001/api/";
+                    proxyPass = "http://10.250.0.2:9001/api/";
                     recommendedProxySettings = true;
                     extraConfig = ''
                       add_header 'Access-Control-Allow-Origin' '*' always;
@@ -675,7 +677,7 @@
                     '';
                   };
                   "/api" = {
-                    proxyPass = "http://127.0.0.1:9001";
+                    proxyPass = "http://10.250.0.2:9001";
                     recommendedProxySettings = true;
                     extraConfig = ''
                       add_header 'Access-Control-Allow-Origin' '*' always;
@@ -683,7 +685,7 @@
                     '';
                   };
                   "/admin" = {
-                    proxyPass = "http://127.0.0.1:9001";
+                    proxyPass = "http://10.250.0.2:9001";
                     recommendedProxySettings = true;
                   };
                   "/static/" = let
@@ -694,11 +696,14 @@
                 };
               };
 
-              # --- Test container: bind-mount staging secret + forward API port ---
+              # --- NAT for private-network container port forwarding ---
+              networking.nat = {
+                enable = true;
+                internalInterfaces = [ "ve-+" ];
+              };
+
+              # --- Test container: bind-mount staging secret ---
               containers.motortown-server-test = {
-                forwardPorts = [
-                  { containerPort = 9001; hostPort = 9001; protocol = "tcp"; }
-                ];
                 bindMounts."/run/secrets/backend-staging" = {
                   hostPath = config.age.secrets.backend-staging.path;
                   isReadOnly = true;
