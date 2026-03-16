@@ -128,7 +128,7 @@
                 enableMods = true;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "test";
-                modVersion = "v0.31.0-rc11";
+                modVersion = "v0.31.0";
                 enableExternalMods = {
                   qxZap_CranyUnlocked_P = true;
                   MajasDetailWorks7_17_P = true;
@@ -164,7 +164,7 @@
                 environment = {
                   MOD_SERVER_PORT = "55001";
                   MOD_MANAGEMENT_PORT = "55000";
-                  MOD_WEBHOOK_ENABLE_EVENTS = "ServerCargoArrived,ServerPassengerArrived,ServerContractCargoDelivered,ServerSignContract,ServerTowRequestArrived";
+                  MOD_WEBHOOK_ENABLE_EVENTS = "none";
                 };
                 credentialsFile = config.age.secrets.steam.path;
                 dedicatedServerConfig = {
@@ -339,7 +339,7 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "v0.30.0";
+            modVersion = "v0.31.0";
             enableExternalMods = {
               MajasDetailWorks7_17_P = true;
               MajasMnTrailerworks7_17_P = true;

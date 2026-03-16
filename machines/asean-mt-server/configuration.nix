@@ -328,6 +328,7 @@
   # Ensure workspace directory exists
   systemd.tmpfiles.rules = [
     "d /var/lib/opencode/workspace 0755 opencode opencode -"
+    "d /var/lib/mod-releases 0755 root root -"
   ];
 
 
