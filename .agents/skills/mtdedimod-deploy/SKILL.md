@@ -34,10 +34,10 @@ This automatically:
 ### 3. Upload to the release server
 
 ```bash
-scp MotorTownMods-package.zip root@amc-peripheral:/var/lib/mod-releases/MotorTownMods_vX.Y.Z.zip
+scp MotorTownMods-package.zip root@asean-mt-server:/var/lib/mod-releases/MotorTownMods_vX.Y.Z.zip
 ```
 
-The file is served at `https://www.aseanmotorclub.com/releases/MotorTownMods_vX.Y.Z.zip` via nginx.
+Mod zips are served locally from `/var/lib/mod-releases/` on `asean-mt-server`. Containers access this via a read-only bind mount; the main server service accesses it directly.
 
 ### 4. Set the version in Nix config
 
@@ -60,15 +60,29 @@ modVersion = "vX.Y.Z";
 deploy root@asean-mt-server
 ```
 
-### 6. Restart and verify
+### 6. Purge the mod cache and restart
+
+The container downloads and caches the mod zip at startup. When updating to a new version, or replacing the zip for the same version tag, you **must** purge the cache on the host so the container re-downloads / re-extracts:
 
 ```bash
-# Restart the test container
+# 1. Remove cached zip AND extracted directory (replace test/vX.Y.Z as needed)
+ssh root@asean-mt-server "\
+  rm -f  /var/lib/motortown-server-test/.mod-cache/MotorTownMods_vX.Y.Z.zip && \
+  rm -rf /var/lib/motortown-server-test/.mod-cache/extracted-vX.Y.Z"
+
+# 2. Fix version.dll ownership if it was previously written by root
+#    (the container's steam user can't overwrite a root-owned file)
+ssh root@asean-mt-server "\
+  chown steam:nscd /var/lib/motortown-server-test/MotorTown/Binaries/Win64/version.dll 2>/dev/null || true"
+
+# 3. Restart the container (this triggers preStart → download → extract → launch)
 ssh root@asean-mt-server "systemctl restart container@motortown-server-test.service"
 
-# Check UE4SS logs
+# 4. Wait ~20s for the game server to boot, then check UE4SS logs
 ssh root@asean-mt-server "tail -n 50 /var/lib/motortown-server-test/MotorTown/Binaries/Win64/ue4ss/UE4SS.log | grep MotorTownMods"
 ```
+
+> **Common pitfall:** If you manually `unzip` a mod package into the game directory as root (e.g. during debugging), the `version.dll` file ends up owned by `root:root`. The container's `steam` user cannot overwrite it during `preStart`, causing repeated `Permission denied` failures. Always fix ownership with step 2 above, or avoid manual extraction.
 
 **Success indicators:**
 - `INFO: Webserver listening to host 0.0.0.0 on port XXXXX`
