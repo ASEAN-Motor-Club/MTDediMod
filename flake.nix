@@ -128,6 +128,13 @@
                 # Allow unfree for timescaledb
                 nixpkgs.config.allowUnfree = true;
 
+                # --- Port overrides to avoid conflicts with host services ---
+                # Container shares the host network namespace, so PostgreSQL and Redis
+                # must use different ports than the host's production instances.
+                services.postgresql.settings.listen_addresses = pkgs.lib.mkForce "";  # Unix socket only, no TCP
+                services.postgresql.settings.port = pkgs.lib.mkForce 5433;
+                services.redis.servers."amc-backend".port = pkgs.lib.mkForce 6380;
+
                 # --- Staging backend ---
                 services.amc-backend = {
                   enable = true;
@@ -143,6 +150,9 @@
                     GAME_SERVER_API_URL = "http://localhost:8081";
                     MOD_SERVER_API_URL = "http://localhost:55001";
                     WEBHOOK_SERVER_API_URL = "http://localhost:55000";
+                    # Use the non-conflicting PostgreSQL and Redis ports
+                    PGPORT = "5433";
+                    REDIS_PORT = "6380";
                   };
                 };
 
