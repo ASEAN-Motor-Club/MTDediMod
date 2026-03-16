@@ -1,6 +1,6 @@
 ---
 name: server-access
-description: SSH access to AMC servers and NixOS container access for debugging amc-backend
+description: SSH access to AMC servers and debugging amc-backend services
 ---
 
 # Server Access & Debugging
@@ -14,38 +14,42 @@ ssh root@asean-mt-server     # Main server (game + backend)
 ssh root@amc-peripheral      # Peripheral server (radio, bots)
 ```
 
-## NixOS Container Access (amc-backend)
+## amc-backend Services
 
-The `amc-backend` runs inside a NixOS container on `asean-mt-server`. You **cannot** access its services with regular `systemctl` from the host — you must use `nixos-container`.
+The `amc-backend` runs directly on `asean-mt-server` as host-level systemd services.
 
-### Run commands inside the container
+### Check service status
 
 ```bash
-# General pattern
-nixos-container run amc-backend -- <command>
+systemctl status amc-worker
+systemctl status amc-backend
+systemctl status postgresql
+```
 
-# Check service status
-nixos-container run amc-backend -- systemctl status amc-worker
-nixos-container run amc-backend -- systemctl status amc-backend
+### View logs
 
-# View logs
-nixos-container run amc-backend -- journalctl -u amc-worker -n 100 --no-pager
-nixos-container run amc-backend -- journalctl -u amc-worker --since '1 hour ago' --no-pager
+```bash
+journalctl -u amc-worker -n 100 --no-pager
+journalctl -u amc-worker --since '1 hour ago' --no-pager
+```
 
-# Restart a service
-nixos-container run amc-backend -- systemctl restart amc-worker
+### Restart a service
+
+```bash
+systemctl restart amc-worker
+systemctl restart amc-backend
 ```
 
 ### Django management commands
 
 ```bash
-nixos-container run amc-backend -- su -s /bin/sh amc -c \
+su -s /bin/sh amc -c \
   'DJANGO_SETTINGS_MODULE=amc_backend.settings amc-manage <command>'
 ```
 
 For shell queries:
 ```bash
-nixos-container run amc-backend -- su -s /bin/sh amc -c \
+su -s /bin/sh amc -c \
   'DJANGO_SETTINGS_MODULE=amc_backend.settings amc-manage shell -c "<python code>"'
 ```
 
@@ -55,16 +59,19 @@ nixos-container run amc-backend -- su -s /bin/sh amc -c \
 ### Database access
 
 ```bash
-nixos-container run amc-backend -- su -s /bin/sh amc -c 'psql'
+su -s /bin/sh amc -c 'psql'
 ```
 
-## Services Inside the Container
+## Services on asean-mt-server
 
 | Service | systemd unit | Description |
 |---------|-------------|-------------|
 | Django API | `amc-backend` | uvicorn ASGI server |
 | Worker + Discord Bot | `amc-worker` | arq worker with Discord bot in a ThreadPoolExecutor |
 | Dummy Server | `dummy-server` | Test/dummy server |
+| PostgreSQL | `postgresql` | Database with PostGIS, TimescaleDB, pg_partman |
+| Redis | `redis-amc-backend` | Task queue and caching |
+| Log Listener | `rsyslogd` | RELP log ingestion from game servers |
 
 ### amc-worker architecture
 
@@ -76,6 +83,12 @@ The `amc-worker` process runs `arq` which:
 
 > [!CAUTION]
 > The Discord bot runs in a separate thread inside the arq worker. If the bot crashes or a cog's `tasks.loop` dies from an unhandled exception, the arq worker process will continue running normally — only the bot/cog functionality stops silently. Check for both arq cron output AND Discord-specific logs when debugging.
+
+## Other Host-Level Services
+
+- `motortown-server` — Main Motor Town game server
+- `motortown-server-containers-test` — Test game server container
+- `motortown-server-containers-event` — Event game server container
 
 ## Troubleshooting Checklists
 
@@ -91,13 +104,3 @@ The `amc-worker` process runs `arq` which:
 1. Check worker status and recent logs
 2. Look for Python exceptions in journal
 3. Restart if needed
-
-## Host-Level Services (asean-mt-server)
-
-These run directly on the host, not in containers:
-
-- `motortown-server` — Main Motor Town game server
-- `motortown-server-containers-test` — Test game server container
-- `motortown-server-containers-event` — Event game server container
-- `container@amc-backend` — The NixOS container itself
-- `container@amc-log-listener` — Log ingestion container (rsyslogd + RELP)

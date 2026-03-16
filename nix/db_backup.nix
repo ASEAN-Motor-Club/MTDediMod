@@ -17,7 +17,7 @@
   pg_dump = "${pkgs.postgresql_16}/bin/pg_dump";
   pg_restore = "${pkgs.postgresql_16}/bin/pg_restore";
 
-  # Helper script that runs inside the container as postgres user
+  # Helper script for restore
   restoreHelper = pkgs.writeShellScript "amc-db-restore-helper" ''
     DUMP_FILE="$1"
     psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'amc' AND pid <> pg_backend_pid();"
@@ -32,7 +32,6 @@ in {
   ];
 
   # --- Daily database backup ---
-  # Runs pg_dump inside the amc-backend container, writes to host filesystem
   systemd.services.amc-dbBackup = {
     path = ["/run/current-system/sw"];
     serviceConfig = {
@@ -49,8 +48,7 @@ in {
       echo "Starting database backup: $dumpFile"
 
       RC=0
-      nixos-container run amc-backend -- \
-        su -s /bin/sh postgres -c "pg_dump -Fc amc" \
+      su -s /bin/sh postgres -c "${pg_dump} -Fc amc" \
         > "$dumpFile" || RC=$?
 
       if [ $RC -eq 0 ]; then
@@ -145,11 +143,7 @@ in {
       echo "Restoring from: $dumpFile"
       echo "WARNING: This will drop and recreate the amc database!"
 
-      # Copy dump into container-accessible path, restore, then clean up
-      cp "$dumpFile" /var/lib/nixos-containers/amc-backend/tmp/restore.dump
-      nixos-container run amc-backend -- \
-        su -s /bin/sh postgres -c "${restoreHelper} /tmp/restore.dump"
-      rm -f /var/lib/nixos-containers/amc-backend/tmp/restore.dump
+      su -s /bin/sh postgres -c "${restoreHelper} $dumpFile"
 
       echo "Restore complete."
     '';

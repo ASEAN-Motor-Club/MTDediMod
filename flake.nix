@@ -523,30 +523,35 @@
               lib,
               ...
             }: let
-              # === Container→Host Restart Bridge ===
-              # The container can't call host systemctl directly.
-              # Instead: container writes a trigger file → host systemd .path unit watches → starts the restart service.
+              # === File-based Restart Bridge ===
+              # Backend writes a trigger file → host systemd .path unit watches → starts the restart service.
               restartTriggerDir = "/var/lib/motortown-restart-trigger";
 
-              # Wrapper script: writes a trigger file (runs inside the container)
               restartScript = pkgs.writeShellScriptBin "restart-motortown" ''
                 echo "restart requested at $(date)" > ${restartTriggerDir}/trigger
               '';
             in {
               imports = [
-                amc-backend.nixosModules.containers
+                amc-backend.nixosModules.backend
+                amc-backend.nixosModules.log-listener
                 (import ./nix/db_backup.nix)
               ];
 
-              # Expose log server on tailscale interface only
-              networking.firewall.interfaces."tailscale0".allowedTCPPorts = lib.mkIf config.services.tailscale.enable [
-                config.services.amc-backend-containers.relpPort
-              ];
+              # GeoDjango native library paths
+              environment.variables = {
+                GEOS_LIBRARY_PATH = "${pkgs.geos}/lib/libgeos_c.so";
+                GDAL_LIBRARY_PATH = "${pkgs.gdal}/lib/libgdal.so";
+              };
 
-              services.amc-backend-containers = {
+              # Allow unfree for timescaledb
+              nixpkgs.config.allowUnfree = true;
+
+              # --- amc-backend service ---
+              services.amc-backend = {
                 enable = true;
-                fqdn = "api.aseanmotorclub.com";
+                port = 9000;
                 allowedHosts = [
+                  "api.aseanmotorclub.com"
                   "localhost"
                   "127.0.0.1"
                   "server.aseanmotorclub.com"
@@ -554,40 +559,77 @@
                   "admin.aseanmotorclub.com"
                   "asean-mt-server"
                 ];
-                port = 9000;
-                relpPort = 2514;
-                secretFile = ./secrets/backend.age;
-                extraBindMounts = {
-                  # For save files reading
-                  "/var/lib/motortown-server/MotorTown/Saved/".isReadOnly = true;
-                  # Bind-mount the restart wrapper script (read-only)
-                  "/usr/local/bin/restart-motortown" = {
-                    hostPath = "${restartScript}/bin/restart-motortown";
-                    isReadOnly = true;
-                  };
-                  # Bind-mount the shared trigger directory (writable)
-                  "${restartTriggerDir}" = {
-                    hostPath = restartTriggerDir;
-                    isReadOnly = false;
-                  };
-                };
-                backendSettings.environment = {
+                environmentFile = config.age.secrets.backend.path;
+                environment = {
                   MOD_SERVER_API_URL = "http://localhost:5001";
                   GAME_SERVER_API_URL = "http://localhost:8080";
                   EVENT_GAME_SERVER_API_URL = "http://127.0.0.1:8082";
                   EVENT_MOD_SERVER_API_URL = "http://localhost:5011";
-                  RESTART_MOTORTOWN_SCRIPT = "/usr/local/bin/restart-motortown";
+                  RESTART_MOTORTOWN_SCRIPT = "${restartScript}/bin/restart-motortown";
                 };
               };
 
-              # Create the trigger directory on the host
+              # Point PostgreSQL at the data directory from Phase 1 bind mount
+              services.postgresql.dataDir = "/var/lib/amc-postgresql/16";
+
+              # --- Log listener (rsyslogd + RELP) ---
+              services.amc-log-listener = {
+                enable = true;
+                relpPort = 2514;
+              };
+
+              # --- nginx vhost for api.aseanmotorclub.com ---
+              services.nginx.virtualHosts."api.aseanmotorclub.com" = {
+                enableACME = true;
+                forceSSL = true;
+                locations = {
+                  "/" = {
+                    proxyPass = "http://127.0.0.1:9000/api/";
+                    recommendedProxySettings = true;
+                    extraConfig = ''
+                      add_header 'Access-Control-Allow-Origin' '*' always;
+                      add_header 'Access-Control-Allow-Methods' 'POST, PUT, DELETE, GET, PATCH, OPTIONS' always;
+                    '';
+                  };
+                  "/api" = {
+                    proxyPass = "http://127.0.0.1:9000";
+                    recommendedProxySettings = true;
+                    extraConfig = ''
+                      add_header 'Access-Control-Allow-Origin' '*' always;
+                      add_header 'Access-Control-Allow-Methods' 'POST, PUT, DELETE, GET, PATCH, OPTIONS' always;
+                    '';
+                  };
+                  "/admin" = {
+                    proxyPass = "http://127.0.0.1:9000";
+                    recommendedProxySettings = true;
+                  };
+                  "/static/" = let
+                    inherit (amc-backend.packages.${pkgs.system}) staticRoot;
+                  in {
+                    alias = "${staticRoot}/";
+                  };
+                  # DokuWiki OAuth endpoints
+                  "/o/" = {
+                    proxyPass = "http://127.0.0.1:9000";
+                    recommendedProxySettings = true;
+                  };
+                };
+              };
+
+              # Expose RELP + PostgreSQL on tailscale interface
+              networking.firewall.interfaces."tailscale0".allowedTCPPorts = lib.mkIf config.services.tailscale.enable [
+                2514  # RELP log listener
+                5432  # PostgreSQL (bot read access)
+              ];
+
               systemd.tmpfiles.rules = [
+                "d /var/lib/amc-postgresql 0700 root root -"
                 "d ${restartTriggerDir} 0777 root root -"
               ];
 
               # Host-side: watch for trigger file and start the restart service
               systemd.paths.motortown-restart-trigger = {
-                description = "Watch for restart trigger from container";
+                description = "Watch for restart trigger from backend";
                 wantedBy = [ "multi-user.target" ];
                 pathConfig = {
                   PathChanged = "${restartTriggerDir}/trigger";
@@ -597,7 +639,7 @@
 
               # Triggered by the .path unit — starts the existing motortown-server-restart service
               systemd.services.motortown-restart-triggered = {
-                description = "Restart motortown-server (triggered from container)";
+                description = "Restart motortown-server (triggered from backend)";
                 serviceConfig = {
                   Type = "oneshot";
                 };
