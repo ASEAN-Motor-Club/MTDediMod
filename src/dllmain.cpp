@@ -456,6 +456,82 @@ auto MotorTownMods::on_unreal_init() -> void
 			return true;
 		}
 	);
+
+	// ========== Police Work Hooks ==========
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerArrivedAtPolicePatrolPoint"),
+		"ServerArrivedAtPolicePatrolPoint",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			Output::send<LogLevel::Verbose>(STR("ServerArrivedAtPolicePatrolPoint: starting extraction\n"));
+
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) {
+				Output::send<LogLevel::Warning>(STR("ServerArrivedAtPolicePatrolPoint: FunctionBeingExecuted is null\n"));
+				return false;
+			}
+
+			// --- Extract PatrolPointId ---
+			auto PatrolPointIdProp = FunctionBeingExecuted->GetPropertyByName(STR("PatrolPointId"));
+			if (!PatrolPointIdProp) {
+				Output::send<LogLevel::Warning>(STR("ServerArrivedAtPolicePatrolPoint: PatrolPointId property not found\n"));
+				return false;
+			}
+			auto PatrolPointId = PatrolPointIdProp->ContainerPtrToValuePtr<int32>(Context.TheStack.Locals());
+			if (!PatrolPointId) {
+				Output::send<LogLevel::Warning>(STR("ServerArrivedAtPolicePatrolPoint: PatrolPointId value ptr is null\n"));
+				return false;
+			}
+
+			Output::send<LogLevel::Verbose>(STR("ServerArrivedAtPolicePatrolPoint: PatrolPointId={}\n"), *PatrolPointId);
+			event_data["PatrolPointId"] = *PatrolPointId;
+			return true;
+		}
+	);
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerSelectPolicePullOverPenaltyResponse"),
+		"ServerSelectPolicePullOverPenaltyResponse",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			Output::send<LogLevel::Verbose>(STR("ServerSelectPolicePullOverPenaltyResponse: starting extraction\n"));
+
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) {
+				Output::send<LogLevel::Warning>(STR("ServerSelectPolicePullOverPenaltyResponse: FunctionBeingExecuted is null\n"));
+				return false;
+			}
+
+			// --- Extract bWarningOnly ---
+			auto bWarningOnlyProp = FunctionBeingExecuted->GetPropertyByName(STR("bWarningOnly"));
+			if (!bWarningOnlyProp) {
+				Output::send<LogLevel::Warning>(STR("ServerSelectPolicePullOverPenaltyResponse: bWarningOnly property not found\n"));
+				return false;
+			}
+			auto bWarningOnly = bWarningOnlyProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
+			if (!bWarningOnly) {
+				Output::send<LogLevel::Warning>(STR("ServerSelectPolicePullOverPenaltyResponse: bWarningOnly value ptr is null\n"));
+				return false;
+			}
+
+			Output::send<LogLevel::Verbose>(STR("ServerSelectPolicePullOverPenaltyResponse: bWarningOnly={}\n"), *bWarningOnly ? 1 : 0);
+			event_data["bWarningOnly"] = *bWarningOnly;
+			return true;
+		}
+	);
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerAddPolicePlayer"),
+		"ServerAddPolicePlayer"
+	);
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerRemovePolicePlayer"),
+		"ServerRemovePolicePlayer"
+	);
 }
 
 auto MotorTownMods::on_lua_start(
