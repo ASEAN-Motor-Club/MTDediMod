@@ -51,6 +51,7 @@ local function LoadWebserver()
     end)
     server.registerHandler("/status/traffic", "POST", serverManager.HandleUpdateNpcTraffic)
     server.registerHandler("/config", "POST", serverManager.HandleSetServerConfig)
+    server.registerHandler("/police/patrol_areas", "GET", serverManager.HandleGetPolicePatrolAreas)
     server.registerHandler("/command", "POST", serverManager.HandleServerExecCommand)
 
     -- Player management

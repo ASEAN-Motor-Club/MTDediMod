@@ -300,6 +300,39 @@ local function HandleSetServerConfig(session)
   return nil,nil, 200
 end
 
+---Handle get police patrol areas with payment data
+---@type RequestPathHandler
+local function HandleGetPolicePatrolAreas(session)
+    local gameState = GetMotorTownGameState()
+    if not gameState:IsValid() then
+        return nil, nil, 503
+    end
+    local police = gameState.Net_Police
+    if not police:IsValid() then
+        return json.stringify { data = {} }
+    end
+    local areas = {}
+    for i = 1, #police.Net_ColdState.PatrolAreas, 1 do
+        local area = police.Net_ColdState.PatrolAreas[i]
+        local points = {}
+        for j = 1, #area.PointsToPatrol, 1 do
+            local pt = area.PointsToPatrol[j]
+            table.insert(points, {
+                PatrolPointId = pt.PatrolPointId,
+                BasePayment = pt.BasePayment,
+                AreaBonusPayment = pt.AreaBonusPayment,
+            })
+        end
+        table.insert(areas, {
+            PatrolAreaId = area.PatrolAreaId,
+            ZoneKey = area.ZoneKey:ToString(),
+            NumTotalPoints = area.NumTotalPoints,
+            Points = points,
+        })
+    end
+    return json.stringify { data = areas }
+end
+
 ExecuteWithDelay(5000, function()
   local banker = FindFirstOf('Banker_C')
   if banker and banker:IsValid() then
@@ -315,4 +348,5 @@ return {
     HandleGetServerStatus = HandleGetServerStatus,
     HandleGetModVersion = HandleGetModVersion,
     HandleSetServerConfig = HandleSetServerConfig,
+    HandleGetPolicePatrolAreas = HandleGetPolicePatrolAreas,
 }
