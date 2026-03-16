@@ -252,7 +252,7 @@ EOF
               if [ -d "${luaBinaries}/ue4ss/Mods/shared" ]; then
                 # Copying selectively replacing only missing binaries/scripts to avoid overwriting newer MTHelpers 
                 # (actually just copying socket, mime, cjson, ltn12, json2lua, lua2json)
-                cp -rn "${luaBinaries}/ue4ss/Mods/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
+                cp --no-preserve=mode,ownership -rn "${luaBinaries}/ue4ss/Mods/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
                 echo "✓ Injected legacy Lua binary dependencies (socket, cjson, etc) from HTTP download"
               fi
 
