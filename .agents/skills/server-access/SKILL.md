@@ -42,6 +42,20 @@ systemctl restart amc-backend
 
 ### Django management commands
 
+Use the `amcm` wrapper (available to root):
+```bash
+amcm <command>
+```
+
+For example:
+```bash
+amcm shell
+amcm migrate
+amcm backfill_vehicle_stats --sleep 0.1
+```
+
+Or manually:
+
 ```bash
 su -s /bin/sh amc -c \
   'DJANGO_SETTINGS_MODULE=amc_backend.settings amc-manage <command>'
