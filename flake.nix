@@ -115,7 +115,7 @@
               extraForwardPorts = [
                 { containerPort = 9001; hostPort = 9001; protocol = "tcp"; }
                 { containerPort = 8081; hostPort = 8081; protocol = "tcp"; }
-                { containerPort = 55001; hostPort = 55001; protocol = "tcp"; }
+                { containerPort = 5001; hostPort = 5001; protocol = "tcp"; }
               ];
               imports = [
                 self.nixosModules.gameSyslog
@@ -152,8 +152,8 @@
                   environmentFile = "/run/secrets/backend-staging";
                   environment = {
                     GAME_SERVER_API_URL = "http://localhost:8081";
-                    MOD_SERVER_API_URL = "http://localhost:55001";
-                    WEBHOOK_SERVER_API_URL = "http://localhost:55000";
+                    MOD_SERVER_API_URL = "http://localhost:5001";
+                    WEBHOOK_SERVER_API_URL = "http://localhost:5000";
                   };
                 };
 
@@ -162,13 +162,17 @@
                   enable = true;
                   relpPort = 2515;
                 };
+
+                # Ensure syslog shuts down quickly (default 90s blocks container stop)
+                systemd.services.syslog.serviceConfig.TimeoutStopSec = "5s";
               };
               motortown-server = {
                 enable = true;
                 enableMods = true;
+                maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "test";
-                modVersion = "v0.31.2-rc3";
+                modVersion = "v0.31.2-rc4";
                 enableExternalMods = {
                   qxZap_CranyUnlocked_P = true;
                   MajasDetailWorks7_17_P = true;
@@ -203,8 +207,8 @@
                 relpServerHost = "localhost";
                 relpServerPort = 2515;
                 environment = {
-                  MOD_SERVER_PORT = "55001";
-                  MOD_MANAGEMENT_PORT = "55000";
+                  MOD_SERVER_PORT = "5001";
+                  MOD_MANAGEMENT_PORT = "5000";
                   MOD_WEBHOOK_ENABLE_EVENTS = "none";
                 };
                 credentialsFile = config.age.secrets.steam.path;
@@ -494,7 +498,7 @@
             # Test container ports are forwarded via privateNetwork forwardPorts
             9001   # Staging backend API (forwarded from container)
             8081   # Test game API (forwarded from container)
-            55001  # Test mod server (forwarded from container)
+            5001   # Test mod server (forwarded from container)
           ];
         };
 
