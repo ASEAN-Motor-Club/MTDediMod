@@ -154,6 +154,7 @@
                     GAME_SERVER_API_URL = "http://localhost:8081";
                     MOD_SERVER_API_URL = "http://localhost:5001";
                     WEBHOOK_SERVER_API_URL = "http://localhost:5000";
+                    PARTY_BONUS_ENABLED = "1";
                   };
                 };
 
@@ -172,7 +173,7 @@
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "test";
-                modVersion = "v0.31.2-rc4";
+                modVersion = "v0.31.2-rc5";
                 enableExternalMods = {
                   qxZap_CranyUnlocked_P = true;
                   MajasDetailWorks7_17_P = true;
