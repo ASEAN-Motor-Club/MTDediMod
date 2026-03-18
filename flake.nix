@@ -721,6 +721,9 @@
               systemd.services."container@motortown-server-test".serviceConfig = {
                 RestartSec = "5s";
                 TimeoutStopSec = "30s";
+                ExecStopPost = [
+                  "-${pkgs.coreutils}/bin/rm -rf /run/systemd/nspawn/unix-export/motortown-server-test"
+                ];
               };
 
               # Expose RELP + PostgreSQL on tailscale interface
