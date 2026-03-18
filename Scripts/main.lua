@@ -62,6 +62,7 @@ local function LoadWebserver()
     server.registerHandler("/players/*/mute", "POST", playerManager.HandleMutePlayer)
     server.registerHandler("/players/*/name", "PUT", playerManager.HandleSetPlayerName)
     server.registerHandler("/players/*", "GET", playerManager.HandleGetPlayerStates)
+    server.registerHandler("/parties", "GET", playerManager.HandleGetParties)
 
     -- Event management
     server.registerHandler("/events", "GET", eventManager.HandleGetEvents)

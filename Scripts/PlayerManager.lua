@@ -305,6 +305,39 @@ local function HandleTeleportPlayer(session)
   return json.stringify { error = "Invalid payload" }, nil, 400
 end
 
+---Get all current parties
+---@return table[]
+local function GetParties()
+  local gameState = GetMotorTownGameState()
+  local arr = {}
+  if not gameState:IsValid() then return arr end
+
+  for i = 1, #gameState.Net_Parties do
+    local party = gameState.Net_Parties[i]
+    local players = {}
+    for j = 1, #party.Players do
+      local ps = party.Players[j]
+      ---@cast ps AMotorTownPlayerState
+      if ps:IsValid() then
+        table.insert(players, GuidToString(ps.CharacterGuid))
+      end
+    end
+    if #players > 0 then
+      table.insert(arr, {
+        PartyId = party.PartyId,
+        Players = players,
+      })
+    end
+  end
+  return arr
+end
+
+---Handle request for parties
+---@type RequestPathHandler
+local function HandleGetParties(session)
+  return json.stringify { data = GetParties() }, nil, 200
+end
+
 return {
   HandleGetPlayerStates = HandleGetPlayerStates,
   GetMyCurrentTransform = GetMyCurrentTransform,
@@ -314,4 +347,5 @@ return {
   HandleSetPlayerName = HandleSetPlayerName,
   HandlePlayerSendChat = HandlePlayerSendChat,
   HandleMutePlayer = HandleMutePlayer,
+  HandleGetParties = HandleGetParties,
 }
