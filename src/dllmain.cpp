@@ -315,6 +315,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			const auto& TimeLimitPoint = (*Passenger)->GetValuePtrByPropertyNameInChain<int32>(STR("Net_TimeLimitPoint"));
 			const auto& TimeLimitToDestination = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLimitToDestination"));
 			const auto& TimeLimitToDestinationFromStart = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLimitToDestinationFromStart"));
+			const auto& SearchAndRescueRadiusRatio = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_SearchAndRescueRadiusRatio"));
 
 			if (!Payment || !PassengerType || !Distance || !PassengerFlags || !LCComfortSatisfaction || !TimeLimitPoint || !TimeLimitToDestination || !TimeLimitToDestinationFromStart
 				|| !StartLocation || !DestinationLocation) {
@@ -331,6 +332,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			passenger_obj["Net_TimeLimitPoint"] = *TimeLimitPoint;
 			passenger_obj["Net_TimeLimitToDestination"] = *TimeLimitToDestination;
 			passenger_obj["Net_TimeLimitToDestinationFromStart"] = *TimeLimitToDestinationFromStart;
+			if (SearchAndRescueRadiusRatio) passenger_obj["Net_SearchAndRescueRadiusRatio"] = *SearchAndRescueRadiusRatio;
 
 			json::object destination_location_obj;
 			destination_location_obj["X"] = static_cast<int>(std::round(DestinationLocation->X()));
