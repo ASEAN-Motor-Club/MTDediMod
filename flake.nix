@@ -172,12 +172,12 @@
                 enableMods = true;
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
-                betaBranch = "test";
-                modVersion = "v0.31.2-rc5";
+                betaBranch = "beta";
+                modVersion = "v0.31.2-rc7";
                 enableExternalMods = {
-                  qxZap_CranyUnlocked_P = true;
-                  MajasDetailWorks7_17_P = true;
-                  MajasMnTrailerworks7_17_P = true;
+                  qxZap_CranyUnlocked_P = false;
+                  MajasDetailWorks7_17_P = false;
+                  MajasMnTrailerworks7_17_P = false;
                 };
                 engineIni = ''
                   mh.maxCombinedVehicleLength=4000
@@ -385,7 +385,8 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "v0.31.0";
+            # modVersion = "v0.31.0";
+            modVersion = "v0.31.2-rc7";
             enableExternalMods = {
               MajasDetailWorks7_17_P = true;
               MajasMnTrailerworks7_17_P = true;
@@ -625,6 +626,7 @@
                   EVENT_GAME_SERVER_API_URL = "http://127.0.0.1:8082";
                   EVENT_MOD_SERVER_API_URL = "http://localhost:5011";
                   RESTART_MOTORTOWN_SCRIPT = "${restartScript}/bin/restart-motortown";
+                  PARTY_BONUS_ENABLED = "1";
                 };
               };
 
@@ -726,6 +728,7 @@
               systemd.services."container@motortown-server-test".serviceConfig = {
                 RestartSec = "5s";
                 TimeoutStopSec = "30s";
+                TimeoutStartSec = lib.mkForce "30m";
                 ExecStopPost = [
                   "-${pkgs.coreutils}/bin/rm -rf /run/systemd/nspawn/unix-export/motortown-server-test"
                 ];
