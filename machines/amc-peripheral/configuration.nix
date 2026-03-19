@@ -316,7 +316,7 @@
         <queue-size>1048576</queue-size>
         <client-timeout>300</client-timeout>
         <header-timeout>15</header-timeout>
-        <source-timeout>30</source-timeout>
+        <source-timeout>5</source-timeout>
         <burst-on-connect>1</burst-on-connect>
         <burst-size>262144</burst-size>
       </limits>
