@@ -155,6 +155,7 @@
                     MOD_SERVER_API_URL = "http://localhost:5001";
                     WEBHOOK_SERVER_API_URL = "http://localhost:5000";
                     PARTY_BONUS_ENABLED = "1";
+                    WEBHOOK_SSE_ENABLED = "1";
                   };
                 };
 
@@ -173,7 +174,7 @@
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "beta";
-                modVersion = "v0.31.2-rc7";
+                modVersion = "v0.32.0-rc1";
                 enableExternalMods = {
                   qxZap_CranyUnlocked_P = false;
                   MajasDetailWorks7_17_P = false;
@@ -385,8 +386,7 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            # modVersion = "v0.31.0";
-            modVersion = "v0.31.2-rc7";
+            modVersion = "v0.31.2";
             enableExternalMods = {
               MajasDetailWorks7_17_P = true;
               MajasMnTrailerworks7_17_P = true;
