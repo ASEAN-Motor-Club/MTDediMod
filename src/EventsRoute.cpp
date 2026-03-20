@@ -8,7 +8,7 @@ bool EventsRoute::IsMatchingRequest(http::request<http::string_body> req)
     return req.target() == "/events";
 }
 
-// On a match, get events from the manager and return them as JSON
+// On a match, return buffered events as JSON (non-destructive snapshot)
 json::object EventsRoute::GetResponseJson(http::request<http::string_body> req, http::status& statusCode)
 {
     json::object response;
@@ -21,8 +21,8 @@ json::object EventsRoute::GetResponseJson(http::request<http::string_body> req, 
         return response;
     }
     
-    // Retrieve and clear all pending events from the manager
-    json::array events = EventManager::Get().GetAndClearEvents();
+    // Return a non-destructive snapshot of the ring buffer
+    json::array events = EventManager::Get().GetBufferedEventsJson();
     response["events"] = events;
 
     statusCode = http::status::ok;

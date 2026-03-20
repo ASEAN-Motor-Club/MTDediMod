@@ -1,5 +1,3 @@
-#pragma once
-
 #include "webserver.h"
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <Helpers/String.hpp>
@@ -7,6 +5,7 @@
 #include <format>
 #include "statics.h"
 #include "EventsRoute.h"
+#include "EventManager.h"
 
 // Workaround against multiple check definitions
 #pragma push_macro("check")
@@ -18,7 +17,7 @@
 using namespace RC;
 using namespace RC::Unreal;
 namespace json = boost::json;
-using tcp = asio::ip::tcp;
+
 
 Webserver* _localServer = nullptr;
 
@@ -38,8 +37,10 @@ Webserver::Webserver() {
 }
 
 Webserver::~Webserver() {
-	serverThread.interrupt();
+	// Signal SSE threads to stop (they'll wake and exit)
+	EventManager::Get().Shutdown();
 
+	serverThread.interrupt();
 	free(_localServer);
 	_localServer = NULL;
 }
@@ -56,7 +57,9 @@ bool Webserver::isServerRunning()
 	return serverThread.joinable();
 }
 
-// HTTP Server function
+
+
+// HTTP Server function — accepts connections and spawns a thread for each
 void Webserver::run_server(unsigned short port) {
 	try
 	{
@@ -66,16 +69,10 @@ void Webserver::run_server(unsigned short port) {
 			tcp::socket socket(ioc);
 			acceptor.accept(socket);
 
-			beast::flat_buffer buffer;
-			http::request<http::string_body> req;
-			http::read(socket, buffer, req);
-
-			http::response<http::string_body> res;
-			res.body() = handle_request(req, res);
-
-			res.set(http::field::content_type, "application/json");
-			res.prepare_payload();
-			http::write(socket, res);
+			// Spawn a detached thread for this connection.
+			// Normal requests finish quickly; SSE threads self-terminate
+			// via EventManager::Shutdown() signaling the condition variable.
+			std::thread(&Webserver::handle_connection, this, std::move(socket)).detach();
 		}
 	}
 	catch (const std::exception& e)
@@ -88,14 +85,154 @@ void Webserver::run_server(unsigned short port) {
 	}
 }
 
-// Function to handle incoming HTTP requests
-std::string Webserver::handle_request(http::request<http::string_body> req, http::response<http::string_body>& res) {
-	Output::send<LogLevel::Verbose>(
-		STR("[{}] Processing {} request {}\n"),
-		ModName,
-		to_wstring(static_cast<std::string>(req.method_string())),
-		to_wstring(static_cast<std::string>(req.target())));
+// Handle a single connection on its own thread
+void Webserver::handle_connection(tcp::socket socket)
+{
+	try
+	{
+		beast::flat_buffer buffer;
+		http::request<http::string_body> req;
+		http::read(socket, buffer, req);
 
+		Output::send<LogLevel::Verbose>(
+			STR("[{}] Processing {} request {}\n"),
+			ModName,
+			to_wstring(static_cast<std::string>(req.method_string())),
+			to_wstring(static_cast<std::string>(req.target())));
+
+		// Check if this is an SSE request
+		if (req.method() == http::verb::get && req.target() == "/events/stream")
+		{
+			handle_sse_connection(socket, req);
+			return;
+		}
+
+		// Normal request handling
+		http::response<http::string_body> res;
+		res.body() = handle_request(req, res);
+		res.set(http::field::content_type, "application/json");
+		res.prepare_payload();
+		http::write(socket, res);
+	}
+	catch (const beast::system_error& se)
+	{
+		// Connection closed or reset — normal for SSE disconnects
+		if (se.code() != beast::errc::not_connected &&
+			se.code() != asio::error::connection_reset &&
+			se.code() != asio::error::broken_pipe)
+		{
+			Output::send<LogLevel::Warning>(
+				STR("[{}] Connection error: {}\n"),
+				ModName,
+				to_wstring(se.code().message()));
+		}
+	}
+	catch (const std::exception& e)
+	{
+		Output::send<LogLevel::Error>(
+			STR("[{}] Connection handler error: {}\n"),
+			ModName,
+			to_wstring(e.what()));
+	}
+}
+
+// Handle SSE stream — blocks until client disconnects or shutdown
+void Webserver::handle_sse_connection(tcp::socket& socket, http::request<http::string_body>& req)
+{
+	Output::send<LogLevel::Verbose>(STR("[{}] SSE client connected\n"), ModName);
+
+	// Send SSE response headers
+	http::response<http::empty_body> res;
+	res.result(http::status::ok);
+	res.set(http::field::content_type, "text/event-stream");
+	res.set(http::field::cache_control, "no-cache");
+	res.set(http::field::connection, "keep-alive");
+	res.set("X-Accel-Buffering", "no"); // Disable proxy buffering
+	res.keep_alive(true);
+
+	http::response_serializer<http::empty_body> sr{res};
+	http::write_header(socket, sr);
+
+	// Check for Last-Event-ID for replay
+	uint64_t last_seq = 0;
+	auto it = req.find("Last-Event-ID");
+	if (it != req.end())
+	{
+		try
+		{
+			last_seq = std::stoull(std::string(it->value()));
+			Output::send<LogLevel::Verbose>(
+				STR("[{}] SSE client reconnecting from seq {}\n"), ModName, last_seq);
+		}
+		catch (...)
+		{
+			// Invalid Last-Event-ID, start from beginning of buffer
+		}
+	}
+
+	// Replay any buffered events
+	auto buffered = EventManager::Get().GetEventsSince(last_seq);
+	if (!buffered.empty() && last_seq > 0)
+	{
+		// Check if we may have missed events (gap between last_seq and oldest buffered)
+		if (buffered.front().seq > last_seq + 1)
+		{
+			std::string comment = ": missed_events\n\n";
+			boost::system::error_code ec;
+			asio::write(socket, asio::buffer(comment), ec);
+			if (ec) return;
+		}
+	}
+
+	for (const auto& entry : buffered)
+	{
+		std::string sse_frame = std::format("id: {}\ndata: {}\n\n",
+			entry.seq, json::serialize(entry.data));
+
+		boost::system::error_code ec;
+		asio::write(socket, asio::buffer(sse_frame), ec);
+		if (ec)
+		{
+			Output::send<LogLevel::Verbose>(
+				STR("[{}] SSE client disconnected during replay\n"), ModName);
+			return;
+		}
+		last_seq = entry.seq;
+	}
+
+	// Main SSE loop — wait for new events and push them
+	while (true)
+	{
+		auto events = EventManager::Get().WaitForEvents(last_seq);
+
+		if (events.empty())
+		{
+			// Shutdown signal
+			Output::send<LogLevel::Verbose>(
+				STR("[{}] SSE connection closing (shutdown)\n"), ModName);
+			return;
+		}
+
+		for (const auto& entry : events)
+		{
+			std::string sse_frame = std::format("id: {}\ndata: {}\n\n",
+				entry.seq, json::serialize(entry.data));
+
+			boost::system::error_code ec;
+			asio::write(socket, asio::buffer(sse_frame), ec);
+			if (ec)
+			{
+				Output::send<LogLevel::Verbose>(
+					STR("[{}] SSE client disconnected\n"), ModName);
+				return;
+			}
+			last_seq = entry.seq;
+		}
+	}
+}
+
+// Function to handle incoming HTTP requests (non-SSE routes)
+std::string Webserver::handle_request(http::request<http::string_body> req, http::response<http::string_body>& res) {
 
 	json::object response_json;
 	http::status statusCode = http::status::ok;
@@ -122,4 +259,3 @@ std::string Webserver::handle_request(http::request<http::string_body> req, http
 	res.result(statusCode);
 	return json::serialize(response_json);
 }
-

@@ -7,10 +7,12 @@
 #include <boost/thread.hpp>
 #include <list>
 #include <memory>
+#include <thread>
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
 namespace http = beast::http;
+using tcp = asio::ip::tcp;
 
 class Route;
 
@@ -37,6 +39,12 @@ private:
 	// HTTP Server function
 	void run_server(unsigned short port);
 
-	// Function to handle incoming HTTP requests
+	// Handle a single connection on its own thread
+	void handle_connection(tcp::socket socket);
+
+	// Function to handle incoming HTTP requests (non-SSE)
 	std::string handle_request(http::request<http::string_body> req, http::response<http::string_body>& res);
+
+	// Handle SSE stream connection (blocks until client disconnects or shutdown)
+	void handle_sse_connection(tcp::socket& socket, http::request<http::string_body>& req);
 };
