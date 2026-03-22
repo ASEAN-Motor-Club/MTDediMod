@@ -196,6 +196,7 @@
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_buffering off;  # Disable buffering for streaming
             proxy_cache off;      # Ensure no cache is used for streaming data
+            gzip off; # Don't try to compress an already compressed media stream
             # Optionally, add the header to explicitly disable internal buffering
             add_header X-Accel-Buffering no;
           '';
@@ -280,12 +281,12 @@
       <limits>
         <clients>500</clients>
         <sources>2</sources>
-        <queue-size>1048576</queue-size>
+        <queue-size>2097152</queue-size>
         <client-timeout>300</client-timeout>
         <header-timeout>15</header-timeout>
-        <source-timeout>5</source-timeout>
+        <source-timeout>30</source-timeout>
         <burst-on-connect>1</burst-on-connect>
-        <burst-size>262144</burst-size>
+        <burst-size>524288</burst-size>
       </limits>
 
       <mount>
@@ -305,6 +306,8 @@
 
       <mount>
         <mount-name>/fallback</mount-name>
+        <username>source</username>
+        <password>hackme</password>
         <hidden>1</hidden>
       </mount>
     '';
