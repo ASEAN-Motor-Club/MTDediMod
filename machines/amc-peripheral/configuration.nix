@@ -644,7 +644,10 @@
       User = "opencode";
       Group = "opencode";
       WorkingDirectory = "/var/lib/opencode/workspace";
-      EnvironmentFile = config.age.secrets.peripheral-bots.path;
+      EnvironmentFile = [
+        config.age.secrets.peripheral-bots.path
+        config.age.secrets.opencode-peripheral.path
+      ];
       Restart = "on-failure";
       RestartSec = 10;
     };
