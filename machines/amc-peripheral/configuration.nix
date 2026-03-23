@@ -2,7 +2,75 @@
   config,
   pkgs,
   ...
-}: {
+}: let
+  # ── GitHub App credential helpers ──────────────────────────────────
+  # These generate fresh GitHub App installation tokens on demand,
+  # avoiding the 1-hour token expiry issue for long-running services.
+  githubAppId = "2922326";
+  githubInstallationId = "111712229";
+  appKeyPath = config.age.secrets.coding-agent-app-key.path;
+
+  git-credential-github-app = pkgs.writeShellScriptBin "git-credential-github-app" ''
+    set -euo pipefail
+    [[ "$${1:-}" == "get" ]] || exit 0
+    while IFS='=' read -r key value; do
+      case "$key" in host) HOST="$value" ;; esac
+    done
+    [[ "$${HOST:-}" == "github.com" ]] || exit 0
+
+    b64url() { ${pkgs.openssl}/bin/openssl base64 -e -A | ${pkgs.coreutils}/bin/tr '+/' '-_' | ${pkgs.coreutils}/bin/tr -d '='; }
+    NOW=$(${pkgs.coreutils}/bin/date +%s)
+    IAT=$((NOW - 60))
+    EXP=$((NOW + 600))
+    HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | b64url)
+    PAYLOAD=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"${githubAppId}\"}" | b64url)
+    SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | ${pkgs.openssl}/bin/openssl dgst -sha256 -sign "${appKeyPath}" | b64url)
+    JWT="$HEADER.$PAYLOAD.$SIGNATURE"
+
+    RESPONSE=$(${pkgs.curl}/bin/curl -sf -X POST \
+      -H "Authorization: Bearer $JWT" \
+      -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/app/installations/${githubInstallationId}/access_tokens" 2>&1) || {
+      echo "ERROR: GitHub API request failed: $RESPONSE" >&2
+      exit 1
+    }
+    TOKEN=$(echo "$RESPONSE" | ${pkgs.jq}/bin/jq -r '.token')
+    if [[ "$TOKEN" == "null" || -z "$TOKEN" ]]; then
+      echo "ERROR: Failed to extract token from response: $RESPONSE" >&2
+      exit 1
+    fi
+    echo "protocol=https"
+    echo "host=github.com"
+    echo "username=x-access-token"
+    echo "password=$TOKEN"
+  '';
+
+  gh-token = pkgs.writeShellScriptBin "gh-token" ''
+    set -euo pipefail
+    b64url() { ${pkgs.openssl}/bin/openssl base64 -e -A | ${pkgs.coreutils}/bin/tr '+/' '-_' | ${pkgs.coreutils}/bin/tr -d '='; }
+    NOW=$(${pkgs.coreutils}/bin/date +%s)
+    IAT=$((NOW - 60))
+    EXP=$((NOW + 600))
+    HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | b64url)
+    PAYLOAD=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"${githubAppId}\"}" | b64url)
+    SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | ${pkgs.openssl}/bin/openssl dgst -sha256 -sign "${appKeyPath}" | b64url)
+    JWT="$HEADER.$PAYLOAD.$SIGNATURE"
+
+    RESPONSE=$(${pkgs.curl}/bin/curl -sf -X POST \
+      -H "Authorization: Bearer $JWT" \
+      -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/app/installations/${githubInstallationId}/access_tokens" 2>&1) || {
+      echo "ERROR: GitHub API request failed: $RESPONSE" >&2
+      exit 1
+    }
+    TOKEN=$(echo "$RESPONSE" | ${pkgs.jq}/bin/jq -r '.token')
+    if [[ "$TOKEN" == "null" || -z "$TOKEN" ]]; then
+      echo "ERROR: Failed to extract token from response: $RESPONSE" >&2
+      exit 1
+    fi
+    echo "$TOKEN"
+  '';
+in {
   imports = [
     ./hardware-configuration.nix
   ];
@@ -321,8 +389,6 @@
 
     environment = {
       HOME = "/var/lib/opencode";
-      GITHUB_APP_ID = "2922326";
-      GITHUB_INSTALLATION_ID = "111712229";
     };
 
     path = with pkgs; [git openssh coreutils jq openssl curl];
@@ -332,32 +398,16 @@
 
       REPO_DIR="/var/lib/opencode/workspace/amc-server"
 
-      # --- Generate GitHub App installation token ---
-      APP_KEY="${config.age.secrets.coding-agent-app-key.path}"
-      NOW=$(date +%s)
-      IAT=$((NOW - 60))
-      EXP=$((NOW + 600))
-
-      b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
-      HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | b64url)
-      PAYLOAD=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$GITHUB_APP_ID\"}" | b64url)
-      SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$APP_KEY" | b64url)
-      JWT="$HEADER.$PAYLOAD.$SIGNATURE"
-
-      RESPONSE=$(curl -s -X POST \
-        -H "Authorization: Bearer $JWT" \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/app/installations/$GITHUB_INSTALLATION_ID/access_tokens")
-      GH_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
-      if [ "$GH_TOKEN" = "null" ] || [ -z "$GH_TOKEN" ]; then
-        echo "ERROR: Failed to get installation token: $RESPONSE"
-        exit 1
+      # ── Configure git to use Nix-managed credential helper ──
+      # Remove stale url.x-access-token insteadOf entries from previous config
+      if [ -f "$HOME/.gitconfig" ]; then
+        grep -v x-access-token "$HOME/.gitconfig" > "$HOME/.gitconfig.tmp" && mv "$HOME/.gitconfig.tmp" "$HOME/.gitconfig" || true
       fi
+      git config --global credential.helper "${git-credential-github-app}/bin/git-credential-github-app"
+      git config --global user.name "AMC Coding Agent[bot]"
+      git config --global user.email "2922326+amc-coding-agent[bot]@users.noreply.github.com"
 
-      # Configure git to use HTTPS with token
-      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "https://github.com/"
-      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "git@github.com:"
-
+      # ── Clone or sync workspace ──
       if [ ! -d "$REPO_DIR/.git" ]; then
         echo "Cloning repository..."
         mkdir -p "$(dirname "$REPO_DIR")"
@@ -375,8 +425,6 @@
       fi
 
       cd "$REPO_DIR"
-      git config user.name "AMC Coding Agent[bot]"
-      git config user.email "2922326+amc-coding-agent[bot]@users.noreply.github.com"
 
       # Ensure worktrees directory exists
       mkdir -p /var/lib/opencode/workspace/worktrees
@@ -389,12 +437,12 @@
         "provider": {
           "openrouter": {}
         },
-        "model": "openrouter/anthropic/claude-sonnet-4",
+        "model": "opencode/mimo-v2-pro-free",
         "command": {
           "pr": {
             "description": "commit, push, and create a PR from current changes",
             "agent": "build",
-            "template": "Commit all changes, push the branch, and create a draft pull request.\n\n1. Stage all changes: git add -A\n2. Commit with a descriptive message based on the changes: git commit -m \"$ARGUMENTS\"\n3. Push the branch: git push -f origin HEAD\n4. Create a draft PR: gh pr create --repo ASEAN-Motor-Club/amc-server --base master --fill --draft\n\nIMPORTANT: You MUST run ALL of these commands. Do not skip any step."
+            "template": "Commit all changes, push the branch, and create a draft pull request.\n\n1. Stage all changes: git add -A\n2. Commit with a descriptive message based on the changes: git commit -m \"$ARGUMENTS\"\n3. Push the branch: git push -f origin HEAD\n4. Get a fresh token for the GitHub CLI: export GH_TOKEN=$(gh-token)\n5. Create a draft PR: gh pr create --repo ASEAN-Motor-Club/amc-server --base master --fill --draft\n\nIMPORTANT: You MUST run ALL of these commands. Do not skip any step."
           },
           "task": {
             "description": "create a new worktree for an isolated task",
@@ -509,12 +557,10 @@
     after = ["network-online.target" "opencode-workspace.service"];
     wants = ["network-online.target" "opencode-workspace.service"];
     wantedBy = ["multi-user.target"];
-    path = with pkgs; [git openssh gh ripgrep fzf coreutils jq openssl curl nix nixos-rebuild];
+    path = with pkgs; [git openssh gh ripgrep fzf coreutils jq openssl curl nix nixos-rebuild] ++ [git-credential-github-app gh-token];
 
     environment = {
       HOME = "/var/lib/opencode";
-      GITHUB_APP_ID = "2922326";
-      GITHUB_INSTALLATION_ID = "111712229";
     };
 
     serviceConfig = {
@@ -530,34 +576,8 @@
     script = ''
       set -euo pipefail
 
-      # --- Generate GitHub App installation token ---
-      APP_KEY="${config.age.secrets.coding-agent-app-key.path}"
-      NOW=$(date +%s)
-      IAT=$((NOW - 60))
-      EXP=$((NOW + 600))
-
-      b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
-      HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | b64url)
-      PAYLOAD=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$GITHUB_APP_ID\"}" | b64url)
-      SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$APP_KEY" | b64url)
-      JWT="$HEADER.$PAYLOAD.$SIGNATURE"
-
-      RESPONSE=$(curl -s -X POST \
-        -H "Authorization: Bearer $JWT" \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/app/installations/$GITHUB_INSTALLATION_ID/access_tokens")
-
-      export GH_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
-      if [ "$GH_TOKEN" = "null" ] || [ -z "$GH_TOKEN" ]; then
-        echo "ERROR: Failed to get installation token: $RESPONSE"
-        exit 1
-      fi
-      echo "GitHub App token acquired"
-
-      git config --global user.name "AMC Coding Agent[bot]"
-      git config --global user.email "2922326+amc-coding-agent[bot]@users.noreply.github.com"
-      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "https://github.com/"
-      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "git@github.com:"
+      # Git credential helper is deployed by opencode-workspace service.
+      # It generates fresh GitHub App tokens on every git operation.
 
       # Write auth.json for opencode credential store
       mkdir -p "$HOME/.local/share/opencode"
@@ -574,12 +594,10 @@
     after = ["network-online.target" "opencode-workspace.service"];
     wants = ["network-online.target" "opencode-workspace.service"];
     wantedBy = ["multi-user.target"];
-    path = with pkgs; [git openssh gh ripgrep fzf coreutils jq openssl curl nix nixos-rebuild];
+    path = with pkgs; [git openssh gh ripgrep fzf coreutils jq openssl curl nix nixos-rebuild] ++ [git-credential-github-app gh-token];
 
     environment = {
       HOME = "/var/lib/opencode";
-      GITHUB_APP_ID = "2922326";
-      GITHUB_INSTALLATION_ID = "111712229";
     };
 
     serviceConfig = {
@@ -595,32 +613,8 @@
     script = ''
       set -euo pipefail
 
-      APP_KEY="${config.age.secrets.coding-agent-app-key.path}"
-      NOW=$(date +%s)
-      IAT=$((NOW - 60))
-      EXP=$((NOW + 600))
-
-      b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
-      HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | b64url)
-      PAYLOAD=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$GITHUB_APP_ID\"}" | b64url)
-      SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$APP_KEY" | b64url)
-      JWT="$HEADER.$PAYLOAD.$SIGNATURE"
-
-      RESPONSE=$(curl -s -X POST \
-        -H "Authorization: Bearer $JWT" \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/app/installations/$GITHUB_INSTALLATION_ID/access_tokens")
-
-      export GH_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
-      if [ "$GH_TOKEN" = "null" ] || [ -z "$GH_TOKEN" ]; then
-        echo "ERROR: Failed to get installation token: $RESPONSE"
-        exit 1
-      fi
-
-      git config --global user.name "AMC Coding Agent[bot]"
-      git config --global user.email "2922326+amc-coding-agent[bot]@users.noreply.github.com"
-      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "https://github.com/"
-      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "git@github.com:"
+      # Git credential helper is deployed by opencode-workspace service.
+      # It generates fresh GitHub App tokens on every git operation.
 
       mkdir -p "$HOME/.local/share/opencode"
       echo "{\"openrouter\":{\"apiKey\":\"$OPENROUTER_API_KEY\"}}" \
@@ -689,11 +683,9 @@
 
     environment = {
       HOME = "/var/lib/opencode";
-      GITHUB_APP_ID = "2922326";
-      GITHUB_INSTALLATION_ID = "111712229";
     };
 
-    path = with pkgs; [git openssh gh coreutils jq openssl curl nix opencode];
+    path = with pkgs; [git openssh gh coreutils jq openssl curl nix opencode] ++ [git-credential-github-app gh-token];
 
     script = ''
       set -euo pipefail
@@ -710,31 +702,8 @@
       fi
       TASK_DESCRIPTION=$(cat "$TASK_DIR/prompt.txt")
 
-      # --- GitHub App token ---
-      APP_KEY="${config.age.secrets.coding-agent-app-key.path}"
-      NOW=$(date +%s)
-      IAT=$((NOW - 60))
-      EXP=$((NOW + 600))
-
-      b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
-      HEADER=$(echo -n '{"alg":"RS256","typ":"JWT"}' | b64url)
-      PAYLOAD=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$GITHUB_APP_ID\"}" | b64url)
-      SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$APP_KEY" | b64url)
-      JWT="$HEADER.$PAYLOAD.$SIGNATURE"
-
-      RESPONSE=$(curl -s -X POST \
-        -H "Authorization: Bearer $JWT" \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/app/installations/$GITHUB_INSTALLATION_ID/access_tokens")
-
-      export GH_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
-      if [ "$GH_TOKEN" = "null" ] || [ -z "$GH_TOKEN" ]; then
-        echo "ERROR: Failed to get installation token: $RESPONSE"
-        exit 1
-      fi
-
-      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "https://github.com/"
-      git config --global url."https://x-access-token:$GH_TOKEN@github.com/".insteadOf "git@github.com:"
+      # Git credential helper is deployed by opencode-workspace service.
+      # It generates fresh GitHub App tokens on every git operation.
 
       # Write auth.json
       mkdir -p "$HOME/.local/share/opencode"
@@ -774,6 +743,9 @@
 
       # Push the branch
       git push -f origin "$BRANCH_NAME"
+
+      # Get fresh token for gh CLI
+      export GH_TOKEN=$(${gh-token}/bin/gh-token)
 
       # Create draft PR
       PR_URL=$(gh pr create \
