@@ -41,6 +41,12 @@
     nodejs
   ];
 
+  # Many Node.js packages (kimaki, etc.) hardcode /bin/bash
+  system.activationScripts.binbash = ''
+    mkdir -p /bin
+    ln -sf ${pkgs.bash}/bin/bash /bin/bash
+  '';
+
   services.nginx = {
     enable = true;
     recommendedTlsSettings = true;
