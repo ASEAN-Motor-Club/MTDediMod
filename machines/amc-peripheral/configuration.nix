@@ -649,7 +649,7 @@
       RestartSec = 10;
     };
 
-    path = with pkgs; [opencode bun bash git openssh gh coreutils nodejs unzip];
+    path = with pkgs; [opencode bun bash git openssh gh coreutils nodejs unzip which];
 
     script = ''
       set -euo pipefail
