@@ -38,6 +38,7 @@
     htop
     ffmpeg
     libopus
+    nodejs
   ];
 
   services.nginx = {
@@ -453,7 +454,8 @@
       |---------|------|-------------|
       | Radio bots | `amc-radio` | Liquidsoap radio + Discord bots |
       | Fallback stream | `fallback` | Fallback radio stream |
-      | Discord bots | `amc-bot`, `amc-jarvis` | Discord bots |
+      | Discord bots | `amc-bot` | Discord bots |
+      | Kimaki | `kimaki` | Discord↔OpenCode bridge (Jarvis) |
       | Nginx | `nginx` | Reverse proxy for all web services |
       | Tailscale | `tailscale` | VPN for SSH access |
       | OpenCode Serve | `opencode-serve` | This agent's API (port 4096) |
@@ -462,7 +464,7 @@
 
       ### Check service status
       ```bash
-      systemctl status amc-radio amc-bot amc-jarvis nginx
+      systemctl status amc-radio amc-bot kimaki nginx
       ```
 
       ### View logs
@@ -619,6 +621,42 @@
         | jq . > "$HOME/.local/share/opencode/auth.json"
 
       exec ${pkgs.opencode}/bin/opencode web --port 4097 --hostname 127.0.0.1
+    '';
+  };
+
+  # ── Kimaki (Discord↔OpenCode bridge) ───────────────────────────────
+  # Replaces the old amc-jarvis bot. Uses the Jarvis Discord bot token
+  # to bridge Discord messages directly into OpenCode coding sessions.
+  systemd.services.kimaki = {
+    description = "Kimaki – Discord↔OpenCode Bridge";
+    after = ["network-online.target" "opencode-serve.service"];
+    wants = ["network-online.target" "opencode-serve.service"];
+    wantedBy = ["multi-user.target"];
+
+    serviceConfig = {
+      Type = "simple";
+      User = "opencode";
+      Group = "opencode";
+      WorkingDirectory = "/var/lib/opencode/workspace";
+      EnvironmentFile = config.age.secrets.peripheral-bots.path;
+      Restart = "on-failure";
+      RestartSec = 10;
+    };
+
+    path = with pkgs; [nodejs git openssh gh coreutils];
+
+    script = ''
+      set -euo pipefail
+
+      # Kimaki uses KIMAKI_BOT_TOKEN env var for the Discord bot token.
+      # DISCORD_TOKEN_DEV comes from peripheral-bots.env
+      export KIMAKI_BOT_TOKEN="$DISCORD_TOKEN_DEV"
+
+      # Data directory for kimaki state (SQLite DB, logs)
+      KIMAKI_DIR="/var/lib/opencode/.kimaki"
+      mkdir -p "$KIMAKI_DIR"
+
+      exec npx -y kimaki@latest --data-dir "$KIMAKI_DIR"
     '';
   };
 

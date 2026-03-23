@@ -816,22 +816,6 @@
                 cookiesPath = config.age.secrets.cookies.path;
                 dbPath = "/var/lib/radio/radio.db";
                 icecast.admin.password = "aseanmotorclub1234";
-                # Pass the monorepo source path from inputs.self
-                # Use cleanSource (filters .git, result, .DS_Store, etc.) + custom filter for heavy files
-                jarvisRepoPath = toString (pkgs.lib.cleanSourceWith {
-                  src = pkgs.lib.cleanSource inputs.self.outPath;
-                  filter = path: type:
-                    let baseName = baseNameOf path;
-                    in !(baseName == ".xwin-cache")
-                      && !(baseName == ".venv")
-                      && !(baseName == "package" && type == "directory")
-                      && !(baseName == "mods" && type == "directory")
-                      && !(pkgs.lib.hasPrefix "UE4SS_v" baseName)
-                      && !(pkgs.lib.hasSuffix ".pak" baseName)
-                      && !(pkgs.lib.hasSuffix ".zip" baseName)
-                      && !(pkgs.lib.hasSuffix ".dll" baseName);
-                });
-                jarvisAiModel = "anthropic/claude-3.7-sonnet";
                 sharry = {
                   enable = true;
                 };
