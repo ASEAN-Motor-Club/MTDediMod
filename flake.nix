@@ -299,6 +299,9 @@ EOF
             buildInputs = crossCompileBuildInputs ++ (with pkgs; [
               gh
               lua-language-server
+              lua5_4
+              lua54Packages.busted
+              lua54Packages.luasocket
             ]);
             shellHook = ''
               echo "UE4SS Cross-Compile Environment loaded."

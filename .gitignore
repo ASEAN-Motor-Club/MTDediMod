@@ -23,3 +23,7 @@ result
 !.vscode/settings.json
 !.vscode/c_cpp_properties.json
 !.vscode/extensions.json
+
+# Luarocks
+lua_modules/
+.luarocks/
