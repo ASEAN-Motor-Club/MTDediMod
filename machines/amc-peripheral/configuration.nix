@@ -272,8 +272,7 @@
     # OpenCode workspace directories
     "d /var/lib/opencode 0755 opencode opencode -"
     "d /var/lib/opencode/workspace 0755 opencode opencode -"
-    "d /var/lib/opencode/workspace/worktrees 0755 opencode opencode -"
-    "d /var/lib/opencode/tasks 0755 opencode opencode -"
+    "d /var/lib/opencode/workspace/tasks 0755 opencode opencode -"
   ];
 
   services.openssh.extraConfig = ''
@@ -389,6 +388,16 @@
             "description": "commit, push, and create a PR from current changes",
             "agent": "build",
             "template": "Commit all changes, push the branch, and create a draft pull request.\n\n1. Stage all changes: git add -A\n2. Commit with a descriptive message based on the changes: git commit -m \"$ARGUMENTS\"\n3. Push the branch: git push -f origin HEAD\n4. Create a draft PR: gh pr create --repo ASEAN-Motor-Club/amc-server --base master --fill --draft\n\nIMPORTANT: You MUST run ALL of these commands. Do not skip any step."
+          },
+          "task": {
+            "description": "create a new worktree for an isolated task",
+            "agent": "build",
+            "template": "Create an isolated git worktree for a new task. Follow ALL steps in order.\n\n## 1. Sync upstream\n```bash\ncd /var/lib/opencode/workspace/amc-server\ngit fetch --no-recurse-submodules origin master\ngit checkout master\ngit reset --hard origin/master\ngit submodule deinit --all -f 2>/dev/null || true\ngit submodule update --init --recursive\n```\n\n## 2. Create worktree\nSlugify the task description into a short kebab-case slug (e.g. 'fix radio queue' → 'fix-radio-queue').\n```bash\nSLUG=\"<slugified-description>\"\ngit worktree add ../tasks/$SLUG -b agent/$SLUG origin/master\ncd ../tasks/$SLUG\ngit submodule update --init --recursive\n```\n\n## 3. Report\nTell the user the worktree is ready at `/var/lib/opencode/workspace/tasks/$SLUG` and they should switch to it.\nList existing worktrees with `git worktree list`.\n\nIMPORTANT: Always create worktrees from the MAIN workspace at /var/lib/opencode/workspace/amc-server, never from another worktree."
+          },
+          "deploy": {
+            "description": "rebase on latest master, push, and deploy to this server",
+            "agent": "build",
+            "template": "Safely deploy changes to this server. You MUST follow all steps in order.\n\n## Pre-deploy: Rebase on latest master\n\n1. Fetch latest from remote:\n```bash\ngit fetch --no-recurse-submodules origin master\n```\n\n2. Rebase current branch onto latest master:\n```bash\ngit rebase origin/master\n```\nIf there are conflicts, resolve them, then `git rebase --continue`. If you cannot resolve them, abort with `git rebase --abort` and report the issue.\n\n3. Update submodules to match:\n```bash\ngit submodule update --init --recursive\n```\n\n4. Push to remote (force-push since we rebased):\n```bash\ngit push -f origin HEAD\n```\n\n## Deploy\n\n5. Run nixos-rebuild directly from the current worktree:\n```bash\nsudo nixos-rebuild switch --flake .#amc-peripheral --override-input amc-backend ./amc-backend --override-input amc-peripheral ./amc-peripheral --override-input motortown-server ./motortown-server-flake\n```\n\n6. Report the result to the user.\n\nIMPORTANT: You MUST rebase before deploying. Never skip steps 1-4. Always run nixos-rebuild from the CURRENT worktree directory, not the main workspace."
           }
         }
       }
@@ -398,19 +407,88 @@
       cat > "$HOME/.config/opencode/AGENTS.md" << 'AGENTS_EOF'
       # AMC Coding Agent (Peripheral)
 
-      You are running on the amc-peripheral server. Your workspace is a checkout
-      of the amc-server monorepo.
+      You are running **on the amc-peripheral server itself**. Your workspace is a
+      checkout of the amc-server monorepo at `/var/lib/opencode/workspace/amc-server`.
 
-      ## Self-Deploy
+      > **IMPORTANT**: You are running locally on this host. You do NOT need SSH to
+      > access services — use `systemctl`, `journalctl`, and `curl` directly.
 
-      You can trigger a self-deploy (nixos-rebuild switch on this server) by running:
-      ```bash
-      sudo systemctl start amc-peripheral-deploy
+      ## Workflow: Worktree-per-Task
+
+      This server uses a **worktree-per-task** model. The main workspace at
+      `/var/lib/opencode/workspace/amc-server` tracks upstream `master` only.
+      All development happens in isolated worktrees.
+
+      ### Creating a task
       ```
-      Then check the result:
-      ```bash
-      cat /var/lib/opencode/deploy-result.json
+      /task fix the radio queue ordering
       ```
+      This creates a worktree at `tasks/<slug>/` branched from latest master.
+
+      ### Finishing a task
+      ```
+      /pr description of changes
+      ```
+      This commits, pushes, and creates a draft PR.
+
+      ### Deploying
+      ```
+      /deploy
+      ```
+      This rebases onto latest master, pushes, and runs
+      `nixos-rebuild switch --flake .#amc-peripheral` directly from the worktree.
+
+      > **CAUTION**: NEVER edit the main workspace directly. Always use `/task`
+      > to create an isolated worktree first.
+
+      ### Managing worktrees
+      ```bash
+      git -C /var/lib/opencode/workspace/amc-server worktree list
+      git -C /var/lib/opencode/workspace/amc-server worktree remove tasks/<slug>
+      ```
+
+      ## Services on This Host
+
+      | Service | Unit | Description |
+      |---------|------|-------------|
+      | Radio bots | `amc-radio` | Liquidsoap radio + Discord bots |
+      | Fallback stream | `fallback` | Fallback radio stream |
+      | Discord bots | `amc-bot`, `amc-jarvis` | Discord bots |
+      | Nginx | `nginx` | Reverse proxy for all web services |
+      | Tailscale | `tailscale` | VPN for SSH access |
+      | OpenCode Serve | `opencode-serve` | This agent's API (port 4096) |
+      | OpenCode Web | `opencode-web` | This agent's web UI (port 4097) |
+      | OAuth2 Proxy | `oauth2-proxy` | GitHub auth for web UI (port 4180) |
+
+      ### Check service status
+      ```bash
+      systemctl status amc-radio amc-bot amc-jarvis nginx
+      ```
+
+      ### View logs
+      ```bash
+      journalctl -u amc-radio -n 100 --no-pager
+      journalctl -u amc-radio --since '1 hour ago' --no-pager
+      ```
+
+      ### Restart a service
+      ```bash
+      systemctl restart amc-radio
+      ```
+
+      ## NixOS Configuration
+
+      - `machines/amc-peripheral/configuration.nix` — main machine config
+      - `flake.nix` — flake wiring, secrets, overlays
+      - `amc-peripheral/` — submodule with the radio/bot Python package
+      - `secrets/secrets.nix` — ragenix secret definitions
+
+      ## Architecture Notes
+
+      - This server does **NOT** run the game server or Django backend
+      - The Django backend runs on `asean-mt-server` (a separate host)
+      - The `amc-peripheral` Python package (radio bots, Discord bots) is in
+        the `amc-peripheral/` submodule
       AGENTS_EOF
 
       echo "Workspace ready at $REPO_DIR"
@@ -435,7 +513,7 @@
       Type = "simple";
       User = "opencode";
       Group = "opencode";
-      WorkingDirectory = "/var/lib/opencode/workspace/amc-server";
+      WorkingDirectory = "/var/lib/opencode/workspace";
       EnvironmentFile = config.age.secrets.opencode-peripheral.path;
       Restart = "on-failure";
       RestartSec = 5;
@@ -500,7 +578,7 @@
       Type = "simple";
       User = "opencode";
       Group = "opencode";
-      WorkingDirectory = "/var/lib/opencode/workspace/amc-server";
+      WorkingDirectory = "/var/lib/opencode/workspace";
       EnvironmentFile = config.age.secrets.opencode-peripheral.path;
       Restart = "on-failure";
       RestartSec = 5;
@@ -758,13 +836,13 @@
     '';
   };
 
-  # ── Sudoers: opencode can only trigger self-deploy ─────────────────
+  # ── Sudoers: opencode can deploy via nixos-rebuild ─────────────────
   security.sudo.extraRules = [
     {
       users = ["opencode"];
       commands = [
         {
-          command = "/run/current-system/sw/bin/systemctl start amc-peripheral-deploy";
+          command = "/run/current-system/sw/bin/nixos-rebuild switch *";
           options = ["NOPASSWD"];
         }
       ];
