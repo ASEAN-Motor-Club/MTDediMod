@@ -643,7 +643,7 @@
       RestartSec = 10;
     };
 
-    path = with pkgs; [nodejs git openssh gh coreutils];
+    path = with pkgs; [git openssh gh coreutils nodejs];
 
     script = ''
       set -euo pipefail
@@ -656,7 +656,7 @@
       KIMAKI_DIR="/var/lib/opencode/.kimaki"
       mkdir -p "$KIMAKI_DIR"
 
-      exec npx -y kimaki@latest --data-dir "$KIMAKI_DIR"
+      exec ${(import ../../nix/kimaki {inherit pkgs;}).package}/bin/kimaki --data-dir "$KIMAKI_DIR"
     '';
   };
 
