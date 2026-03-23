@@ -12,8 +12,10 @@
   networking.domain = "";
   networking.firewall = {
     enable = true;
-    allowedTCPPorts = [22 80 443 8000 8008 1935 1936];
+    allowedTCPPorts = [22 80 443 8008 1935 1936];
     allowedUDPPorts = [1935];
+    # Icecast admin UI accessible only over Tailscale
+    interfaces."tailscale0".allowedTCPPorts = [8000];
   };
   networking.networkmanager.enable = true;
   services.openssh.enable = true;
@@ -241,77 +243,6 @@
   security.acme.defaults.email = "contact@fmnxl.xyz";
   security.acme.acceptTerms = true;
 
-  # Sharry file sharing virtual host
-  services.nginx.virtualHosts."share.aseanmotorclub.com" = {
-    enableACME = true;
-    forceSSL = true;
-    locations."/" = {
-      proxyPass = "http://127.0.0.1:9090";
-      extraConfig = ''
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-        client_max_body_size 105M;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-        send_timeout 300s;
-      '';
-    };
-  };
-
-  services.icecast = {
-    enable = true;
-    hostname = "aseanmotorclub.com";
-    admin.password = "aseanmotorclub1234"; # Admin password
-
-    # Bind to localhost only since Nginx will proxy
-    listen.address = "0.0.0.0";
-    listen.port = 8000;
-
-    # Additional Icecast settings
-    extraConf = ''
-      <location>ASEAN Motor Club</location>
-      <admin>admin@aseanmotorclub.com</admin>
-
-      <limits>
-        <clients>500</clients>
-        <sources>2</sources>
-        <queue-size>2097152</queue-size>
-        <client-timeout>300</client-timeout>
-        <header-timeout>15</header-timeout>
-        <source-timeout>30</source-timeout>
-        <burst-on-connect>1</burst-on-connect>
-        <burst-size>524288</burst-size>
-      </limits>
-
-      <mount>
-        <mount-name>/stream</mount-name>
-        <username>source</username>
-        <password>hackme</password>
-        <max-listeners>500</max-listeners>
-        <public>1</public>
-        <stream-name>ASEAN Motor Club Radio</stream-name>
-        <stream-description>Your home for automotive enthusiasm in Southeast Asia</stream-description>
-        <stream-url>https://aseanmotorclub.com/radio</stream-url>
-        <genre>Automotive</genre>
-        <fallback-mount>/fallback</fallback-mount>
-        <fallback-override>1</fallback-override>
-      </mount>
-
-
-      <mount>
-        <mount-name>/fallback</mount-name>
-        <username>source</username>
-        <password>hackme</password>
-        <hidden>1</hidden>
-      </mount>
-    '';
-  };
 
   users.users.sftpuser = {
     isNormalUser = true;
@@ -428,10 +359,12 @@
       else
         echo "Fetching latest..."
         cd "$REPO_DIR"
-        git fetch origin main
-        git checkout main
-        git reset --hard origin/main
+        git fetch --no-recurse-submodules origin master
+        git checkout master
+        git reset --hard origin/master
         git clean -fd
+        # Deinit + reinit submodules to handle orphaned refs gracefully
+        git submodule deinit --all -f || true
         git submodule update --init --recursive
       fi
 
@@ -455,7 +388,7 @@
           "pr": {
             "description": "commit, push, and create a PR from current changes",
             "agent": "build",
-            "template": "Commit all changes, push the branch, and create a draft pull request.\n\n1. Stage all changes: git add -A\n2. Commit with a descriptive message based on the changes: git commit -m \"$ARGUMENTS\"\n3. Push the branch: git push -f origin HEAD\n4. Create a draft PR: gh pr create --repo ASEAN-Motor-Club/amc-server --base main --fill --draft\n\nIMPORTANT: You MUST run ALL of these commands. Do not skip any step."
+            "template": "Commit all changes, push the branch, and create a draft pull request.\n\n1. Stage all changes: git add -A\n2. Commit with a descriptive message based on the changes: git commit -m \"$ARGUMENTS\"\n3. Push the branch: git push -f origin HEAD\n4. Create a draft PR: gh pr create --repo ASEAN-Motor-Club/amc-server --base master --fill --draft\n\nIMPORTANT: You MUST run ALL of these commands. Do not skip any step."
           }
         }
       }
@@ -687,12 +620,12 @@
       BRANCH_NAME="agent/$TASK_ID"
 
       cd "$REPO_DIR"
-      git fetch origin main
+      git fetch origin master
 
       # Create isolated worktree
       WORKTREE_PATH="$WORKTREE_BASE/$TASK_ID"
       mkdir -p "$WORKTREE_BASE"
-      git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/main
+      git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/master
 
       cd "$WORKTREE_PATH"
       git config user.name "AMC Coding Agent[bot]"
@@ -720,7 +653,7 @@
       # Create draft PR
       PR_URL=$(gh pr create \
         --repo ASEAN-Motor-Club/amc-server \
-        --base main \
+        --base master \
         --title "agent: $(echo "$TASK_DESCRIPTION" | head -c 72)" \
         --body "## Changes by Coding Agent
 
@@ -804,9 +737,9 @@
       export GIT_CONFIG_KEY_1="url.https://x-access-token:$GH_TOKEN@github.com/.insteadOf"
       export GIT_CONFIG_VALUE_1="https://github.com/"
 
-      runuser -u opencode -- git -C "$REPO_DIR" fetch origin main
-      runuser -u opencode -- git -C "$REPO_DIR" checkout main
-      runuser -u opencode -- git -C "$REPO_DIR" reset --hard origin/main
+      runuser -u opencode -- git -C "$REPO_DIR" fetch origin master
+      runuser -u opencode -- git -C "$REPO_DIR" checkout master
+      runuser -u opencode -- git -C "$REPO_DIR" reset --hard origin/master
       runuser -u opencode -- git -C "$REPO_DIR" clean -fd
       runuser -u opencode -- git -C "$REPO_DIR" submodule update --init --recursive
 
@@ -873,48 +806,6 @@
     };
   };
 
-
-  # ── Nginx vhost for Radio ASEAN Web Interface (Discord Activity) ──
-  services.nginx.virtualHosts."radio.aseanmotorclub.com" = {
-    enableACME = true;
-    forceSSL = true;
-    locations."/" = {
-      root = "${(import ../../amc-peripheral/radio-web {inherit pkgs;}).package}";
-      tryFiles = "$uri $uri/index.html /index.html";
-      extraConfig = ''
-        add_header Cache-Control "public, max-age=3600";
-      '';
-    };
-    locations."/api" = {
-      proxyPass = "http://127.0.0.1:7001/api";
-      extraConfig = ''
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-      '';
-    };
-    locations."/stream" = {
-      proxyPass = "http://127.0.0.1:8000/stream";
-      extraConfig = ''
-        proxy_http_version 1.1;
-        proxy_connect_timeout 5s;
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "keep-alive";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_buffering off;
-        proxy_cache off;
-        gzip off;
-        access_log off;
-        add_header X-Accel-Buffering no;
-        add_header Access-Control-Allow-Origin "*";
-      '';
-    };
-  };
 
   services.tailscale = {
     enable = true;

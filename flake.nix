@@ -386,7 +386,7 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "v0.31.2";
+            modVersion = "v0.32.0-rc1";
             enableExternalMods = {
               MajasDetailWorks7_17_P = true;
               MajasMnTrailerworks7_17_P = true;
@@ -627,6 +627,7 @@
                   EVENT_MOD_SERVER_API_URL = "http://localhost:5011";
                   RESTART_MOTORTOWN_SCRIPT = "${restartScript}/bin/restart-motortown";
                   PARTY_BONUS_ENABLED = "1";
+                  WEBHOOK_SSE_ENABLED = "1";
                 };
               };
 
@@ -776,6 +777,15 @@
             ragenix.nixosModules.default
             amc-peripheral.nixosModules.default
 
+            # Use opencode from the official flake — nixpkgs versions are too old
+            ({pkgs, ...}: {
+              nixpkgs.overlays = [
+                (final: prev: {
+                  opencode = opencode.packages.${prev.system}.default;
+                })
+              ];
+            })
+
             ({config, pkgs, ...}: {
               age.secrets.peripheral-bots = {
                 file = ./secrets/peripheral-bots.age;
@@ -785,12 +795,27 @@
                 file = ./secrets/cookies.age;
                 mode = "400";
               };
+              age.secrets.opencode-peripheral = {
+                file = ./secrets/opencode-peripheral.age;
+                mode = "400";
+                owner = "opencode";
+              };
+              age.secrets.oauth2-proxy-peripheral = {
+                file = ./secrets/oauth2-proxy-peripheral.age;
+                mode = "400";
+              };
+              age.secrets.coding-agent-app-key = {
+                file = ./secrets/coding-agent-app-key.age;
+                owner = "opencode";
+                mode = "400";
+              };
 
               services.amc-peripheral = {
                 enable = true;
                 environmentFile = config.age.secrets.peripheral-bots.path;
                 cookiesPath = config.age.secrets.cookies.path;
                 dbPath = "/var/lib/radio/radio.db";
+                icecast.admin.password = "aseanmotorclub1234";
                 # Pass the monorepo source path from inputs.self
                 # Use cleanSource (filters .git, result, .DS_Store, etc.) + custom filter for heavy files
                 jarvisRepoPath = toString (pkgs.lib.cleanSourceWith {
