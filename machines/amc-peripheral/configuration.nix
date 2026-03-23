@@ -643,7 +643,7 @@
       RestartSec = 10;
     };
 
-    path = with pkgs; [git openssh gh coreutils nodejs];
+    path = with pkgs; [opencode bash git openssh gh coreutils nodejs];
 
     script = ''
       set -euo pipefail
