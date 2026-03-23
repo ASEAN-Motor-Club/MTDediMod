@@ -1,0 +1,6 @@
+return {
+  _all = {
+    helper = "test/ue4ss_stubs.lua",
+    lpath = "Scripts/?.lua;Scripts/?/init.lua;shared/?.lua;shared/?/init.lua",
+  },
+}
