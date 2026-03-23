@@ -15,7 +15,9 @@ in {
   "peripheral-bots.age".publicKeys = [owner peripheral];
   "discordlink-bot-token.age".publicKeys = [owner peripheral asean-mt-server];
   "opencode.age".publicKeys = [owner asean-mt-server];
+  "opencode-peripheral.age".publicKeys = [owner peripheral];
   "oauth2-proxy.age".publicKeys = [owner asean-mt-server];
-  "coding-agent-app-key.age".publicKeys = [owner asean-mt-server];
+  "oauth2-proxy-peripheral.age".publicKeys = [owner peripheral];
+  "coding-agent-app-key.age".publicKeys = [owner asean-mt-server peripheral];
   "dokuwiki-oauth.age".publicKeys = [owner asean-mt-server];
 }
