@@ -12,11 +12,11 @@
 
   git-credential-github-app = pkgs.writeShellScriptBin "git-credential-github-app" ''
     set -euo pipefail
-    [[ "$${1:-}" == "get" ]] || exit 0
+    [[ "''${1:-}" == "get" ]] || exit 0
     while IFS='=' read -r key value; do
       case "$key" in host) HOST="$value" ;; esac
     done
-    [[ "$${HOST:-}" == "github.com" ]] || exit 0
+    [[ "''${HOST:-}" == "github.com" ]] || exit 0
 
     b64url() { ${pkgs.openssl}/bin/openssl base64 -e -A | ${pkgs.coreutils}/bin/tr '+/' '-_' | ${pkgs.coreutils}/bin/tr -d '='; }
     NOW=$(${pkgs.coreutils}/bin/date +%s)
