@@ -890,8 +890,19 @@ in {
   services.nginx.virtualHosts."code-peripheral.aseanmotorclub.com" = {
     enableACME = true;
     forceSSL = true;
+
+    # Discord Activity wrapper (code-web static build)
     locations."/" = {
-      proxyPass = "http://127.0.0.1:4180";
+      root = "${config.services.amc-peripheral.codeWeb.package}";
+      tryFiles = "$uri $uri/index.html /index.html";
+      extraConfig = ''
+        add_header Cache-Control "public, max-age=3600";
+      '';
+    };
+
+    # OpenCode web UI behind oauth2-proxy (loaded in iframe by the Activity)
+    locations."/opencode/" = {
+      proxyPass = "http://127.0.0.1:4180/";
       extraConfig = ''
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
