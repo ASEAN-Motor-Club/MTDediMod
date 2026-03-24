@@ -11,7 +11,9 @@ void EventManager::AddEvent(json::object event)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
-        BufferedEvent entry{m_next_seq++, std::move(event)};
+        uint64_t seq = m_next_seq++;
+        event["_seq"] = seq;
+        BufferedEvent entry{seq, std::move(event)};
         m_ring_buffer.push_back(std::move(entry));
 
         // Evict oldest if over capacity
