@@ -89,6 +89,21 @@ ssh root@asean-mt-server "tail -n 50 /var/lib/motortown-server-test/MotorTown/Bi
 - `INFO: Mod loaded`
 - No `ERROR` lines about missing modules
 
+### Quick Lua-Only Hot Reload
+
+For Lua-only changes (no C++ DLL rebuild), skip the full deploy cycle. SCP scripts directly to the installed directory and hit the reload endpoint:
+
+```bash
+# 1. SCP changed scripts (replace test with main server path as needed)
+scp MTDediMod/Scripts/*.lua \
+  root@asean-mt-server:/var/lib/motortown-server-test/MotorTown/Binaries/Win64/ue4ss/Mods/MotorTownMods/Scripts/
+
+# 2. Hot-reload (connection resets — that's expected, mod restarts in ~5s)
+curl -s -X POST http://asean-mt-server:5001/mods/reload || true
+```
+
+Players stay connected. The mod webserver restarts and re-registers all handlers. No container restart, no cache purge, no NixOS deploy needed.
+
 ## How Runtime Download Works
 
 `mods.nix` generates an `install-mt-mods` script that runs in systemd `preStart`:
@@ -109,6 +124,41 @@ ssh root@asean-mt-server "tail -n 50 /var/lib/motortown-server-test/MotorTown/Bi
 | `…/MotorTown/Binaries/Win64/ue4ss/` | Installed UE4SS + mod files |
 | `…/MotorTown/Binaries/Win64/ue4ss/UE4SS.log` | UE4SS log file |
 | `…/.mod-cache/` | Cached mod downloads |
+
+## Test Server Networking
+
+The test server runs inside a NixOS container (`motortown-server-test`) on a **private network** (`10.250.0.x`). The container's IP can be found via:
+
+```bash
+ssh root@asean-mt-server "machinectl list"
+# → motortown-server-test  container systemd-nspawn nixos 25.05  10.250.0.2…
+```
+
+### Port Access
+
+| Port | Service | Access Pattern |
+|------|---------|---------------|
+| 5000 | C++ management server (events) | Container-internal only: `curl http://10.250.0.2:5000/events` from host |
+| 5001 | Lua webserver (HTTP endpoints) | Container-internal only: `curl http://10.250.0.2:5001/...` from host |
+
+> [!CAUTION]
+> The C++ management port (`MOD_MANAGEMENT_PORT`) is set to `5010` in `flake.nix` for the test server container, but the server actually binds to **port 5000** inside the private container network. The `5010` value is the environment variable — check the actual binding in `UE4SS.log`. Always query from the host via the container's private IP (`10.250.0.2:5000`), **not** via `asean-mt-server:5010` (which is unreachable from Tailscale).
+
+### Checking events from the test server
+
+```bash
+# From your local machine (SSH to host, curl from there):
+ssh root@asean-mt-server "curl -s http://10.250.0.2:5000/events" | jq '.events[]'
+
+# For the Lua webserver:
+ssh root@asean-mt-server "curl -s http://10.250.0.2:5001/players"
+```
+
+### Checking UE4SS logs
+
+```bash
+ssh root@asean-mt-server "grep 'MotorTownMods' /var/lib/motortown-server-test/MotorTown/Binaries/Win64/ue4ss/UE4SS.log | tail -20"
+```
 
 ## Version History
 
