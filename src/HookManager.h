@@ -101,6 +101,72 @@ public:
     }
 
     /**
+     * @brief Registers a post-hook for a player-related event.
+     * Same as RegisterPlayerEventHook but the data extractor runs AFTER the function completes.
+     * Use this when the function's side effects (e.g., assigning cargo) need to be
+     * complete before extraction.
+     */
+    static void RegisterPlayerEventPostHook(
+        const std::wstring& unreal_function_name,
+        const std::string& event_name,
+        DataExtractor data_extractor_fn = nullptr
+    )
+    {
+        auto post_hook = [event_name, data_extractor_fn](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+            Output::send<LogLevel::Verbose>(STR("Start of post-hook {}"), to_wstring(event_name));
+
+            // 1. Get Base Player Info
+            std::optional<std::string> character_guid_str = GetCharacterGuid(Context);
+            if (!character_guid_str)
+            {
+                Output::send<LogLevel::Warning>(STR("Could not get CharacterGuid for post-hook {}"), to_wstring(event_name));
+                return;
+            }
+
+            // 2. Create Base Payload
+            json::object event_payload;
+            json::object event_data;
+
+            event_data["CharacterGuid"] = json::string(*character_guid_str);
+            event_payload["hook"] = json::string(event_name);
+            event_payload["timestamp"] = std::time(nullptr);
+
+            // 3. Run custom data extractor, if provided
+            if (data_extractor_fn)
+            {
+                try
+                {
+                    bool success = data_extractor_fn(Context, event_data);
+                    if (!success)
+                    {
+                        Output::send<LogLevel::Verbose>(STR("Data extraction failed or was aborted for post-hook {}"), to_wstring(event_name));
+                        return;
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    Output::send<LogLevel::Error>(STR("Exception in data extractor for post-hook {}: {}"), to_wstring(event_name), to_wstring(e.what()));
+                    return;
+                }
+            }
+
+            // 4. Send Event
+            event_payload["data"] = std::move(event_data);
+            EventManager::Get().AddEvent(std::move(event_payload));
+        };
+
+        // Register with empty pre-hook and actual post-hook
+        auto hookIds = UObjectGlobals::RegisterHook(
+            unreal_function_name.c_str(),
+            [](UnrealScriptFunctionCallableContext&, void*) {}, // Empty pre-hook
+            post_hook,
+            nullptr
+        );
+        s_RegisteredHooks.emplace_back(unreal_function_name, hookIds);
+        Output::send<LogLevel::Verbose>(STR("Registered post-hook for {} with IDs ({}, {})"), unreal_function_name, hookIds.first, hookIds.second);
+    }
+
+    /**
      * @brief Unregisters all previously registered hooks.
      * Call this before reinitializing hooks (e.g., on mod reload).
      */
