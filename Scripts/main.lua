@@ -61,6 +61,9 @@ local function LoadWebserver()
     server.registerHandler("/players/*/chat", "POST", playerManager.HandlePlayerSendChat)
     server.registerHandler("/players/*/mute", "POST", playerManager.HandleMutePlayer)
     server.registerHandler("/players/*/name", "PUT", playerManager.HandleSetPlayerName)
+    server.registerHandler("/players/*/suspect", "POST", playerManager.HandleMakePlayerSuspect)
+    server.registerHandler("/players/*/despawn_cargo", "POST", cargoManager.HandleDespawnPlayerCargo)
+    server.registerHandler("/police", "GET", playerManager.HandleGetPoliceState)
     server.registerHandler("/players/*", "GET", playerManager.HandleGetPlayerStates)
     server.registerHandler("/parties", "GET", playerManager.HandleGetParties)
 
@@ -97,6 +100,7 @@ local function LoadWebserver()
     server.registerHandler("/garages", "GET", vehicleManager.HandleGetGarages)
     server.registerHandler("/garages/spawn", "POST", vehicleManager.HandleSpawnGarage)
     -- rename to POST /vehicles
+    server.registerHandler("/player_vehicles/*/despawn", "POST", vehicleManager.HandleDespawnPlayerVehicle)
     server.registerHandler("/player_vehicles/*/exit", "GET", vehicleManager.HandlePlayerExitVehicle)
 
     -- Asset management

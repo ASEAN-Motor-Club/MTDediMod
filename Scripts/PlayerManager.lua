@@ -338,6 +338,96 @@ local function HandleGetParties(session)
   return json.stringify { data = GetParties() }, nil, 200
 end
 
+---Handle request to make a player a suspect
+---@type RequestPathHandler
+local function HandleMakePlayerSuspect(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return json.stringify { error = "Missing character GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  local durationSeconds = (data and data.DurationSeconds) or 300
+
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return json.stringify { error = string.format("Player %s not found", characterGuid) }, nil, 404
+  end
+
+  local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+  ---@cast charClass UClass
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local ok, err = pcall(function()
+      if not PC:IsValid() then resultMsg = "pc_invalid"; return end
+
+      -- Get the AMTCharacter
+      local character = PC.Net_MyDrivingCharacter
+      if not character or not character:IsValid() then
+        character = PC:K2_GetPawn()
+      end
+      if not character or not character:IsValid() then resultMsg = "char_not_found"; return end
+
+      -- Only test C++ AddPoliceSuspect (buff logic removed for debugging)
+      local gameState = GetMotorTownGameState()
+      if gameState:IsValid() and gameState.Net_Police:IsValid() then
+        local success = AddPoliceSuspect(gameState.Net_Police, character)
+        resultMsg = "suspects=" .. tostring(success)
+      else
+        resultMsg = "police_not_found"
+      end
+    end)
+    if not ok then
+      resultMsg = "error: " .. tostring(err)
+    end
+  end)
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
+---Diagnostic: peek into Net_Suspects and police state
+---@type RequestHandler
+local function HandleGetPoliceState()
+  local result = { suspects = {}, police_valid = false }
+
+  ExecuteInGameThreadSync(function()
+    local ok, err = pcall(function()
+      local gameState = GetMotorTownGameState()
+      if not gameState:IsValid() then return end
+
+      result.police_valid = gameState.Net_Police:IsValid()
+      if not result.police_valid then return end
+
+      local police = gameState.Net_Police
+      police.Net_Suspects:ForEach(function(index, suspect)
+        local entry = {
+          index = index,
+          bOutOfSight = suspect.bOutOfSight,
+        }
+        if suspect.Character:IsValid() then
+          entry.character_class = suspect.Character:GetClass():GetFName():ToString()
+          local loc = suspect.LastSeenLocation
+          entry.location = { x = loc.X, y = loc.Y, z = loc.Z }
+        else
+          entry.character = "invalid"
+        end
+        -- Read ViolationTags
+        entry.tags = {}
+        suspect.ViolationTags.GameplayTags:ForEach(function(i, tag)
+          entry.tags[i] = tag.TagName:ToString()
+        end)
+        result.suspects[#result.suspects + 1] = entry
+      end)
+    end)
+    if not ok then
+      result.error = tostring(err)
+    end
+  end)
+
+  return json.stringify(result), nil, 200
+end
+
 return {
   HandleGetPlayerStates = HandleGetPlayerStates,
   GetMyCurrentTransform = GetMyCurrentTransform,
@@ -348,4 +438,6 @@ return {
   HandlePlayerSendChat = HandlePlayerSendChat,
   HandleMutePlayer = HandleMutePlayer,
   HandleGetParties = HandleGetParties,
+  HandleMakePlayerSuspect = HandleMakePlayerSuspect,
+  HandleGetPoliceState = HandleGetPoliceState,
 }

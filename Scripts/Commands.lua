@@ -64,13 +64,14 @@ local function HandleCommand(PC, message)
   return false
 end
 
-RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", function(PC, Message, Category)
-  local playerController = PC:get()
-  local message = Message:get():ToString()
-
-  if not playerController:IsValid() or not playerController.PlayerState:IsValid() then
-    return
-  end
-
-  HandleCommand(playerController, message)
-end)
+-- TEMPORARILY DISABLED: Investigating crash stability
+-- RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", function(PC, Message, Category)
+--   local playerController = PC:get()
+--   local message = Message:get():ToString()
+--
+--   if not playerController:IsValid() or not playerController.PlayerState:IsValid() then
+--     return
+--   end
+--
+--   HandleCommand(playerController, message)
+-- end)

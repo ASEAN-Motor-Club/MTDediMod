@@ -2201,6 +2201,24 @@ local function HandlePlayerExitVehicle(session)
   return nil, nil, 200
 end
 
+---Handle despawning a player's current vehicle (and trailers)
+---@type RequestPathHandler
+local function HandleDespawnPlayerVehicle(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+  local count = 0
+  ExecuteInGameThreadSync(function()
+    count = DespawnPlayerVehicle(PC)
+  end, "HandleDespawnPlayerVehicle")
+  if count > 0 then
+    return json.stringify { despawned = count }, nil, 200
+  else
+    return json.stringify { error = "No vehicle to despawn" }, nil, 404
+  end
+end
 
 local function HandleSpawnVehicle(session)
   local content = json.parse(session.content)
@@ -2402,6 +2420,7 @@ return {
   HandleSetPlayerVehicleDecal = HandleSetPlayerVehicleDecal,
   HandleSetWorldVehicleDecal = HandleSetWorldVehicleDecal,
   HandleDespawnVehicle = HandleDespawnVehicle,
+  HandleDespawnPlayerVehicle = HandleDespawnPlayerVehicle,
   HandleDetachPlayerVehicle = HandleDetachPlayerVehicle,
   HandleCreateVehicleDealerSpawnPoint = HandleCreateVehicleDealerSpawnPoint,
   HandleGetGarages = HandleGetGarages,

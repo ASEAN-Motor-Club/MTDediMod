@@ -668,7 +668,56 @@ local function HandleGetPlayerContracts(session)
   }
 end
 
+---Despawn the cargo a player is currently holding
+---@param PC AMotorTownPlayerController
+---@return string? cargoKey The cargo key that was despawned, or nil if no cargo
+local function DespawnPlayerCargo(PC)
+  local pawn = PC:K2_GetPawn()
+  if not pawn:IsValid() then
+    return nil
+  end
+
+  local characterClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+  ---@cast characterClass UClass
+  if not pawn:IsA(characterClass) then
+    return nil
+  end
+
+  ---@cast pawn AMTCharacter
+  local cargo = pawn.Net_Cargo
+  if not cargo:IsValid() then
+    return nil
+  end
+
+  local cargoKey = cargo.Net_CargoKey:ToString()
+  ExecuteInGameThreadSync(function()
+    if cargo:IsValid() then
+      PC:ServerDespawnCargo(cargo)
+    end
+  end, "DespawnPlayerCargo")
+  return cargoKey
+end
+
+---Handle despawning a player's currently held cargo
+---@type RequestPathHandler
+local function HandleDespawnPlayerCargo(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+
+  local cargoKey = DespawnPlayerCargo(PC)
+  if cargoKey then
+    return json.stringify { despawned = cargoKey }, nil, 200
+  else
+    return json.stringify { error = "Player is not holding any cargo" }, nil, 404
+  end
+end
+
 return {
   HandleGetDeliveryPoints = HandleGetDeliveryPoints,
+  HandleDespawnPlayerCargo = HandleDespawnPlayerCargo,
   CargoToTable = CargoToTable
 }
+
