@@ -292,6 +292,139 @@ EOF
               echo ""
             '';
           };
+
+          # Client-side mod packaging (Lua-only, no C++ DLL)
+          clientModName = "MotorTownClientMod";
+
+          packageClientScript = pkgs.writeShellApplication {
+            name = "${clientModName}-package";
+            runtimeInputs = with pkgs; [ coreutils zip gnused ];
+            text = ''
+              set -e
+
+              MOD_NAME="${clientModName}"
+              PACKAGE_DIR="package-client"
+              LUA_SCRIPTS_DIR="./ClientScripts"
+              SHARED_LUA_DIR="./shared"
+              UE4SS_SETTINGS_SRC="${patchedUE4SS}/assets/UE4SS-settings.ini"
+
+              echo "=========================================="
+              echo "Packaging $MOD_NAME (client mod) for distribution"
+              echo "=========================================="
+
+              # Verify client scripts exist
+              if [ ! -d "$LUA_SCRIPTS_DIR" ]; then
+                echo "Error: ClientScripts directory not found."
+                exit 1
+              fi
+
+              # Use pre-built UE4SS binaries from legacy release
+              if [ ! -d "${luaBinaries}" ]; then
+                echo "Error: Pre-built UE4SS binaries not available."
+                exit 1
+              fi
+
+              echo "Creating package structure..."
+
+              # Clean and create package directory
+              rm -rf "$PACKAGE_DIR"
+              mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts"
+
+              # Copy pre-built UE4SS runtime from legacy release
+              if [ -f "${luaBinaries}/version.dll" ]; then
+                cp --no-preserve=mode,ownership "${luaBinaries}/version.dll" "$PACKAGE_DIR/"
+                echo "✓ Copied version.dll (proxy)"
+              fi
+
+              if [ -f "${luaBinaries}/ue4ss/UE4SS.dll" ]; then
+                cp --no-preserve=mode,ownership "${luaBinaries}/ue4ss/UE4SS.dll" "$PACKAGE_DIR/ue4ss/"
+                echo "✓ Copied UE4SS.dll"
+              fi
+
+              # Copy UE4SS settings (patched for client use)
+              if [ -f "$UE4SS_SETTINGS_SRC" ]; then
+                cp --no-preserve=mode,ownership "$UE4SS_SETTINGS_SRC" "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                # Client settings: enable console for debugging, disable hot reload
+                sed -i 's/^ConsoleEnabled\s*=.*/ConsoleEnabled = 1/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                sed -i 's/^GuiConsoleEnabled\s*=.*/GuiConsoleEnabled = 1/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                sed -i 's/^GuiConsoleVisible\s*=.*/GuiConsoleVisible = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                sed -i 's/^EnableHotReloadSystem\s*=.*/EnableHotReloadSystem = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                echo "✓ Copied and patched UE4SS-settings.ini for client"
+              else
+                echo "⚠ Warning: UE4SS-settings.ini not found at $UE4SS_SETTINGS_SRC"
+              fi
+
+              # Copy client Lua scripts
+              cp -r "$LUA_SCRIPTS_DIR"/* "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts/"
+              # Remove enabled.txt from Scripts if it ended up there
+              rm -f "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts/enabled.txt"
+              SCRIPT_COUNT=$(find "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts" -name "*.lua" | wc -l)
+              echo "✓ Copied $SCRIPT_COUNT client Lua scripts"
+
+              # Copy enabled.txt
+              if [ -f "$LUA_SCRIPTS_DIR/enabled.txt" ]; then
+                cp "$LUA_SCRIPTS_DIR/enabled.txt" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/enabled.txt"
+              else
+                touch "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/enabled.txt"
+              fi
+              echo "✓ Created enabled.txt"
+
+              # Copy shared folder (UEHelpers from upstream UE4SS)
+              UE4SS_SHARED_SRC="${patchedUE4SS}/assets/Mods/shared"
+              if [ -d "$UE4SS_SHARED_SRC" ]; then
+                cp --no-preserve=mode,ownership -r "$UE4SS_SHARED_SRC" "$PACKAGE_DIR/ue4ss/Mods/"
+                echo "✓ Copied shared folder (UEHelpers, Types.lua, etc.)"
+              fi
+
+              # Copy project-local shared Lua libraries (MTHelpers)
+              if [ -d "$SHARED_LUA_DIR" ]; then
+                cp -r "$SHARED_LUA_DIR"/* "$PACKAGE_DIR/ue4ss/Mods/shared/"
+                echo "✓ Copied project shared Lua libraries"
+              fi
+
+              # Copy legacy Lua binaries (socket, mime, etc.)
+              if [ -d "${luaBinaries}/ue4ss/Mods/shared" ]; then
+                cp --no-preserve=mode,ownership -rn "${luaBinaries}/ue4ss/Mods/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
+                echo "✓ Injected legacy Lua binary dependencies (socket, etc)"
+              fi
+
+              # Create mods.txt
+              echo "$MOD_NAME : 1" > "$PACKAGE_DIR/ue4ss/Mods/mods.txt"
+              echo "✓ Created mods.txt"
+
+              # Create mods.json
+              cat > "$PACKAGE_DIR/ue4ss/Mods/mods.json" << EOF
+[
+    {
+        "mod_name": "$MOD_NAME",
+        "mod_enabled": true
+    }
+]
+EOF
+              echo "✓ Created mods.json"
+
+              echo ""
+              echo "Package structure:"
+              find "$PACKAGE_DIR" -type f | sort | sed 's/^/  /'
+
+              # Create zip
+              ZIP_NAME="$MOD_NAME-package.zip"
+              rm -f "$ZIP_NAME"
+              (cd "$PACKAGE_DIR" && zip -r "../$ZIP_NAME" .)
+
+              echo ""
+              echo "=========================================="
+              echo "✓ Package created: $ZIP_NAME"
+              echo "=========================================="
+              echo ""
+              echo "To install:"
+              echo "  1. Extract $ZIP_NAME to your Motor Town game directory"
+              echo "     (e.g. .../MotorTown/Binaries/Win64/)"
+              echo "  2. The version.dll should be next to MotorTown-Win64-Shipping.exe"
+              echo "  3. The ue4ss/ folder should be in the same directory"
+              echo ""
+            '';
+          };
         in
         {
           # Development shell with all cross-compile tools
@@ -333,6 +466,12 @@ EOF
           apps.package = {
             type = "app";
             program = "${packageScript}/bin/${modName}-package";
+          };
+
+          # Client mod package script - creates client-side Lua-only zip
+          apps.package-client = {
+            type = "app";
+            program = "${packageClientScript}/bin/${clientModName}-package";
           };
 
           # Default to build
