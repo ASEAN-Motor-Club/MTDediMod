@@ -41,15 +41,15 @@ std::vector<BufferedEvent> EventManager::GetEventsSince(uint64_t last_seq)
     return result;
 }
 
-std::vector<BufferedEvent> EventManager::WaitForEvents(uint64_t last_seq)
+std::vector<BufferedEvent> EventManager::WaitForEvents(uint64_t last_seq, std::chrono::seconds timeout)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    m_cv.wait(lock, [&] {
+    bool got_event = m_cv.wait_for(lock, timeout, [&] {
         return m_shutdown || m_next_seq > last_seq + 1;
     });
 
-    if (m_shutdown)
+    if (m_shutdown || !got_event)
     {
         return {};
     }

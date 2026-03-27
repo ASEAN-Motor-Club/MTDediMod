@@ -5,7 +5,8 @@
 // Match requests specifically for the "/events" endpoint
 bool EventsRoute::IsMatchingRequest(http::request<http::string_body> req)
 {
-    return req.target() == "/events";
+    auto target = req.target();
+    return target == "/events" || target.starts_with("/events?");
 }
 
 // On a match, return buffered events as JSON (non-destructive snapshot)

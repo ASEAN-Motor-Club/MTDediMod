@@ -41,7 +41,7 @@ Webserver::~Webserver() {
 	EventManager::Get().Shutdown();
 
 	serverThread.interrupt();
-	free(_localServer);
+	delete _localServer;
 	_localServer = NULL;
 }
 
@@ -153,14 +153,20 @@ void Webserver::handle_sse_connection(tcp::socket& socket, http::request<http::s
 	http::response_serializer<http::empty_body> sr{res};
 	http::write_header(socket, sr);
 
-	// Check for Last-Event-ID for replay
+	// Check for Last-Event-ID for replay.
+	// Format is "epoch:seq" — we only care about the seq part.
 	uint64_t last_seq = 0;
 	auto it = req.find("Last-Event-ID");
 	if (it != req.end())
 	{
 		try
 		{
-			last_seq = std::stoull(std::string(it->value()));
+			auto val = std::string(it->value());
+			auto colon = val.find(':');
+			if (colon != std::string::npos)
+				last_seq = std::stoull(val.substr(colon + 1));
+			else
+				last_seq = std::stoull(val);  // backward compat: plain integer
 			Output::send<LogLevel::Verbose>(
 				STR("[{}] SSE client reconnecting from seq {}\n"), ModName, last_seq);
 		}
@@ -184,10 +190,11 @@ void Webserver::handle_sse_connection(tcp::socket& socket, http::request<http::s
 		}
 	}
 
+	auto boot_epoch = EventManager::Get().GetBootEpoch();
 	for (const auto& entry : buffered)
 	{
-		std::string sse_frame = std::format("id: {}\ndata: {}\n\n",
-			entry.seq, json::serialize(entry.data));
+		std::string sse_frame = std::format("id: {}:{}\ndata: {}\n\n",
+			boot_epoch, entry.seq, json::serialize(entry.data));
 
 		boost::system::error_code ec;
 		asio::write(socket, asio::buffer(sse_frame), ec);
@@ -207,16 +214,30 @@ void Webserver::handle_sse_connection(tcp::socket& socket, http::request<http::s
 
 		if (events.empty())
 		{
-			// Shutdown signal
-			Output::send<LogLevel::Verbose>(
-				STR("[{}] SSE connection closing (shutdown)\n"), ModName);
-			return;
+			if (EventManager::Get().IsShutdown())
+			{
+				Output::send<LogLevel::Verbose>(
+					STR("[{}] SSE connection closing (shutdown)\n"), ModName);
+				return;
+			}
+
+			// Timeout — send heartbeat to keep connection alive
+			std::string heartbeat = ": heartbeat\n\n";
+			boost::system::error_code ec;
+			asio::write(socket, asio::buffer(heartbeat), ec);
+			if (ec)
+			{
+				Output::send<LogLevel::Verbose>(
+					STR("[{}] SSE client disconnected during heartbeat\n"), ModName);
+				return;
+			}
+			continue;
 		}
 
 		for (const auto& entry : events)
 		{
-			std::string sse_frame = std::format("id: {}\ndata: {}\n\n",
-				entry.seq, json::serialize(entry.data));
+			std::string sse_frame = std::format("id: {}:{}\ndata: {}\n\n",
+				boot_epoch, entry.seq, json::serialize(entry.data));
 
 			boost::system::error_code ec;
 			asio::write(socket, asio::buffer(sse_frame), ec);

@@ -2,6 +2,6 @@
 
 const std::string ModStatics::GetWebhookUrl()
 {
-	std::string test = getenv("MOD_WEBHOOK_URL");
-	return getenv("MOD_WEBHOOK_URL");
+	const char* val = getenv("MOD_WEBHOOK_URL");
+	return val ? std::string(val) : std::string();
 }
