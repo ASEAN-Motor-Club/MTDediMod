@@ -174,8 +174,10 @@
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "beta";
-                modVersion = "v0.32.0-rc1";
+                modVersion = "v0.33.0-rc7";
                 enableExternalMods = {
+                  CarPartsImport_P = false;
+                  MoneyRun_P = true;
                   qxZap_CranyUnlocked_P = false;
                   MajasDetailWorks7_17_P = false;
                   MajasMnTrailerworks7_17_P = false;
@@ -376,7 +378,7 @@
             ownerName = "freeman";
           };
           services.eco-server = {
-            enable = true;
+            enable = false;
             openFirewall = true;
             enableLogStreaming = false;
             credentialsFile = config.age.secrets.ecoUserToken.path;
@@ -386,11 +388,12 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "v0.32.0-rc1";
+            modVersion = "v0.33.0-rc6";
             enableExternalMods = {
               MajasDetailWorks7_17_P = true;
               MajasMnTrailerworks7_17_P = true;
               qxZap_CranyUnlocked_P = true;
+              MoneyRun_P = true;
             };
             engineIni = ''
               mh.maxCombinedVehicleLength=10000
@@ -742,7 +745,7 @@
               ];
 
               systemd.tmpfiles.rules = [
-                "d /var/lib/amc-postgresql 0700 root root -"
+                "d /var/lib/amc-postgresql 0750 postgres postgres -"
                 "d ${restartTriggerDir} 0777 root root -"
               ];
 
