@@ -160,6 +160,40 @@ ssh root@asean-mt-server "curl -s http://10.250.0.2:5001/players"
 ssh root@asean-mt-server "grep 'MotorTownMods' /var/lib/motortown-server-test/MotorTown/Binaries/Win64/ue4ss/UE4SS.log | tail -20"
 ```
 
+## External Mod Paks
+
+External game content mods (`.pak` files from mod.io or elsewhere) are served from the same releases directory as MTDediMod zips. The game server downloads them at startup via `curl`.
+
+### Upload a mod pak
+
+```bash
+scp <mod_name>.pak root@amc-peripheral:/var/lib/mod-releases/mods/
+```
+
+Files are served at `https://www.aseanmotorclub.com/releases/mods/<mod_name>.pak`.
+
+### Enable in Nix config
+
+In `flake.nix`, under the relevant server's `enableExternalMods`:
+
+```nix
+enableExternalMods = {
+  MajasDetailWorks7_17_P = true;
+  # ...
+};
+```
+
+### Cache purge (when replacing a mod with an updated version)
+
+The server caches downloaded paks in `$STATE_DIRECTORY/.mod-cache/paks/`. When replacing a pak file on the hosting server, purge the cache and restart:
+
+```bash
+ssh root@asean-mt-server "\
+  rm -rf /var/lib/motortown-server/.mod-cache/paks/ && \
+  rm -rf /var/lib/motortown-server-test/.mod-cache/paks/"
+# Then restart the relevant server/container
+```
+
 ## Version History
 
 | Version | UE4SS | Notes |
