@@ -156,6 +156,7 @@
                     WEBHOOK_SERVER_API_URL = "http://localhost:5000";
                     PARTY_BONUS_ENABLED = "1";
                     WEBHOOK_SSE_ENABLED = "1";
+                    CACHE_KEY_PREFIX = "test_";
                   };
                 };
 
