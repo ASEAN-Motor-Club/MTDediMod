@@ -62,6 +62,12 @@ local function LoadWebserver()
     server.registerHandler("/players/*/mute", "POST", playerManager.HandleMutePlayer)
     server.registerHandler("/players/*/name", "PUT", playerManager.HandleSetPlayerName)
     server.registerHandler("/players/*/suspect", "POST", playerManager.HandleMakePlayerSuspect)
+    
+    -- Experimental
+    server.registerHandler("/players/*/experimental/hide_actor", "POST", playerManager.HandleExperimentalHideActor)
+    server.registerHandler("/players/*/experimental/hide_costume", "POST", playerManager.HandleExperimentalHideCostume)
+    server.registerHandler("/players/*/experimental/ghost", "POST", playerManager.HandleExperimentalGhostFlag)
+    server.registerHandler("/players/*/experimental/spectate", "POST", playerManager.HandleExperimentalSpectate)
     server.registerHandler("/players/*/despawn_cargo", "POST", cargoManager.HandleDespawnPlayerCargo)
     server.registerHandler("/police", "GET", playerManager.HandleGetPoliceState)
     server.registerHandler("/players/*", "GET", playerManager.HandleGetPlayerStates)

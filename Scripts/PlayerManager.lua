@@ -428,6 +428,152 @@ local function HandleGetPoliceState()
   return json.stringify(result), nil, 200
 end
 
+---Experimental endpoint to hide actor and disable collision
+---@type RequestPathHandler
+local function HandleExperimentalHideActor(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return json.stringify { error = "Missing character GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  local hide = true
+  if data and data.hidden ~= nil then
+    hide = data.hidden
+  end
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local PC = GetPlayerControllerFromGuid(characterGuid)
+    if PC:IsValid() then
+      local pawn = PC:K2_GetPawn()
+      if pawn:IsValid() then
+        pawn:SetActorHiddenInGame(hide)
+        pawn:SetActorEnableCollision(not hide)
+        resultMsg = "success: hidden=" .. tostring(hide)
+      else
+        resultMsg = "pawn_invalid"
+      end
+    else
+      resultMsg = "pc_invalid"
+    end
+  end, "HandleExperimentalHideActor")
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
+---Experimental endpoint to hide costume using MotorTown API
+---@type RequestPathHandler
+local function HandleExperimentalHideCostume(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return json.stringify { error = "Missing character GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  local hide = true
+  if data and data.hide_costume ~= nil then
+    hide = data.hide_costume
+  end
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local PC = GetPlayerControllerFromGuid(characterGuid)
+    if PC:IsValid() then
+      local character = PC:K2_GetPawn()
+      if character:IsValid() and character:IsA(StaticFindObject("/Script/MotorTown.MTCharacter")) then
+        ---@cast character AMTCharacter
+        character:ServerHideCostume(hide)
+        resultMsg = "success: hide_costume=" .. tostring(hide)
+      else
+        resultMsg = "char_invalid"
+      end
+    else
+      resultMsg = "pc_invalid"
+    end
+  end, "HandleExperimentalHideCostume")
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
+---Experimental endpoint to manipulate Ghost flag
+---@type RequestPathHandler
+local function HandleExperimentalGhostFlag(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return json.stringify { error = "Missing character GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  local ghost = true
+  if data and data.ghost ~= nil then
+    ghost = data.ghost
+  end
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local PC = GetPlayerControllerFromGuid(characterGuid)
+    if PC:IsValid() then
+      local character = PC:K2_GetPawn()
+      if character:IsValid() and character:IsA(StaticFindObject("/Script/MotorTown.MTCharacter")) then
+        ---@cast character AMTCharacter
+        local flags = character.Net_CharacterFlags
+        -- 4 is EMTCharacterFlags.Ghost
+        if ghost then
+          flags = flags | 4
+        else
+          flags = flags & ~4
+        end
+        character.Net_CharacterFlags = flags
+        resultMsg = "success: ghost=" .. tostring(ghost)
+      else
+        resultMsg = "char_invalid"
+      end
+    else
+      resultMsg = "pc_invalid"
+    end
+  end, "HandleExperimentalGhostFlag")
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
+---Experimental endpoint to spectate target player
+---@type RequestPathHandler
+local function HandleExperimentalSpectate(session)
+  local callerGuid = session.pathComponents[2]
+  if not callerGuid then
+    return json.stringify { error = "Missing caller character GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if not data or not data.target_guid then
+     return json.stringify { error = "Missing target_guid in payload" }, nil, 400
+  end
+  local targetGuid = data.target_guid
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local PC = GetPlayerControllerFromGuid(callerGuid)
+    local targetPC = GetPlayerControllerFromGuid(targetGuid)
+    
+    if PC:IsValid() and targetPC:IsValid() then
+      local targetPS = targetPC.PlayerState
+      if targetPS:IsValid() and targetPS:IsA(StaticFindObject("/Script/MotorTown.MotorTownPlayerState")) then
+        ---@cast PC AMotorTownPlayerController
+        ---@cast targetPS AMotorTownPlayerState
+        PC:ServerStartSpectatingPlayer(targetPS)
+        resultMsg = "success: spectating " .. tostring(targetGuid)
+      else
+        resultMsg = "target_ps_invalid"
+      end
+    else
+      resultMsg = "pc_invalid"
+    end
+  end, "HandleExperimentalSpectate")
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
 return {
   HandleGetPlayerStates = HandleGetPlayerStates,
   GetMyCurrentTransform = GetMyCurrentTransform,
@@ -440,4 +586,8 @@ return {
   HandleGetParties = HandleGetParties,
   HandleMakePlayerSuspect = HandleMakePlayerSuspect,
   HandleGetPoliceState = HandleGetPoliceState,
+  HandleExperimentalHideActor = HandleExperimentalHideActor,
+  HandleExperimentalHideCostume = HandleExperimentalHideCostume,
+  HandleExperimentalGhostFlag = HandleExperimentalGhostFlag,
+  HandleExperimentalSpectate = HandleExperimentalSpectate,
 }
