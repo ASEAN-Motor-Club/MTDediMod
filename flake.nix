@@ -87,6 +87,13 @@
             stripRoot = false;
           };
 
+          # Official UE4SS v3.0.1 release (ships dwmapi.dll proxy instead of version.dll)
+          ue4ssClientBinaries = pkgs.fetchzip {
+            url = "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip";
+            hash = "sha256-QcY8A2ItZXEVzOsaurWvILqKdwjdZWrZea2aG0X2wzI=";
+            stripRoot = false;
+          };
+
           configureScript = pkgs.writeShellApplication {
             name = "${modName}-configure";
             runtimeInputs = crossCompileBuildInputs;
@@ -306,7 +313,7 @@ EOF
               PACKAGE_DIR="package-client"
               LUA_SCRIPTS_DIR="./ClientScripts"
               SHARED_LUA_DIR="./shared"
-              UE4SS_SETTINGS_SRC="${patchedUE4SS}/assets/UE4SS-settings.ini"
+              UE4SS_SETTINGS_SRC="${ue4ssClientBinaries}/UE4SS-settings.ini"
 
               echo "=========================================="
               echo "Packaging $MOD_NAME (client mod) for distribution"
@@ -330,15 +337,21 @@ EOF
               rm -rf "$PACKAGE_DIR"
               mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts"
 
-              # Copy pre-built UE4SS runtime from legacy release
-              if [ -f "${luaBinaries}/version.dll" ]; then
-                cp --no-preserve=mode,ownership "${luaBinaries}/version.dll" "$PACKAGE_DIR/"
-                echo "✓ Copied version.dll (proxy)"
+              # Copy pre-built UE4SS runtime from official v3.0.1 release (uses dwmapi.dll proxy)
+              if [ -f "${ue4ssClientBinaries}/dwmapi.dll" ]; then
+                cp --no-preserve=mode,ownership "${ue4ssClientBinaries}/dwmapi.dll" "$PACKAGE_DIR/"
+                echo "✓ Copied dwmapi.dll (proxy)"
+              else
+                echo "Error: dwmapi.dll not found in UE4SS client binaries"
+                exit 1
               fi
 
-              if [ -f "${luaBinaries}/ue4ss/UE4SS.dll" ]; then
-                cp --no-preserve=mode,ownership "${luaBinaries}/ue4ss/UE4SS.dll" "$PACKAGE_DIR/ue4ss/"
+              if [ -f "${ue4ssClientBinaries}/UE4SS.dll" ]; then
+                cp --no-preserve=mode,ownership "${ue4ssClientBinaries}/UE4SS.dll" "$PACKAGE_DIR/ue4ss/"
                 echo "✓ Copied UE4SS.dll"
+              else
+                echo "Error: UE4SS.dll not found in UE4SS client binaries"
+                exit 1
               fi
 
               # Copy UE4SS settings (patched for client use)
@@ -420,7 +433,7 @@ EOF
               echo "To install:"
               echo "  1. Extract $ZIP_NAME to your Motor Town game directory"
               echo "     (e.g. .../MotorTown/Binaries/Win64/)"
-              echo "  2. The version.dll should be next to MotorTown-Win64-Shipping.exe"
+              echo "  2. The dwmapi.dll should be next to MotorTown-Win64-Shipping.exe"
               echo "  3. The ue4ss/ folder should be in the same directory"
               echo ""
             '';

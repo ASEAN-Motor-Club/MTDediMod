@@ -1,0 +1,97 @@
+---@meta
+
+---@class ATownHouse_05_C : AMTBuilding
+---@field UberGraphFrame FPointerToUberGraphFrame
+---@field SM_Townhouse_Stairs_01 UStaticMeshComponent
+---@field SM_TownHouse_Floor_022 UStaticMeshComponent
+---@field SM_TownHouse_Floor_021 UStaticMeshComponent
+---@field SM_TownHouse_Floor_020 UStaticMeshComponent
+---@field SM_TownHouse_Floor_019 UStaticMeshComponent
+---@field SM_TownHouse_Floor_018 UStaticMeshComponent
+---@field SM_TownHouse_Floor_017 UStaticMeshComponent
+---@field SM_TownHouse_Floor_014 UStaticMeshComponent
+---@field SM_TownHouse_Floor_016 UStaticMeshComponent
+---@field SM_TownHouse_Floor_012 UStaticMeshComponent
+---@field MTInteractable UMTInteractableComponent
+---@field BuildingInteraction UStaticMeshComponent
+---@field ChildActor1 UChildActorComponent
+---@field ChildActor UChildActorComponent
+---@field SM_TownHouse_Floor_01 UStaticMeshComponent
+---@field SM_TownHouse_Wall_08 UStaticMeshComponent
+---@field SM_Townhouse_Entrance_01 UStaticMeshComponent
+---@field SM_Pipe_03 UStaticMeshComponent
+---@field SM_TownHouse_Wall_04 UStaticMeshComponent
+---@field SM_Townhouse_Roof_03 UStaticMeshComponent
+---@field Scene USceneComponent
+---@field SM_Townhouse_OutStairs_02 UStaticMeshComponent
+---@field SM_TownHouse_DoorWall_03 UStaticMeshComponent
+---@field SM_TownHouse_Wall_01 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_016 UStaticMeshComponent
+---@field SM_TownHouse_Wall_014 UStaticMeshComponent
+---@field SM_TownHouse_Wall_013 UStaticMeshComponent
+---@field SM_TownHouse_Pillar_02 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_04_B3 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_04_B2 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_04_B1 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_04_B UStaticMeshComponent
+---@field SM_TownHouse_Pillar_09 UStaticMeshComponent
+---@field SM_TownHouse_Wall_07 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_017 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_015 UStaticMeshComponent
+---@field SM_TownHouse_Pillar_08 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_04_B7 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_04_B6 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_04_B5 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_04_B4 UStaticMeshComponent
+---@field SM_TownHouse_Pillar_06 UStaticMeshComponent
+---@field SM_TownHouse_Wall_05 UStaticMeshComponent
+---@field SM_TownHouse_Wall_06 UStaticMeshComponent
+---@field SM_TownHouse_Chimney_04 UStaticMeshComponent
+---@field WallLight_04 UChildActorComponent
+---@field SM_Pipe_05 UStaticMeshComponent
+---@field SM_Pipe_04 UStaticMeshComponent
+---@field WallLight_03 UChildActorComponent
+---@field SM_Townhouse_Roof_010 UStaticMeshComponent
+---@field SM_Townhouse_Roof_09 UStaticMeshComponent
+---@field SM_Townhouse_Roof_08 UStaticMeshComponent
+---@field SM_Townhouse_Roof_07 UStaticMeshComponent
+---@field SM_Townhouse_Roof_06 UStaticMeshComponent
+---@field SM_Townhouse_Roof_05 UStaticMeshComponent
+---@field SM_Townhouse_Roof_04 UStaticMeshComponent
+---@field SM_TownHouse_Floor_04 UStaticMeshComponent
+---@field SM_TownHouse_Floor_011 UStaticMeshComponent
+---@field SM_TownHouse_Floor_010 UStaticMeshComponent
+---@field SM_TownHouse_Floor_09 UStaticMeshComponent
+---@field SM_TownHouse_Floor_08 UStaticMeshComponent
+---@field SM_TownHouse_Floor_07 UStaticMeshComponent
+---@field SM_TownHouse_Floor_06 UStaticMeshComponent
+---@field SM_TownHouse_Floor_05 UStaticMeshComponent
+---@field SM_TownHouse_Floor_02 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_06 UStaticMeshComponent
+---@field SM_TownHouse_Wall_012 UStaticMeshComponent
+---@field SM_TownHouse_Pillar_07 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_07 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_05 UStaticMeshComponent
+---@field SM_TownHouse_WindowWall_03 UStaticMeshComponent
+---@field SM_TownHouse_Pillar_04 UStaticMeshComponent
+---@field SM_TownHouse_DoorWall_01 UStaticMeshComponent
+---@field SM_TownHouse_Pillar_05 UStaticMeshComponent
+---@field SM_TownHouse_Pillar_01 UStaticMeshComponent
+---@field SM_TownHouse_Floor_03 UStaticMeshComponent
+---@field SM_TownHouse_Floor_015 UStaticMeshComponent
+---@field SM_TownHouse_Floor_013 UStaticMeshComponent
+---@field HouseMaterial UMaterialInstance
+---@field GlassMaterial UMaterialInstance
+---@field UseableDoor boolean
+---@field IsTurnedOn boolean
+local ATownHouse_05_C = {}
+
+function ATownHouse_05_C:TurnMaterial() end
+ATownHouse_05_C['Town House'] = function(self, ) end
+function ATownHouse_05_C:UserConstructionScript() end
+---@param DeltaSeconds float
+function ATownHouse_05_C:ReceiveTick(DeltaSeconds) end
+---@param EntryPoint int32
+function ATownHouse_05_C:ExecuteUbergraph_TownHouse_05(EntryPoint) end
+
+

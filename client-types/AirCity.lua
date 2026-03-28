@@ -1,0 +1,64 @@
+---@meta
+
+---@class AAirCity_C : AMTVehicleBaseBP_C
+---@field PassengerSeat33 UMTSeatComponent
+---@field PassengerSeat32 UMTSeatComponent
+---@field PassengerSeat31 UMTSeatComponent
+---@field PassengerSeat30 UMTSeatComponent
+---@field PassengerSeat29 UMTSeatComponent
+---@field PassengerSeat28 UMTSeatComponent
+---@field TaliLight_02 UTaliLight_01_C
+---@field ReverseLight_01 UReverseLight_01_C
+---@field TaliLight_01 UTaliLight_01_C
+---@field BlinkerLight_04 UBlinkerLight_01_C
+---@field BlinkerLight_03 UBlinkerLight_01_C
+---@field BlinkerLight_01 UBlinkerLight_01_C
+---@field BlinkerLight_02 UBlinkerLight_01_C
+---@field InteriorLight5 UMTVehiclePartSlotComponent
+---@field InteriorLight4 UMTVehiclePartSlotComponent
+---@field InteriorLight3 UMTVehiclePartSlotComponent
+---@field InteriorLight2 UMTVehiclePartSlotComponent
+---@field InteriorLight1 UMTVehiclePartSlotComponent
+---@field HeadLight_Left UMTVehicleHeadLight
+---@field HeadLight_Right UMTVehicleHeadLight
+---@field CabinMirror UMTMirrorComponent
+---@field Door04 UMTVehicleDoorComponent
+---@field Door03 UMTVehicleDoorComponent
+---@field Door02 UMTVehicleDoorComponent
+---@field Door01 UMTVehicleDoorComponent
+---@field RightSideMirror UMTMirrorComponent
+---@field LeftSideMirror UMTMirrorComponent
+---@field PassengerSeat27 UMTSeatComponent
+---@field PassengerSeat26 UMTSeatComponent
+---@field PassengerSeat25 UMTSeatComponent
+---@field PassengerSeat24 UMTSeatComponent
+---@field PassengerSeat23 UMTSeatComponent
+---@field PassengerSeat22 UMTSeatComponent
+---@field PassengerSeat21 UMTSeatComponent
+---@field PassengerSeat20 UMTSeatComponent
+---@field PassengerSeat19 UMTSeatComponent
+---@field PassengerSeat18 UMTSeatComponent
+---@field PassengerSeat17 UMTSeatComponent
+---@field PassengerSeat16 UMTSeatComponent
+---@field PassengerSeat15 UMTSeatComponent
+---@field PassengerSeat14 UMTSeatComponent
+---@field PassengerSeat13 UMTSeatComponent
+---@field PassengerSeat12 UMTSeatComponent
+---@field PassengerSeat11 UMTSeatComponent
+---@field PassengerSeat10 UMTSeatComponent
+---@field PassengerSeat9 UMTSeatComponent
+---@field PassengerSeat8 UMTSeatComponent
+---@field PassengerSeat7 UMTSeatComponent
+---@field PassengerSeat6 UMTSeatComponent
+---@field PassengerSeat5 UMTSeatComponent
+---@field PassengerSeat4 UMTSeatComponent
+---@field PassengerSeat3 UMTSeatComponent
+---@field PassengerSeat2 UMTSeatComponent
+---@field PassengerSeat1 UMTSeatComponent
+---@field DriverSeat UMTSeatComponent
+---@field Differential1 UMTDifferentialComponent
+---@field transmission UMHTransmissionComponent
+local AAirCity_C = {}
+
+
+

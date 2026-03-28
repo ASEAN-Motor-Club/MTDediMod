@@ -1,0 +1,29 @@
+---@meta
+
+---@class AZydro_Police_C : AMTVehicleBaseBP_C
+---@field ReverseLight_01 UReverseLight_01_C
+---@field BlinkerLight_05 UBlinkerLight_01_C
+---@field TaliLight_01 UTaliLight_01_C
+---@field ReverseLight_03 UReverseLight_01_C
+---@field BlinkerLight_04 UBlinkerLight_01_C
+---@field TaliLight_02 UTaliLight_01_C
+---@field AIPerception UAIPerceptionComponent
+---@field MTPoliceVehicle UMTPoliceVehicleComponent
+---@field BlinkerLight_02 UBlinkerLight_01_C
+---@field BlinkerLight_01 UBlinkerLight_01_C
+---@field CabinDomeLightSlot UMTVehiclePartSlotComponent
+---@field FrontDomeLightSlot UMTVehiclePartSlotComponent
+---@field HeadLight_Right UMTVehicleHeadLight
+---@field HeadLight_Left UMTVehicleHeadLight
+---@field MTVehicleCargoSpace UMTVehicleCargoSpaceComponent
+---@field RoomMirror UMTMirrorComponent
+---@field RightSideMirror UMTMirrorComponent
+---@field LeftSideMirror UMTMirrorComponent
+---@field PassengerSeat1 UMTSeatComponent
+---@field DriverSeat UMTSeatComponent
+---@field Differential UMTDifferentialComponent
+---@field transmission UMHTransmissionComponent
+local AZydro_Police_C = {}
+
+
+

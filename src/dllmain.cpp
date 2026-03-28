@@ -292,6 +292,79 @@ auto MotorTownMods::on_unreal_init() -> void
 	);
 
 	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerDespawnCargo"),
+		"ServerDespawnCargo",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			// --- Extract Cargo (AMTCargo) from function params ---
+			auto CargoProp = static_cast<FObjectProperty*>(
+				FunctionBeingExecuted->GetPropertyByNameInChain(STR("Cargo")));
+			if (!CargoProp) {
+				Output::send<LogLevel::Warning>(STR("ServerDespawnCargo: Cargo property not found\n"));
+				return false;
+			}
+
+			const auto& CargoPtr = CargoProp->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
+			if (CargoPtr == nullptr || *CargoPtr == nullptr) {
+				Output::send<LogLevel::Warning>(STR("ServerDespawnCargo: Cargo object is null\n"));
+				return false;
+			}
+			auto cargo = *CargoPtr;
+
+			// --- Extract cargo properties ---
+			const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
+			const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
+			const auto& Weight = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Weight"));
+			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
+			const auto& DeliveryId = cargo->GetValuePtrByPropertyNameInChain<int32>(STR("Net_DeliveryId"));
+			const auto& DestinationLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
+			const auto& SenderAbsoluteLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_SenderAbsoluteLocation"));
+			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
+			if (!PaymentProperty) return false;
+
+			auto TopLevelPayment = PaymentProperty->GetStruct();
+			auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
+			if (Payment == nullptr) return false;
+
+			auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
+			if (!BaseValueProperty) return false;
+
+			auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
+
+			if (!CargoKey || !Damage || !Weight || !TimeLeftSeconds || !DeliveryId || !DestinationLocation || !SenderAbsoluteLocation || !BasePayment) {
+				Output::send<LogLevel::Warning>(STR("ServerDespawnCargo: missing cargo property\n"));
+				return false;
+			}
+
+			json::object destination_location_obj;
+			destination_location_obj["X"] = static_cast<int>(std::round(DestinationLocation->X()));
+			destination_location_obj["Y"] = static_cast<int>(std::round(DestinationLocation->Y()));
+			destination_location_obj["Z"] = static_cast<int>(std::round(DestinationLocation->Z()));
+			json::object sender_location_obj;
+			sender_location_obj["X"] = static_cast<int>(std::round(SenderAbsoluteLocation->X()));
+			sender_location_obj["Y"] = static_cast<int>(std::round(SenderAbsoluteLocation->Y()));
+			sender_location_obj["Z"] = static_cast<int>(std::round(SenderAbsoluteLocation->Z()));
+
+			json::object cargo_obj;
+			cargo_obj["Net_CargoKey"] = json::string(to_string(CargoKey->ToString()));
+			cargo_obj["Net_DeliveryId"] = *DeliveryId;
+			cargo_obj["Net_Payment"] = *BasePayment;
+			cargo_obj["Net_Damage"] = *Damage;
+			cargo_obj["Net_Weight"] = *Weight;
+			cargo_obj["Net_TimeLeftSeconds"] = *TimeLeftSeconds;
+			cargo_obj["Net_DestinationLocation"] = destination_location_obj;
+			cargo_obj["Net_SenderAbsoluteLocation"] = sender_location_obj;
+
+			event_data["Cargo"] = cargo_obj;
+			return true;
+		}
+	);
+
+	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt"),
 		"ServerResetVehicleAt"
 	);

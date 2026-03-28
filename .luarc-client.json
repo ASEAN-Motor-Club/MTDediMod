@@ -1,0 +1,39 @@
+{
+    "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
+    "runtime": {
+        "version": "Lua 5.4"
+    },
+    "workspace": {
+        "maxPreload": 50000,
+        "preloadFileSize": 5000,
+        "library": [
+            "types/ue4ss",
+            "client-types",
+            "types/luasocket",
+            "types/types"
+        ],
+        "checkThirdParty": false,
+        "ignoreDir": [
+            "client-types"
+        ]
+    },
+    "diagnostics": {
+        "disable": [
+            "lowercase-global"
+        ],
+        "severity": {
+            "undefined-doc-name": "Hint",
+            "local-limit": "Hint",
+            "inject-field": "Hint",
+            "miss-name": "Hint"
+        },
+        "groupSeverity": {
+            "client-types/*": "Hint"
+        }
+    },
+    "hint": {
+        "enable": true,
+        "paramName": "All",
+        "setType": true
+    }
+}
