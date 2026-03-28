@@ -40,6 +40,9 @@ Webserver::~Webserver() {
 	// Signal SSE threads to stop (they'll wake and exit)
 	EventManager::Get().Shutdown();
 
+	// Wait for all pool threads to finish
+	m_pool.join();
+
 	serverThread.interrupt();
 	delete _localServer;
 	_localServer = NULL;
@@ -59,20 +62,22 @@ bool Webserver::isServerRunning()
 
 
 
-// HTTP Server function — accepts connections and spawns a thread for each
+// HTTP Server function — accepts connections and dispatches to thread pool
 void Webserver::run_server(unsigned short port) {
 	try
 	{
-		tcp::acceptor acceptor(ioc, tcp::endpoint(tcp::v4(), port));
+		asio::io_context accept_ioc;
+		tcp::acceptor acceptor(accept_ioc, tcp::endpoint(tcp::v4(), port));
 
 		while (true) {
-			tcp::socket socket(ioc);
+			tcp::socket socket(accept_ioc);
 			acceptor.accept(socket);
 
-			// Spawn a detached thread for this connection.
-			// Normal requests finish quickly; SSE threads self-terminate
-			// via EventManager::Shutdown() signaling the condition variable.
-			std::thread(&Webserver::handle_connection, this, std::move(socket)).detach();
+			// Dispatch to fixed thread pool instead of spawning unbounded threads.
+			// This caps Wine pipe FD growth to pool_size * ~4 pipes.
+			boost::asio::post(m_pool, [this, s = std::move(socket)]() mutable {
+				handle_connection(std::move(s));
+			});
 		}
 	}
 	catch (const std::exception& e)
@@ -103,7 +108,27 @@ void Webserver::handle_connection(tcp::socket socket)
 		// Check if this is an SSE request
 		if (req.method() == http::verb::get && req.target() == "/events/stream")
 		{
-			handle_sse_connection(socket, req);
+			// Limit SSE connections to prevent pool thread exhaustion
+			if (m_sse_count >= MAX_SSE_CONNECTIONS)
+			{
+				Output::send<LogLevel::Warning>(
+					STR("[{}] SSE connection rejected: {} active (max {})\n"),
+					ModName, m_sse_count.load(), MAX_SSE_CONNECTIONS);
+				http::response<http::string_body> err_res;
+				err_res.result(http::status::service_unavailable);
+				err_res.set(http::field::content_type, "text/plain");
+				err_res.body() = "Too many SSE connections";
+				err_res.prepare_payload();
+				http::write(socket, err_res);
+				return;
+			}
+
+			// RAII SSE counter
+			m_sse_count++;
+			try {
+				handle_sse_connection(socket, req);
+			} catch (...) {}
+			m_sse_count--;
 			return;
 		}
 

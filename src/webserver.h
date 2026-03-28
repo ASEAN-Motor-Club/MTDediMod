@@ -5,9 +5,9 @@
 #pragma pop_macro("check")
 #include <boost/asio.hpp>
 #include <boost/thread.hpp>
+#include <atomic>
 #include <list>
 #include <memory>
-#include <thread>
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
@@ -16,14 +16,21 @@ using tcp = asio::ip::tcp;
 
 class Route;
 
-// Simple HTTP server with threading
+// Simple HTTP server with fixed thread pool
 class Webserver
 {
 	std::wstring ModName;
 	int Port = 5000;
-	asio::io_context ioc;
 	boost::thread serverThread;
 	std::list<std::shared_ptr<Route>> responses;
+
+	// Fixed thread pool to bound Wine pipe FD growth.
+	// 4 workers: 1 for SSE + 3 for burst HTTP requests.
+	asio::thread_pool m_pool{4};
+
+	// Track active SSE connections to prevent pool exhaustion
+	std::atomic<int> m_sse_count{0};
+	static constexpr int MAX_SSE_CONNECTIONS = 2;
 
 public:
 	Webserver();
