@@ -132,6 +132,15 @@
             add_header 'Access-Control-Allow-Methods' 'POST, PUT, DELETE, GET, PATCH, OPTIONS' always;
           '';
         };
+        "/api/player_count/" = {
+          proxyPass = "http://localhost:9000/api/player_count/";
+          recommendedProxySettings = true;
+          extraConfig = ''
+            proxy_buffering off;
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, OPTIONS' always;
+          '';
+        };
         "/api" = {
           proxyPass = "http://127.0.0.1:9000/api";
           recommendedProxySettings = true;
