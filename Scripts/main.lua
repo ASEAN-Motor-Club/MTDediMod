@@ -108,6 +108,7 @@ local function LoadWebserver()
     -- rename to POST /vehicles
     server.registerHandler("/player_vehicles/*/despawn", "POST", vehicleManager.HandleDespawnPlayerVehicle)
     server.registerHandler("/player_vehicles/*/exit", "GET", vehicleManager.HandlePlayerExitVehicle)
+    server.registerHandler("/players/*/enter_last_vehicle", "POST", vehicleManager.HandlePlayerEnterLastVehicle)
 
     -- Asset management
     server.registerHandler("/assets/spawn", "POST", assetManager.HandleSpawnActor)

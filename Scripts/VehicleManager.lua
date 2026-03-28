@@ -2201,6 +2201,38 @@ local function HandlePlayerExitVehicle(session)
   return nil, nil, 200
 end
 
+---Handle request to teleport player into their last used vehicle
+---@type RequestPathHandler
+local function HandlePlayerEnterLastVehicle(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if PC == nil or not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+
+  if PC.LastVehicle == nil or not PC.LastVehicle:IsValid() then
+    return json.stringify { error = "no_last_vehicle" }, nil, 400
+  end
+
+  local vehicle = PC.LastVehicle
+  local loc = vehicle:K2_GetActorLocation()
+
+  ExecuteInGameThreadSync(function()
+    local pawn = PC:K2_GetPawn()
+    if pawn:IsValid() then
+      local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+      ---@cast charClass UClass
+      if pawn:IsA(charClass) then
+        PC:ServerTeleportCharacter(loc, false, false)
+      end
+    end
+    -- 1 is Driver seat, -1 means default index
+    PC:ServerEnterVehicle(vehicle, 1, -1, false)
+  end)
+
+  return json.stringify { status = "success" }, nil, 200
+end
+
 ---Handle despawning a player's current vehicle (and trailers)
 ---@type RequestPathHandler
 local function HandleDespawnPlayerVehicle(session)
@@ -2433,4 +2465,5 @@ return {
   VehicleSettingToTable = VehicleSettingToTable,
   HandleSetVehicleParameter = HandleSetVehicleParameter,
   HandlePlayerExitVehicle = HandlePlayerExitVehicle,
+  HandlePlayerEnterLastVehicle = HandlePlayerEnterLastVehicle,
 }
