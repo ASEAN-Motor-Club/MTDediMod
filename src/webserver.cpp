@@ -153,9 +153,12 @@ void Webserver::handle_sse_connection(tcp::socket& socket, http::request<http::s
 	http::response_serializer<http::empty_body> sr{res};
 	http::write_header(socket, sr);
 
+	auto boot_epoch = EventManager::Get().GetBootEpoch();
+
 	// Check for Last-Event-ID for replay.
-	// Format is "epoch:seq" — we only care about the seq part.
+	// Format is "epoch:seq". We must verify the epoch matches our current boot_epoch.
 	uint64_t last_seq = 0;
+	uint64_t request_epoch = 0;
 	auto it = req.find("Last-Event-ID");
 	if (it != req.end())
 	{
@@ -164,16 +167,32 @@ void Webserver::handle_sse_connection(tcp::socket& socket, http::request<http::s
 			auto val = std::string(it->value());
 			auto colon = val.find(':');
 			if (colon != std::string::npos)
+			{
+				request_epoch = std::stoull(val.substr(0, colon));
 				last_seq = std::stoull(val.substr(colon + 1));
+			}
 			else
+			{
 				last_seq = std::stoull(val);  // backward compat: plain integer
+			}
 			Output::send<LogLevel::Verbose>(
 				STR("[{}] SSE client reconnecting from seq {}\n"), ModName, last_seq);
 		}
 		catch (...)
 		{
 			// Invalid Last-Event-ID, start from beginning of buffer
+			last_seq = 0;
 		}
+	}
+
+	// If the client's epoch doesn't match our boot epoch, it's asking for a sequence
+	// from a previous server run. Ignore it and replay from our current buffer.
+	if (request_epoch > 0 && request_epoch != boot_epoch)
+	{
+		Output::send<LogLevel::Verbose>(
+			STR("[{}] SSE client epoch mismatch. Expected {}, got {}. Resetting sequence to 0.\n"), 
+			ModName, boot_epoch, request_epoch);
+		last_seq = 0;
 	}
 
 	// Replay any buffered events
@@ -189,8 +208,6 @@ void Webserver::handle_sse_connection(tcp::socket& socket, http::request<http::s
 			if (ec) return;
 		}
 	}
-
-	auto boot_epoch = EventManager::Get().GetBootEpoch();
 	for (const auto& entry : buffered)
 	{
 		std::string sse_frame = std::format("id: {}:{}\ndata: {}\n\n",
