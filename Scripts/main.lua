@@ -69,6 +69,8 @@ local function LoadWebserver()
     server.registerHandler("/players/*/experimental/ghost", "POST", playerManager.HandleExperimentalGhostFlag)
     server.registerHandler("/players/*/experimental/spectate", "POST", playerManager.HandleExperimentalSpectate)
     server.registerHandler("/players/*/despawn_cargo", "POST", cargoManager.HandleDespawnPlayerCargo)
+    server.registerHandler("/players/*/vehicle_cargos", "GET", cargoManager.HandleGetVehicleCargos)
+    server.registerHandler("/players/*/vehicle_cargos", "DELETE", cargoManager.HandleClearVehicleCargos)
     server.registerHandler("/police", "GET", playerManager.HandleGetPoliceState)
     server.registerHandler("/players/*", "GET", playerManager.HandleGetPlayerStates)
     server.registerHandler("/parties", "GET", playerManager.HandleGetParties)
@@ -91,6 +93,7 @@ local function LoadWebserver()
     server.registerHandler("/delivery/points", "GET", cargoManager.HandleGetDeliveryPoints)
     server.registerHandler("/delivery/points/*", "GET", cargoManager.HandleGetDeliveryPoints)
     server.registerHandler("/player_contracts/*", "GET", cargoManager.HandleGetPlayerContracts)
+
 
     -- Vehicle management
     server.registerHandler("/vehicles", "GET", vehicleManager.HandleGetVehicles)

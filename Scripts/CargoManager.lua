@@ -715,9 +715,160 @@ local function HandleDespawnPlayerCargo(session)
   end
 end
 
+---Get the vehicle chain (vehicle + trailers) starting from the given vehicle
+---@param vehicle AMTVehicle
+---@return AMTVehicle[]
+local function GetVehicleChain(vehicle)
+  local chain = {}
+  local curr = vehicle ---@type AMTVehicle?
+  local seen = {} ---@type table<number, boolean>
+
+  while curr ~= nil and curr:IsValid() and not curr:IsActorBeingDestroyed() do
+    if seen[curr.Net_VehicleId] then break end
+    seen[curr.Net_VehicleId] = true
+    table.insert(chain, curr)
+
+    local next = nil ---@type AMTVehicle?
+    if curr.Net_Hooks:IsValid() then
+      curr.Net_Hooks:ForEach(function(i, val)
+        local hook = val:get()
+        if hook:IsValid() and hook.Trailer:IsValid() and not hook.Trailer:IsActorBeingDestroyed() then
+          next = hook.Trailer
+        end
+      end)
+    end
+    curr = next
+  end
+
+  return chain
+end
+
+---Get cargos loaded on a player's last vehicle (and trailers)
+---Iterates CargoSpaces[i].Net_Cargos on each vehicle in the chain
+---@type RequestPathHandler
+local function HandleGetVehicleCargos(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+
+  if not PC.LastVehicle or not PC.LastVehicle:IsValid() then
+    return json.stringify { error = "Player has no LastVehicle" }, nil, 404
+  end
+
+  local chain = GetVehicleChain(PC.LastVehicle)
+  local result = {}
+
+  for _, vehicle in ipairs(chain) do
+    local vehicleData = {
+      vehicleId = vehicle.Net_VehicleId,
+      fullName = vehicle:GetFullName(),
+      cargoSpaces = {},
+    }
+
+    if vehicle.CargoSpaces:IsValid() then
+      for i = 1, #vehicle.CargoSpaces do
+        local space = vehicle.CargoSpaces[i]
+        local spaceData = {
+          index = i,
+          isValid = space:IsValid(),
+          cargos = {},
+          droppedCargos = {},
+        }
+
+        if space:IsValid() then
+          spaceData.cargoSpaceType = space.CargoSpaceType
+          spaceData.bCanLoadCargo = space.bCanLoadCargo
+
+          if space.Net_Cargos:IsValid() then
+            spaceData.netCargosLen = #space.Net_Cargos
+            space.Net_Cargos:ForEach(function(index, element)
+              local cargo = element:get()
+              if cargo ~= nil and cargo:IsValid() then
+                table.insert(spaceData.cargos, CargoToTableSummary(cargo))
+              end
+            end)
+          else
+            spaceData.netCargosLen = -1
+          end
+
+          if space.Net_DroppedCargos:IsValid() then
+            spaceData.netDroppedCargosLen = #space.Net_DroppedCargos
+            space.Net_DroppedCargos:ForEach(function(index, element)
+              local cargo = element:get()
+              if cargo ~= nil and cargo:IsValid() then
+                table.insert(spaceData.droppedCargos, CargoToTableSummary(cargo))
+              end
+            end)
+          else
+            spaceData.netDroppedCargosLen = -1
+          end
+        end
+
+        table.insert(vehicleData.cargoSpaces, spaceData)
+      end
+    end
+
+    table.insert(result, vehicleData)
+  end
+
+  return json.stringify { data = result }, nil, 200
+end
+
+---Clear all cargo from a player's last vehicle (and trailer chain)
+---@param PC AMotorTownPlayerController
+---@return number count Number of cargo spaces cleared
+local function ClearVehicleCargos(PC)
+  if not PC.LastVehicle or not PC.LastVehicle:IsValid() then
+    return 0
+  end
+
+  local chain = GetVehicleChain(PC.LastVehicle)
+  local spacesToClear = {}
+
+  for _, vehicle in ipairs(chain) do
+    if vehicle.CargoSpaces:IsValid() then
+      for i = 1, #vehicle.CargoSpaces do
+        local space = vehicle.CargoSpaces[i]
+        if space:IsValid() and space.Net_Cargos:IsValid() and #space.Net_Cargos > 0 then
+          table.insert(spacesToClear, space)
+        end
+      end
+    end
+  end
+
+  if #spacesToClear > 0 then
+    ExecuteInGameThreadSync(function()
+      for _, space in ipairs(spacesToClear) do
+        if space:IsValid() then
+          PC:ServerRemoveAllCargo(space)
+        end
+      end
+    end, "ClearVehicleCargos")
+  end
+
+  return #spacesToClear
+end
+
+---Handle clearing all cargo from a player's last vehicle chain
+---@type RequestPathHandler
+local function HandleClearVehicleCargos(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+
+  local count = ClearVehicleCargos(PC)
+  return json.stringify { cleared = count }, nil, 200
+end
+
 return {
   HandleGetDeliveryPoints = HandleGetDeliveryPoints,
+  HandleGetPlayerContracts = HandleGetPlayerContracts,
   HandleDespawnPlayerCargo = HandleDespawnPlayerCargo,
+  HandleGetVehicleCargos = HandleGetVehicleCargos,
+  HandleClearVehicleCargos = HandleClearVehicleCargos,
   CargoToTable = CargoToTable
 }
-
