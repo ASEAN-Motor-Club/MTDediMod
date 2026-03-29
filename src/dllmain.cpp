@@ -369,6 +369,106 @@ auto MotorTownMods::on_unreal_init() -> void
 		"ServerResetVehicleAt"
 	);
 
+	// ========== Teleport / Respawn Hooks ==========
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter"),
+		"ServerTeleportCharacter",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			// --- Extract AbsoluteLocation (FVector) ---
+			auto LocationProp = FunctionBeingExecuted->GetPropertyByName(STR("AbsoluteLocation"));
+			if (!LocationProp) {
+				Output::send<LogLevel::Warning>(STR("ServerTeleportCharacter: AbsoluteLocation property not found\n"));
+				return false;
+			}
+			auto Location = LocationProp->ContainerPtrToValuePtr<FVector>(Context.TheStack.Locals());
+			if (!Location) return false;
+
+			json::object location_obj;
+			location_obj["X"] = static_cast<int>(std::round(Location->X()));
+			location_obj["Y"] = static_cast<int>(std::round(Location->Y()));
+			location_obj["Z"] = static_cast<int>(std::round(Location->Z()));
+			event_data["AbsoluteLocation"] = location_obj;
+
+			// --- Extract bCharge (bool) ---
+			auto bChargeProp = FunctionBeingExecuted->GetPropertyByName(STR("bCharge"));
+			if (bChargeProp) {
+				auto bCharge = bChargeProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
+				if (bCharge) event_data["bCharge"] = *bCharge;
+			}
+
+			// --- Extract bIsRespawn (bool) ---
+			auto bIsRespawnProp = FunctionBeingExecuted->GetPropertyByName(STR("bIsRespawn"));
+			if (bIsRespawnProp) {
+				auto bIsRespawn = bIsRespawnProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
+				if (bIsRespawn) event_data["bIsRespawn"] = *bIsRespawn;
+			}
+
+			return true;
+		}
+	);
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehicle"),
+		"ServerTeleportVehicle",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			// --- Extract AbsoluteLocation (FVector) ---
+			auto LocationProp = FunctionBeingExecuted->GetPropertyByName(STR("AbsoluteLocation"));
+			if (!LocationProp) {
+				Output::send<LogLevel::Warning>(STR("ServerTeleportVehicle: AbsoluteLocation property not found\n"));
+				return false;
+			}
+			auto Location = LocationProp->ContainerPtrToValuePtr<FVector>(Context.TheStack.Locals());
+			if (!Location) return false;
+
+			json::object location_obj;
+			location_obj["X"] = static_cast<int>(std::round(Location->X()));
+			location_obj["Y"] = static_cast<int>(std::round(Location->Y()));
+			location_obj["Z"] = static_cast<int>(std::round(Location->Z()));
+			event_data["AbsoluteLocation"] = location_obj;
+
+			return true;
+		}
+	);
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerRespawnCharacter"),
+		"ServerRespawnCharacter",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			// --- Extract AbsoluteLocation (FVector) ---
+			auto LocationProp = FunctionBeingExecuted->GetPropertyByName(STR("AbsoluteLocation"));
+			if (!LocationProp) {
+				Output::send<LogLevel::Warning>(STR("ServerRespawnCharacter: AbsoluteLocation property not found\n"));
+				return false;
+			}
+			auto Location = LocationProp->ContainerPtrToValuePtr<FVector>(Context.TheStack.Locals());
+			if (!Location) return false;
+
+			json::object location_obj;
+			location_obj["X"] = static_cast<int>(std::round(Location->X()));
+			location_obj["Y"] = static_cast<int>(std::round(Location->Y()));
+			location_obj["Z"] = static_cast<int>(std::round(Location->Z()));
+			event_data["AbsoluteLocation"] = location_obj;
+
+			return true;
+		}
+	);
+
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerSignContract"),
 		"ServerSignContract",

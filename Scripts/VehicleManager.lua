@@ -1147,6 +1147,141 @@ local function VehicleSettingToTable(setting)
   }
 end
 
+---Determines the drive type (2WD/4WD/AWD/6WD) of a vehicle
+---by analyzing its drivetrain topology.
+---
+---Static detection: checks which wheels have valid DriveShaftComponent
+---connections back to the transmission. Groups driven wheels by axle.
+---
+---Runtime detection: reads DiffLockings[DiffLockIndex] to determine
+---which differentials are currently Disconnected vs Open/Locked.
+---
+---@param vehicle AMTVehicle
+---@return table drive_info with fields:
+---  drive_type: string ("2WD"|"4WD"|"6WD"|"RWD"|"FWD"|"AWD")
+---  driven_wheel_count: number of wheels with valid drive shaft
+---  total_wheel_count: total number of wheels
+---  driven_axle_indices: list of axle indices that have driven wheels
+---  total_axle_count: total number of axles
+---  num_differentials: number of differential components
+---  current_diff_lock_index: current DiffLockIndex from cold state
+---  current_disconnected_diffs: list of differential names currently disconnected
+local function GetDriveInfo(vehicle)
+  local info = {}
+
+  -- Count differentials
+  local numDiffs = 0
+  vehicle.Differentials:ForEach(function(index, element)
+    numDiffs = numDiffs + 1
+  end)
+  info.num_differentials = numDiffs
+
+  -- Find which wheels are driven (have valid drive shaft connection)
+  local drivenWheelIndices = {} ---@type number[]
+  local totalWheels = 0
+  vehicle.Wheels:ForEach(function(index, element)
+    totalWheels = totalWheels + 1
+    local wheel = element:get()
+    if wheel:IsValid() and wheel.DriveShaftComponent:IsValid() then
+      table.insert(drivenWheelIndices, wheel.WheelSlotIndex)
+    end
+  end)
+  info.driven_wheel_count = #drivenWheelIndices
+  info.total_wheel_count = totalWheels
+
+  -- Map driven wheels to axles
+  local drivenAxleSet = {} ---@type table<number, boolean>
+  local totalAxles = 0
+  vehicle.WheelAxles:ForEach(function(axleIdx, axleElement)
+    totalAxles = totalAxles + 1
+    local axle = axleElement:get()
+    axle.WheelIndices:ForEach(function(_, wheelIdxElement)
+      local wheelIdx = wheelIdxElement:get()
+      for _, drivenIdx in ipairs(drivenWheelIndices) do
+        if wheelIdx == drivenIdx then
+          drivenAxleSet[axle.AxleIndex] = true
+          break
+        end
+      end
+    end)
+  end)
+
+  local drivenAxleIndices = {}
+  for axleIdx, _ in pairs(drivenAxleSet) do
+    table.insert(drivenAxleIndices, axleIdx)
+  end
+  table.sort(drivenAxleIndices)
+  info.driven_axle_indices = drivenAxleIndices
+  info.total_axle_count = totalAxles
+
+  -- Determine drive type string
+  local drivenAxleCount = #drivenAxleIndices
+  if drivenAxleCount == 0 then
+    info.drive_type = "None"
+  elseif totalAxles <= 2 then
+    -- Standard car: 2 axles
+    if drivenAxleCount >= 2 then
+      info.drive_type = "AWD"
+    elseif drivenAxleCount == 1 then
+      -- Check if front or rear axle is driven
+      -- Axle with higher LocationX is front, lower is rear
+      -- But simpler: axle index 0 is typically front
+      -- Use the driven axle index to guess F vs R
+      local drivenAxle = drivenAxleIndices[1]
+      -- If only 1 axle total, it's just "2WD"
+      if totalAxles == 1 then
+        info.drive_type = "2WD"
+      elseif drivenAxle == 0 then
+        info.drive_type = "FWD"
+      else
+        info.drive_type = "RWD"
+      end
+    end
+  else
+    -- Multi-axle (trucks): count driven axles
+    if drivenAxleCount == totalAxles then
+      info.drive_type = tostring(drivenAxleCount * 2) .. "WD"  -- "6WD", "8WD"
+    elseif drivenAxleCount >= 2 then
+      info.drive_type = tostring(totalAxles * 2) .. "x" .. tostring(drivenAxleCount * 2) -- "6x4"
+    else
+      info.drive_type = tostring(totalAxles * 2) .. "x" .. tostring(drivenAxleCount * 2) -- "4x2"
+    end
+  end
+
+  -- Runtime diff lock state
+  info.current_diff_lock_index = vehicle.NetLC_ColdState.DiffLockIndex
+  info.current_disconnected_diffs = {}
+
+  local diffLockCount = 0
+  vehicle.DiffLockings:ForEach(function() diffLockCount = diffLockCount + 1 end)
+
+  if diffLockCount > 0 and info.current_diff_lock_index >= 0 then
+    local currentIdx = 0
+    vehicle.DiffLockings:ForEach(function(index, element)
+      if currentIdx == info.current_diff_lock_index then
+        local diffState = element:get()
+        diffState.Differentials:ForEach(function(key, value)
+          local diffName = key:get():ToString()
+          local lockState = value:get() -- 0=Disconnect, 1=Open, 2=Locked
+          if lockState == 0 then
+            table.insert(info.current_disconnected_diffs, diffName)
+          end
+        end)
+      end
+      currentIdx = currentIdx + 1
+    end)
+  end
+
+  -- If AWD-capable but currently has disconnected diffs, note the effective mode
+  if info.drive_type == "AWD" and #info.current_disconnected_diffs > 0 then
+    info.effective_drive_type = "Part-time"
+  else
+    info.effective_drive_type = info.drive_type
+  end
+
+  return info
+end
+
 ---Convert AMTVehicle to JSON serializable table
 ---@param vehicle AMTVehicle
 local function VehicleToTable(vehicle)
@@ -1495,6 +1630,8 @@ local function VehicleToTable(vehicle)
   -- data.WaterBodies = vehicle.WaterBodies
   data.Net_PTOThrottle = vehicle.Net_PTOThrottle
   data.Net_bPTOOn = vehicle.Net_bPTOOn
+
+  data.DriveInfo = GetDriveInfo(vehicle)
 
   return data
 end
