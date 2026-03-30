@@ -135,8 +135,11 @@ in {
         "/_app/immutable/" = {
           root = "/var/www/www.aseanmotorclub.com";
           extraConfig = ''
+            # Set a long expiry time (1 year)
             expires 1y;
+            # Add the immutable cache-control header
             add_header Cache-Control "public, max-age=31536000, immutable";
+            # Optional: disable access logging for static files
             access_log off;
           '';
         };
