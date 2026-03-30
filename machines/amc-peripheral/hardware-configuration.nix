@@ -19,7 +19,7 @@
     device = "/dev/vda2";
     fsType = "ext4";
   };
-  fileSystems."/var/lib/radio" = {
+  fileSystems."/var/lib/data" = {
     device = "/dev/vdb";
     fsType = "ext4";
   };

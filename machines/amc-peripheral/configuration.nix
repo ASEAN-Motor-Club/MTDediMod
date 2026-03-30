@@ -76,6 +76,35 @@ in {
   ];
 
   boot.tmp.cleanOnBoot = true;
+
+  # ── Disk space management ──────────────────────────────────────────
+  # Cap journal logs to prevent unbounded growth (was 4GB+ uncapped)
+  services.journald.extraConfig = ''
+    SystemMaxUse=500M
+    MaxRetentionSec=7day
+  '';
+  # Disable coredump storage (only CargoExtractor crashes, not useful)
+  systemd.coredump.extraConfig = ''
+    Storage=none
+  '';
+
+  # ── Data volume bind mounts ────────────────────────────────────────
+  # The 99GB volume is mounted at /var/lib/data (hardware-configuration.nix).
+  # Bind-mount subdirectories to their expected paths so services work
+  # transparently while all heavy state lives on the volume.
+  fileSystems."/var/lib/radio" = {
+    device = "/var/lib/data/radio";
+    options = ["bind"];
+  };
+  fileSystems."/var/lib/opencode" = {
+    device = "/var/lib/data/opencode";
+    options = ["bind"];
+  };
+  fileSystems."/var/lib/mod-releases" = {
+    device = "/var/lib/data/mod-releases";
+    options = ["bind"];
+  };
+
   networking.hostName = "amc-peripheral";
   networking.domain = "";
   networking.firewall = {
@@ -343,8 +372,11 @@ in {
   systemd.tmpfiles.rules = [
     "d /var/www 0755 root root -"
     "d /var/www/www.aseanmotorclub.com 0755 sftpuser sftpuser -"
-    "d /var/lib/mod-releases 0755 root root -"
-    # OpenCode workspace directories
+    # Ensure data volume subdirs exist before bind mounts activate
+    "d /var/lib/data/radio 0755 root root -"
+    "d /var/lib/data/opencode 0755 opencode opencode -"
+    "d /var/lib/data/mod-releases 0755 root root -"
+    # OpenCode workspace directories (created on the volume via bind mount)
     "d /var/lib/opencode 0755 opencode opencode -"
     "d /var/lib/opencode/workspace 0755 opencode opencode -"
     "d /var/lib/opencode/workspace/tasks 0755 opencode opencode -"
