@@ -132,7 +132,7 @@ in {
           root = "/var/www/www.aseanmotorclub.com";
           tryFiles = "$uri $uri.html $uri/index.html /fallback.html";
         };
-        "~* \\.(?:css|js|ico|gif|jpg|jpeg|png|svg|webp|woff|woff2)$" = {
+        "~* \\.(?:css|js|ico|gif|jpg|jpeg|png|svg|webp|woff|woff2|mp4|webm|ogg|mp3)$" = {
           root = "/var/www/www.aseanmotorclub.com";
           extraConfig = ''
             # Set a long expiry time (1 year)
