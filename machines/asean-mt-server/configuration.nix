@@ -18,6 +18,11 @@
 
   boot.tmp.cleanOnBoot = true;
   zramSwap.enable = true;
+  boot.kernel.sysctl."vm.swappiness" = 10;
+  boot.kernel.sysctl."net.core.rmem_max" = 4194304;       # 4MB — game server UDP receive buffers (was 208KB)
+  boot.kernel.sysctl."net.core.wmem_max" = 4194304;       # 4MB — game server UDP send buffers
+  boot.kernel.sysctl."net.core.rmem_default" = 1048576;   # 1MB default for new sockets
+  boot.kernel.sysctl."net.core.wmem_default" = 1048576;
   networking.hostName = "asean-mt-server";
   networking.domain = "";
   networking.firewall = {
@@ -31,7 +36,6 @@
     ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJcMiNGgqQtOeACMso3CgZz2J3X8Ne8RxsZrQcsnoewU fmnxl-m2''
     ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO75UM3IHNzJKUxgABH6OHa/hxfQIoxTs+nGUtSU1TID''
     ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMgWg22wCzJ4qJKDnAXz/q+LsUTyuSGO7R91C+h8B1qE github-actions-deploy''
-    ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOrAFqHJ125VEDd7jFhOtmBOWg+HSFdRwLSCnUlRtY// github-runner-amc-deploy''
   ];
   system.stateVersion = "23.11";
   nix.settings.experimental-features = ["nix-command" "flakes"];
@@ -88,11 +92,7 @@
     authKeyFile = config.age.secrets.tailscale.path;
   };
 
-  age.secrets.dokuwiki-oauth = {
-    file = ../../secrets/dokuwiki-oauth.age;
-    mode = "400";
-    owner = "dokuwiki";
-  };
+
 
   services.nginx = {
     enable = true;
@@ -187,80 +187,7 @@
   security.acme.defaults.email = "contact@fmnxl.xyz";
   security.acme.acceptTerms = true;
 
-  services.nginx.virtualHosts."wiki.aseanmotorclub.com" = {
-    enableACME = true;
-    forceSSL = true;
-  };
 
-  services.dokuwiki = {
-    webserver = "nginx";
-    sites = let
-      dokuwiki-plugin-infobox = pkgs.stdenv.mkDerivation {
-        name = "infobox";
-        src = pkgs.fetchzip {
-          url = "https://github.com/Kanaru92/DokuWiki-InfoBox/archive/9e9b4c22289540b28728a8e7e16a871fa549906f.zip";
-          sha256 = "sha256-N6ReTPlpN1xOQ1UkhkJa7jKnHFGUg/K3hP4kZHJY8i8=";
-        };
-        sourceRoot = ".";
-        installPhase = "mkdir -p $out; cp -R source/* $out/;";
-      };
-      dokuwiki-plugin-imagebox = pkgs.stdenv.mkDerivation {
-        name = "imagebox";
-        src = fetchTarball {
-          url = "https://github.com/flammy/imagebox/tarball/master";
-          sha256 = "sha256:0ir4xavz47qhhk9xiy7rm723scygsgyhgd142js21ga0997wxsbj";
-        };
-        sourceRoot = ".";
-        installPhase = "mkdir -p $out; cp -R source/* $out/;";
-      };
-      dokuwiki-plugin-oauth = pkgs.stdenv.mkDerivation {
-        name = "oauth";
-        src = fetchTarball {
-          url = "https://github.com/cosmocode/dokuwiki-plugin-oauth/archive/refs/heads/master.tar.gz";
-          sha256 = "sha256:1c0b6iwqsllk2fp2k77k4aavz84m6cfnddp51410pxlg19mf3wib";
-        };
-        sourceRoot = ".";
-        installPhase = "mkdir -p $out; cp -R * $out/;";
-      };
-      dokuwiki-plugin-oauthgeneric = pkgs.stdenv.mkDerivation {
-        name = "oauthgeneric";
-        src = fetchTarball {
-          url = "https://github.com/cosmocode/dokuwiki-plugin-oauthgeneric/archive/refs/heads/master.tar.gz";
-          sha256 = "sha256:1adgw67g32rmx4byx7iamikg3krynl4pyp1yjmfwvdlmq8zxvg81";
-        };
-        sourceRoot = ".";
-        installPhase = "mkdir -p $out; cp -R * $out/;";
-      };
-    in {
-      "wiki.aseanmotorclub.com" = {
-        plugins = [
-          dokuwiki-plugin-infobox
-          dokuwiki-plugin-imagebox
-          dokuwiki-plugin-oauth
-          dokuwiki-plugin-oauthgeneric
-        ];
-        settings = {
-          title = "ASEAN Motor Club";
-          tagline = "AMC Wiki for Motor Town: Behind The Wheel";
-          useacl = false;
-          userewrite = true;
-          updatecheck = false;
-          
-          authtype = "oauth";
-          plugin____oauth____registerOnAuth = true;
-          plugin____oauthgeneric____key = "dokuwiki";
-          plugin____oauthgeneric____secret._file = config.age.secrets.dokuwiki-oauth.path;
-          plugin____oauthgeneric____authurl = "https://api.aseanmotorclub.com/o/authorize/";
-          plugin____oauthgeneric____tokenurl = "https://api.aseanmotorclub.com/o/token/";
-          plugin____oauthgeneric____userurl = "https://api.aseanmotorclub.com/api/users/me/";
-          plugin____oauthgeneric____json_user = "user";
-          plugin____oauthgeneric____json_name = "name";
-          plugin____oauthgeneric____json_mail = "mail";
-          plugin____oauthgeneric____json_grps = "grps";
-        };
-      };
-    };
-  };
 
   # === OpenCode ===
   users.users.opencode = {
