@@ -1,17 +1,43 @@
 local vehicleManager = require("VehicleManager")
+local teleportManager = require("TeleportManager")
 
 local Commands = {}
 
 Commands["/despawn"] = function(PC, args)
-  local count = vehicleManager.DespawnPlayerVehicle(PC)
-  if count > 0 then
-    LogOutput("INFO", "Despawned %d vehicle(s)", count)
+  local mode = args[1] and string.lower(args[1]) or nil
+  local count = 0
+
+  if mode == "all" then
+    count = vehicleManager.DespawnAllPlayerVehicles(PC)
+    if count > 0 then
+      LogOutput("INFO", "Despawned all %d vehicle(s)", count)
+    else
+      LogOutput("INFO", "No vehicles to despawn")
+    end
+  elseif mode == "others" then
+    count = vehicleManager.DespawnOtherPlayerVehicles(PC)
+    if count > 0 then
+      LogOutput("INFO", "Despawned %d other vehicle(s)", count)
+    else
+      LogOutput("INFO", "No other vehicles to despawn")
+    end
   else
-    LogOutput("INFO", "No vehicle to despawn")
+    count = vehicleManager.DespawnPlayerVehicle(PC)
+    if count > 0 then
+      LogOutput("INFO", "Despawned %d vehicle(s)", count)
+    else
+      LogOutput("INFO", "No vehicle to despawn")
+    end
   end
 end
 
 Commands["/d"] = Commands["/despawn"]
+
+Commands["/teleport"] = function(PC, args)
+  teleportManager.HandleTeleport(PC, args)
+end
+
+Commands["/tp"] = Commands["/teleport"]
 
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then

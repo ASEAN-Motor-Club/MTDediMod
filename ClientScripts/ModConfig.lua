@@ -28,6 +28,10 @@ local modConfig = {
             keyboard = { key = "A", modifiers = { "CONTROL" } },
             gamepad = { buttons = { "Gamepad_RightShoulder", "Gamepad_FaceButton_Bottom" } }
         }
+    },
+    teleportPoints = {
+        -- Populate in config.json, e.g.:
+        -- { name = "Airport", location = { X = 0, Y = 0, Z = 0 } }
     }
 }
 
