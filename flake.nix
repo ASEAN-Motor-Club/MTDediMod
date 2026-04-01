@@ -87,12 +87,9 @@
             stripRoot = false;
           };
 
-          # Official UE4SS v3.0.1 release (ships dwmapi.dll proxy instead of version.dll)
-          ue4ssClientBinaries = pkgs.fetchzip {
-            url = "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip";
-            hash = "sha256-QcY8A2ItZXEVzOsaurWvILqKdwjdZWrZea2aG0X2wzI=";
-            stripRoot = false;
-          };
+          # Client-side proxy path (dwmapi.dll instead of version.dll)
+          clientProxyPath = "C:\\Windows\\System32\\dwmapi.dll";
+          clientBuildDir = "build-cross-client";
 
           configureScript = pkgs.writeShellApplication {
             name = "${modName}-configure";
@@ -300,8 +297,57 @@ EOF
             '';
           };
 
-          # Client-side mod packaging (Lua-only, no C++ DLL)
+          # Client-side mod packaging (Lua-only, cross-compiled UE4SS with dwmapi.dll proxy)
           clientModName = "MotorTownClientMod";
+
+          # UE4SS_Signatures for Motor Town (shared between server and client)
+          ue4ssSignaturesDir = ./client-signatures;
+
+          configureClientScript = pkgs.writeShellApplication {
+            name = "${clientModName}-configure";
+            runtimeInputs = crossCompileBuildInputs;
+            text = ''
+              # Setup environment
+              ${crossCompileEnv}
+              export BUILD_TYPE="${buildType}"
+              export BUILD_DIR="${clientBuildDir}"
+              export UE4SS_PROXY_PATH="${clientProxyPath}"
+
+              # Create CMakeLists.txt wrapper (same as server — mod DLL will be built but not packaged)
+              cat > CMakeLists.txt <<EOF
+cmake_minimum_required(VERSION 3.22)
+project(UE4SSWrapper)
+if(NOT UE4SS_SOURCE_DIR)
+    set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
+endif()
+add_subdirectory("''${UE4SS_SOURCE_DIR}" RE-UE4SS)
+add_subdirectory("src" ${modName})
+EOF
+
+              # Run setup script (downloads MSVC headers via xwin and runs cmake -B)
+              ${builtins.readFile ./setup_cross_compile.sh}
+            '';
+          };
+
+          buildClientScript = pkgs.writeShellApplication {
+            name = "${clientModName}-build";
+            runtimeInputs = crossCompileBuildInputs;
+            text = ''
+              # Setup environment
+              ${crossCompileEnv}
+
+              if [ ! -d "${clientBuildDir}" ]; then
+                echo "Error: ${clientBuildDir} directory not found. Please run 'nix run .#configure-client' first."
+                exit 1
+              fi
+
+              # Build
+              CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+              cmake --build "${clientBuildDir}" -j"''${NIX_BUILD_CORES:-$CORES}" "$@"
+
+              echo "Build complete. Output in ${clientBuildDir}/${buildType}/"
+            '';
+          };
 
           packageClientScript = pkgs.writeShellApplication {
             name = "${clientModName}-package";
@@ -310,10 +356,12 @@ EOF
               set -e
 
               MOD_NAME="${clientModName}"
+              BUILD_TYPE="${buildType}"
+              BUILD_DIR="${clientBuildDir}"
               PACKAGE_DIR="package-client"
               LUA_SCRIPTS_DIR="./ClientScripts"
               SHARED_LUA_DIR="./shared"
-              UE4SS_SETTINGS_SRC="${ue4ssClientBinaries}/UE4SS-settings.ini"
+              UE4SS_SETTINGS_SRC="${patchedUE4SS}/assets/UE4SS-settings.ini"
 
               echo "=========================================="
               echo "Packaging $MOD_NAME (client mod) for distribution"
@@ -325,9 +373,29 @@ EOF
                 exit 1
               fi
 
-              # Use pre-built UE4SS binaries from legacy release
-              if [ ! -d "${luaBinaries}" ]; then
-                echo "Error: Pre-built UE4SS binaries not available."
+              # Verify cross-compiled binaries exist
+              if [ ! -d "$BUILD_DIR" ]; then
+                echo "Error: $BUILD_DIR directory not found. Please run 'nix run .#configure-client' and 'nix run .#build-client' first."
+                exit 1
+              fi
+
+              # Find proxy DLL (should be dwmapi.dll)
+              PROXY_DLL=""
+              for proxy in "dwmapi.dll" "version.dll"; do
+                if [ -f "$BUILD_DIR/$BUILD_TYPE/bin/$proxy" ]; then
+                  PROXY_DLL="$proxy"
+                  break
+                fi
+              done
+
+              if [ -z "$PROXY_DLL" ]; then
+                echo "Error: No proxy DLL found in $BUILD_DIR/$BUILD_TYPE/bin/"
+                echo "Please run 'nix run .#build-client' first."
+                exit 1
+              fi
+
+              if [ ! -f "$BUILD_DIR/$BUILD_TYPE/bin/UE4SS.dll" ]; then
+                echo "Error: UE4SS.dll not found in $BUILD_DIR/$BUILD_TYPE/bin/"
                 exit 1
               fi
 
@@ -337,22 +405,13 @@ EOF
               rm -rf "$PACKAGE_DIR"
               mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts"
 
-              # Copy pre-built UE4SS runtime from official v3.0.1 release (uses dwmapi.dll proxy)
-              if [ -f "${ue4ssClientBinaries}/dwmapi.dll" ]; then
-                cp --no-preserve=mode,ownership "${ue4ssClientBinaries}/dwmapi.dll" "$PACKAGE_DIR/"
-                echo "✓ Copied dwmapi.dll (proxy)"
-              else
-                echo "Error: dwmapi.dll not found in UE4SS client binaries"
-                exit 1
-              fi
+              # Copy cross-compiled proxy DLL
+              cp "$BUILD_DIR/$BUILD_TYPE/bin/$PROXY_DLL" "$PACKAGE_DIR/"
+              echo "✓ Copied $PROXY_DLL (cross-compiled proxy)"
 
-              if [ -f "${ue4ssClientBinaries}/UE4SS.dll" ]; then
-                cp --no-preserve=mode,ownership "${ue4ssClientBinaries}/UE4SS.dll" "$PACKAGE_DIR/ue4ss/"
-                echo "✓ Copied UE4SS.dll"
-              else
-                echo "Error: UE4SS.dll not found in UE4SS client binaries"
-                exit 1
-              fi
+              # Copy cross-compiled UE4SS.dll
+              cp "$BUILD_DIR/$BUILD_TYPE/bin/UE4SS.dll" "$PACKAGE_DIR/ue4ss/"
+              echo "✓ Copied UE4SS.dll (cross-compiled)"
 
               # Copy UE4SS settings (patched for client use)
               if [ -f "$UE4SS_SETTINGS_SRC" ]; then
@@ -365,6 +424,14 @@ EOF
                 echo "✓ Copied and patched UE4SS-settings.ini for client"
               else
                 echo "⚠ Warning: UE4SS-settings.ini not found at $UE4SS_SETTINGS_SRC"
+              fi
+
+              # Copy UE4SS_Signatures for Motor Town
+              if [ -d "${ue4ssSignaturesDir}" ]; then
+                cp -r "${ue4ssSignaturesDir}" "$PACKAGE_DIR/ue4ss/UE4SS_Signatures"
+                echo "✓ Copied UE4SS_Signatures"
+              else
+                echo "⚠ Warning: UE4SS_Signatures not found at ${ue4ssSignaturesDir}"
               fi
 
               # Copy client Lua scripts
@@ -433,7 +500,7 @@ EOF
               echo "To install:"
               echo "  1. Extract $ZIP_NAME to your Motor Town game directory"
               echo "     (e.g. .../MotorTown/Binaries/Win64/)"
-              echo "  2. The dwmapi.dll should be next to MotorTown-Win64-Shipping.exe"
+              echo "  2. The $PROXY_DLL should be next to MotorTown-Win64-Shipping.exe"
               echo "  3. The ue4ss/ folder should be in the same directory"
               echo ""
             '';
@@ -479,6 +546,18 @@ EOF
           apps.package = {
             type = "app";
             program = "${packageScript}/bin/${modName}-package";
+          };
+
+          # Client mod configure script (cross-compiles UE4SS with dwmapi.dll proxy)
+          apps.configure-client = {
+            type = "app";
+            program = "${configureClientScript}/bin/${clientModName}-configure";
+          };
+
+          # Client mod build script
+          apps.build-client = {
+            type = "app";
+            program = "${buildClientScript}/bin/${clientModName}-build";
           };
 
           # Client mod package script - creates client-side Lua-only zip

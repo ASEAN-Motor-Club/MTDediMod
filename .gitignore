@@ -4,12 +4,14 @@
 
 # Build outputs
 build-cross/
+build-cross-client/
 build/
 /CMakeLists.txt
 /toolchain.cmake
 
 # Package outputs
 package/
+package-client/
 *-package.zip
 
 # Nix

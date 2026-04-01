@@ -84,11 +84,12 @@ echo "Toolchain created at toolchain.cmake"
 
 # 4. Run CMake
 BUILD_TYPE="${BUILD_TYPE:-Game__Shipping__Win64}"
-echo "Running CMake with build type: $BUILD_TYPE"
+BUILD_DIR="${BUILD_DIR:-build-cross}"
+echo "Running CMake with build type: $BUILD_TYPE (build dir: $BUILD_DIR)"
 
 # Build CMake args
 CMAKE_ARGS=(
-    -B build-cross
+    -B "$BUILD_DIR"
     -G Ninja
     -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
@@ -112,4 +113,4 @@ export XWIN_DIR
 
 cmake "${CMAKE_ARGS[@]}" .
 
-echo "Build configuration done. Run 'cmake --build build-cross' to compile."
+echo "Build configuration done. Run 'cmake --build $BUILD_DIR' to compile."
