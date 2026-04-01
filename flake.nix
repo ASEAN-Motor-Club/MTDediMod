@@ -389,6 +389,14 @@ EOF
                 echo "✓ Copied shared folder (UEHelpers, Types.lua, etc.)"
               fi
 
+              # Copy MotorTown-specific UE4SS signatures
+              SIGNATURES_DIR="./UE4SS_Signatures"
+              if [ -d "$SIGNATURES_DIR" ]; then
+                mkdir -p "$PACKAGE_DIR/ue4ss/UE4SS_Signatures"
+                cp -r "$SIGNATURES_DIR"/* "$PACKAGE_DIR/ue4ss/UE4SS_Signatures/"
+                echo "✓ Copied UE4SS_Signatures"
+              fi
+
               # Copy project-local shared Lua libraries (MTHelpers)
               if [ -d "$SHARED_LUA_DIR" ]; then
                 cp -r "$SHARED_LUA_DIR"/* "$PACKAGE_DIR/ue4ss/Mods/shared/"
