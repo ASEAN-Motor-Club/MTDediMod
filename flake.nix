@@ -32,6 +32,10 @@
     quadlet-nix.url = "github:SEIAROTg/quadlet-nix";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     opencode.url = "github:anomalyco/opencode";
+    mt-pak-extract = {
+      url = path:./mt-pak-extract;
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs @ {
@@ -47,6 +51,7 @@
     eco-server,
     ragenix,
     quadlet-nix,
+    mt-pak-extract,
     ...
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {
@@ -170,12 +175,12 @@
                 systemd.services.syslog.serviceConfig.TimeoutStopSec = "5s";
               };
               motortown-server = {
-                enable = true;
+                enable = false;
                 enableMods = true;
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "beta";
-                modVersion = "v0.33.0-rc7";
+                modVersion = "v0.34.0-rc3";
                 enableExternalMods = {
                   CarPartsImport_P = false;
                   MoneyRun_P = true;
@@ -389,7 +394,7 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "v0.33.0-rc6";
+            modVersion = "v0.33.0-rc7";
             enableExternalMods = {
               MajasDetailWorks7_17_P = true;
               MajasMnTrailerworks7_17_P = true;
@@ -479,25 +484,6 @@
             };
           };
 
-          users.users."github-runner-amc-deploy" = {
-            isSystemUser = true;
-            group = "github-runner-amc-deploy";
-          };
-          users.groups."github-runner-amc-deploy" = {};
-
-          services.github-runners."amc-deploy" = {
-            enable = true;
-            url = "https://github.com/ASEAN-Motor-Club/amc-server";
-            tokenFile = config.age.secrets.github-runner-token.path;
-            package = nixpkgs-unstable.legacyPackages.${pkgs.system}.github-runner;
-            extraLabels = ["deploy" "nix"];
-            extraPackages = with pkgs; [nix git openssh nixos-rebuild];
-            serviceOverrides = {
-              # Allow SSH to localhost
-              ProtectHome = "none";
-            };
-          };
-
           networking.firewall.interfaces."tailscale0".allowedTCPPorts = lib.mkIf config.services.tailscale.enable [
             config.services.motortown-server.dedicatedServerConfig.HostWebAPIServerPort
             (lib.strings.toInt config.services.motortown-server.environment.MOD_SERVER_PORT)
@@ -545,16 +531,7 @@
                 mode = "400";
                 owner = "steam";
               };
-              age.secrets.github-runner-token = {
-                file = ./secrets/github-runner-token.age;
-                mode = "400";
-              };
-              age.secrets.github-runner-ssh = {
-                file = ./secrets/github-runner-ssh.age;
-                mode = "400";
-                owner = "github-runner-amc-deploy";
-                path = "/var/lib/github-runner-amc-deploy/.ssh/id_ed25519";
-              };
+
               age.secrets.opencode = {
                 file = ./secrets/opencode.age;
                 mode = "400";
@@ -780,6 +757,9 @@
             ./machines/amc-peripheral/configuration.nix
             ragenix.nixosModules.default
             amc-peripheral.nixosModules.default
+
+            # Make mt-pak-extract flake available to modules
+            {_module.args.mt-pak-extract = mt-pak-extract;}
 
             # Use opencode from the official flake — nixpkgs versions are too old
             ({pkgs, ...}: {
