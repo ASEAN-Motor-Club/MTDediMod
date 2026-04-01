@@ -3,7 +3,7 @@ let
   asean-mt-server = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH7Qg2bxMvXPlkcO148QVU5QtdreMY8bfBfMUADOuOCO";
   peripheral = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINuVGOXjiO1bfDBHLjdbi3t9mkLrN8UnHJfLKniHj3+H";
 in {
-  "steam.age".publicKeys = [owner asean-mt-server];
+  "steam.age".publicKeys = [owner asean-mt-server peripheral];
   "tailscale.age".publicKeys = [owner asean-mt-server];
   "backend.age".publicKeys = [owner peripheral asean-mt-server];
   "backend-staging.age".publicKeys = [owner asean-mt-server];
@@ -19,5 +19,5 @@ in {
   "oauth2-proxy.age".publicKeys = [owner asean-mt-server];
   "oauth2-proxy-peripheral.age".publicKeys = [owner peripheral];
   "coding-agent-app-key.age".publicKeys = [owner asean-mt-server peripheral];
-  "dokuwiki-oauth.age".publicKeys = [owner asean-mt-server];
+  "dokuwiki-oauth.age".publicKeys = [owner peripheral];
 }

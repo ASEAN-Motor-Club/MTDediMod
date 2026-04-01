@@ -1,6 +1,7 @@
 {
   config,
   pkgs,
+  lib,
   ...
 }: let
   # ── GitHub App credential helpers ──────────────────────────────────
@@ -130,12 +131,21 @@ in {
   system.stateVersion = "23.11";
   nix.settings.experimental-features = ["nix-command" "flakes"];
 
+  nixpkgs.config.allowUnfreePredicate = pkg:
+    builtins.elem (lib.getName pkg) [
+      "steam"
+      "steamcmd"
+      "steam-original"
+      "steam-unwrapped"
+    ];
+
   environment.systemPackages = with pkgs; [
     kakoune
     htop
     ffmpeg
     libopus
     nodejs
+    steamcmd
   ];
 
   # Many Node.js packages (kimaki, etc.) hardcode /bin/bash
@@ -347,6 +357,175 @@ in {
   security.acme.defaults.email = "contact@fmnxl.xyz";
   security.acme.acceptTerms = true;
 
+  # === DokuWiki ===
+  age.secrets.dokuwiki-oauth = {
+    file = ../../secrets/dokuwiki-oauth.age;
+    mode = "400";
+    owner = "dokuwiki";
+  };
+
+  services.nginx.virtualHosts."wiki.aseanmotorclub.com" = {
+    enableACME = true;
+    forceSSL = true;
+  };
+
+  services.dokuwiki = {
+    webserver = "nginx";
+    sites = let
+      dokuwiki-plugin-infobox = pkgs.stdenv.mkDerivation {
+        name = "infobox";
+        src = pkgs.fetchzip {
+          url = "https://github.com/Kanaru92/DokuWiki-InfoBox/archive/9e9b4c22289540b28728a8e7e16a871fa549906f.zip";
+          sha256 = "sha256-N6ReTPlpN1xOQ1UkhkJa7jKnHFGUg/K3hP4kZHJY8i8=";
+        };
+        sourceRoot = ".";
+        installPhase = "mkdir -p $out; cp -R source/* $out/;";
+      };
+      dokuwiki-plugin-imagebox = pkgs.stdenv.mkDerivation {
+        name = "imagebox";
+        src = fetchTarball {
+          url = "https://github.com/flammy/imagebox/tarball/master";
+          sha256 = "sha256:0ir4xavz47qhhk9xiy7rm723scygsgyhgd142js21ga0997wxsbj";
+        };
+        sourceRoot = ".";
+        installPhase = "mkdir -p $out; cp -R source/* $out/;";
+      };
+      dokuwiki-plugin-oauth = pkgs.stdenv.mkDerivation {
+        name = "oauth";
+        src = fetchTarball {
+          url = "https://github.com/cosmocode/dokuwiki-plugin-oauth/archive/refs/heads/master.tar.gz";
+          sha256 = "sha256:1c0b6iwqsllk2fp2k77k4aavz84m6cfnddp51410pxlg19mf3wib";
+        };
+        sourceRoot = ".";
+        installPhase = "mkdir -p $out; cp -R * $out/;";
+      };
+      dokuwiki-plugin-oauthgeneric = pkgs.stdenv.mkDerivation {
+        name = "oauthgeneric";
+        src = fetchTarball {
+          url = "https://github.com/cosmocode/dokuwiki-plugin-oauthgeneric/archive/refs/heads/master.tar.gz";
+          sha256 = "sha256:1adgw67g32rmx4byx7iamikg3krynl4pyp1yjmfwvdlmq8zxvg81";
+        };
+        sourceRoot = ".";
+        installPhase = "mkdir -p $out; cp -R * $out/;";
+      };
+    in {
+      "wiki.aseanmotorclub.com" = {
+        plugins = [
+          dokuwiki-plugin-infobox
+          dokuwiki-plugin-imagebox
+          dokuwiki-plugin-oauth
+          dokuwiki-plugin-oauthgeneric
+        ];
+        settings = {
+          title = "ASEAN Motor Club";
+          tagline = "AMC Wiki for Motor Town: Behind The Wheel";
+          useacl = false;
+          userewrite = true;
+          updatecheck = false;
+          
+          authtype = "oauth";
+          plugin____oauth____registerOnAuth = true;
+          plugin____oauthgeneric____key = "dokuwiki";
+          plugin____oauthgeneric____secret._file = config.age.secrets.dokuwiki-oauth.path;
+          plugin____oauthgeneric____authurl = "https://api.aseanmotorclub.com/o/authorize/";
+          plugin____oauthgeneric____tokenurl = "https://api.aseanmotorclub.com/o/token/";
+          plugin____oauthgeneric____userurl = "https://api.aseanmotorclub.com/api/users/me/";
+          plugin____oauthgeneric____json_user = "user";
+          plugin____oauthgeneric____json_name = "name";
+          plugin____oauthgeneric____json_mail = "mail";
+          plugin____oauthgeneric____json_grps = "grps";
+        };
+      };
+    };
+  };
+
+
+  # === Wiki Pipeline (game data ETL → DokuWiki) ===
+  age.secrets.steam = {
+    file = ../../secrets/steam.age;
+    mode = "400";
+    owner = "root";
+  };
+
+  systemd.services.amc-wiki-download = {
+    description = "Download Motor Town game PAK via steamcmd";
+    path = with pkgs; [ steamcmd ];
+    serviceConfig = {
+      Type = "oneshot";
+      StateDirectory = "wiki-pipeline";
+      WorkingDirectory = "/var/lib/wiki-pipeline";
+      EnvironmentFile = config.age.secrets.steam.path;
+    };
+    script = ''
+      set -euo pipefail
+      mkdir -p /var/lib/wiki-pipeline/game
+
+      steamcmd +@sSteamCmdForcePlatformType windows \
+        +force_install_dir /var/lib/wiki-pipeline/game \
+        +login "$STEAM_USERNAME" "$STEAM_PASSWORD" \
+        +app_update 1369670 validate \
+        +quit
+
+      echo "Download complete"
+    '';
+  };
+
+  systemd.services.amc-wiki-etl = {
+    description = "Motor Town ETL: extract → aggregate → wiki sync";
+    requires = [ "amc-wiki-download.service" ];
+    after = [ "amc-wiki-download.service" ];
+    path = with pkgs; [ nix git ];
+    serviceConfig = {
+      Type = "oneshot";
+      StateDirectory = "wiki-pipeline";
+      WorkingDirectory = "/var/lib/wiki-pipeline";
+      TimeoutStartSec = 3600;
+    };
+    script = ''
+      set -euo pipefail
+
+      PAK="/var/lib/wiki-pipeline/game/MotorTown/Content/Paks/MotorTown-Windows.pak"
+      WORK="/var/lib/wiki-pipeline"
+      SRC="$WORK/mt-pak-extract"
+
+      if [ ! -f "$PAK" ]; then
+        echo "ERROR: PAK file not found at $PAK"
+        exit 1
+      fi
+
+      # Clone or update mt-pak-extract source
+      echo "=== Preparing source ==="
+      if [ -d "$SRC/.git" ]; then
+        cd "$SRC"
+        git pull --ff-only origin main || true
+      else
+        rm -rf "$SRC"
+        git clone --recurse-submodules https://github.com/ASEAN-Motor-Club/mt-pak-extract.git "$SRC"
+        # Fix SSH submodule URLs to HTTPS (no SSH keys on this host)
+        cd "$SRC"
+        sed -i 's|git@github.com:|https://github.com/|g' .gitmodules
+        git submodule sync
+        git submodule update --init --recursive || true
+      fi
+      ln -sf "$PAK" "$SRC/MotorTown-Windows.pak"
+
+      echo "=== Step 1+2: Extracting assets (Rust + C#) ==="
+      cd "$SRC"
+      nix run "$SRC#extract"
+
+      echo "=== Step 3: Aggregating to SQLite ==="
+      MT_DB_PATH="$SRC/motortown.db" nix run "$SRC#aggregate"
+
+      echo "=== Step 4: Syncing to DokuWiki ==="
+      nix develop "$SRC#default" --command \
+        python3 "$SRC/scripts/wiki_sync.py" \
+          --db "$SRC/motortown.db" \
+          --wiki-dir /var/lib/dokuwiki/wiki.aseanmotorclub.com/data/pages
+
+      chown -R dokuwiki:nginx /var/lib/dokuwiki/wiki.aseanmotorclub.com/data/pages/
+      echo "=== Pipeline complete ==="
+    '';
+  };
 
   users.users.sftpuser = {
     isNormalUser = true;
