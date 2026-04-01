@@ -354,17 +354,17 @@ EOF
                 exit 1
               fi
 
-              # Copy UE4SS settings (patched for client use)
-              if [ -f "$UE4SS_SETTINGS_SRC" ]; then
+              # Copy UE4SS settings (MotorTown-tuned, GUI disabled)
+              if [ -f "./UE4SS-settings.ini" ]; then
+                cp --no-preserve=mode,ownership "./UE4SS-settings.ini" "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                echo "✓ Copied UE4SS-settings.ini (MotorTown config)"
+              elif [ -f "$UE4SS_SETTINGS_SRC" ]; then
                 cp --no-preserve=mode,ownership "$UE4SS_SETTINGS_SRC" "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
-                # Client settings: GUI disabled, no hot reload
                 sed -i 's/^ConsoleEnabled\s*=.*/ConsoleEnabled = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
                 sed -i 's/^GuiConsoleEnabled\s*=.*/GuiConsoleEnabled = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
                 sed -i 's/^GuiConsoleVisible\s*=.*/GuiConsoleVisible = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
                 sed -i 's/^EnableHotReloadSystem\s*=.*/EnableHotReloadSystem = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
-                echo "✓ Copied and patched UE4SS-settings.ini for client"
-              else
-                echo "⚠ Warning: UE4SS-settings.ini not found at $UE4SS_SETTINGS_SRC"
+                echo "✓ Copied and patched UE4SS-settings.ini (fallback)"
               fi
 
               # Copy client Lua scripts
