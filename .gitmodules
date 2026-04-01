@@ -16,3 +16,6 @@
 [submodule "MTDediMod"]
 	path = MTDediMod
 	url = https://github.com/ASEAN-Motor-Club/MTDediMod.git
+[submodule "mt-pak-extract"]
+	path = mt-pak-extract
+	url = git@github.com:ASEAN-Motor-Club/mt-pak-extract.git

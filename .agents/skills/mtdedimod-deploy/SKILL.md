@@ -11,15 +11,53 @@ MTDediMod is the UE4SS C++ mod for Motor Town dedicated servers. Releases are pa
 
 ## Release Workflow
 
-### 1. Build the mod (from `MTDediMod/`)
+> [!IMPORTANT]
+> Every deploy — test or production — **must** have a corresponding git commit and tag. Do not build from a dirty tree. Do not reuse version numbers with different code.
+
+### 1. Commit all changes
+
+All changes must be committed before building. The tree must be clean.
 
 ```bash
 cd MTDediMod
+git status  # Must show "nothing to commit, working tree clean"
+
+# If dirty, commit first:
+git add -A
+git commit -m "feat: description of changes"
+```
+
+### 2. Determine and tag the next version
+
+Check existing tags and bump the RC number:
+
+```bash
+git tag --sort=-v:refname | head -5
+# Example: v0.34.0-rc2, v0.34.0-rc1, v0.33.0-rc8, ...
+# → Next version: v0.34.0-rc3
+```
+
+**When to bump what:**
+- **RC number** (e.g. `rc2` → `rc3`): Lua changes, bug fixes, config tweaks
+- **Minor version** (e.g. `v0.34.0` → `v0.35.0-rc1`): New C++ hooks, new endpoints, ABI changes
+
+Tag the current HEAD:
+
+```bash
+git tag v0.34.0-rc3
+```
+
+### 3. Build the mod
+
+```bash
 nix run .#configure   # First time only — downloads MSVC headers via xwin
 nix run .#build       # Cross-compiles the C++ mod DLL
 ```
 
-### 2. Package the zip
+> [!WARNING]
+> If you see `warning: Git tree is dirty`, **stop**. Go back to step 1. Building from a dirty tree means the zip won't match the tag.
+
+### 4. Package the zip
 
 ```bash
 nix run .#package
@@ -31,44 +69,42 @@ This automatically:
 - Downloads legacy Lua binaries (luasocket, cjson, mime) from the v0.30.0 release via a Nix `fetchzip` derivation
 - Patches UE4SS settings for production (disables console/debug GUI)
 
-### 3. Upload to the release server
+### 5. Upload to the release server
 
 ```bash
-scp MotorTownMods-package.zip root@asean-mt-server:/var/lib/mod-releases/MotorTownMods_vX.Y.Z.zip
+scp MotorTownMods-package.zip root@asean-mt-server:/var/lib/mod-releases/MotorTownMods_v0.34.0-rc3.zip
 ```
 
 Mod zips are served locally from `/var/lib/mod-releases/` on `asean-mt-server`. Containers access this via a read-only bind mount; the main server service accesses it directly.
 
-### 4. Set the version in Nix config
+### 6. Set the version in Nix config
 
-In the root `flake.nix`, update the `modVersion` for the target container:
+In the root `flake.nix`, update the `modVersion` for the **target server only**:
 
 ```nix
-# Test server
-modVersion = "vX.Y.Z";
+# Test server — update this for test deploys
+modVersion = "v0.34.0-rc3";
 
-# Main server (in nixosModules.motortown-server)
-modVersion = "vX.Y.Z";
+# Main server (in nixosModules.motortown-server) — update separately when promoting
+modVersion = "v0.33.0-rc7";
 ```
 
 **No hash calculation needed** — the mod is downloaded at runtime via `curl` during service `preStart`.
 
-### 5. Deploy
+### 7. Deploy and restart
 
 ```bash
 # From amc-server root (inside nix develop or with direnv)
 deploy root@asean-mt-server
 ```
 
-### 6. Purge the mod cache and restart
-
-The container downloads and caches the mod zip at startup. When updating to a new version, or replacing the zip for the same version tag, you **must** purge the cache on the host so the container re-downloads / re-extracts:
+Then purge the old cache and restart the container:
 
 ```bash
-# 1. Remove cached zip AND extracted directory (replace test/vX.Y.Z as needed)
+# 1. Remove cached zip AND extracted directory for the OLD version
 ssh root@asean-mt-server "\
-  rm -f  /var/lib/motortown-server-test/.mod-cache/MotorTownMods_vX.Y.Z.zip && \
-  rm -rf /var/lib/motortown-server-test/.mod-cache/extracted-vX.Y.Z"
+  rm -f  /var/lib/motortown-server-test/.mod-cache/MotorTownMods_v0.34.0-rc2.zip && \
+  rm -rf /var/lib/motortown-server-test/.mod-cache/extracted-v0.34.0-rc2"
 
 # 2. Fix version.dll ownership if it was previously written by root
 #    (the container's steam user can't overwrite a root-owned file)
@@ -89,7 +125,30 @@ ssh root@asean-mt-server "tail -n 50 /var/lib/motortown-server-test/MotorTown/Bi
 - `INFO: Mod loaded`
 - No `ERROR` lines about missing modules
 
-### Quick Lua-Only Hot Reload
+### 8. Push the tag
+
+After verifying the deploy is healthy:
+
+```bash
+cd MTDediMod
+git push origin v0.34.0-rc3
+```
+
+### Promoting to production
+
+When a test RC is validated and ready for the main server:
+
+1. Update `modVersion` in the main server section of `flake.nix` to match the tested RC version
+2. `deploy root@asean-mt-server`
+3. Purge the old main server cache and restart (same steps as above but with `/var/lib/motortown-server/` paths)
+4. No new tag needed — the RC tag already tracks the code
+
+---
+
+## Quick Lua-Only Hot Reload (debugging only)
+
+> [!CAUTION]
+> Hot reload is for **live debugging only**. If the fix is good, commit → tag → deploy properly before calling it done. Untracked hot reloads create ghost versions that can't be reproduced.
 
 For Lua-only changes (no C++ DLL rebuild), skip the full deploy cycle. SCP scripts directly to the installed directory and hit the reload endpoint:
 
@@ -103,6 +162,10 @@ curl -s -X POST http://asean-mt-server:5001/mods/reload || true
 ```
 
 Players stay connected. The mod webserver restarts and re-registers all handlers. No container restart, no cache purge, no NixOS deploy needed.
+
+**After hot-reload debugging:** If the changes are keepers, go back and do a proper versioned release (steps 1–8).
+
+---
 
 ## How Runtime Download Works
 
