@@ -1,5 +1,6 @@
 local vehicleManager = require("VehicleManager")
 local teleportManager = require("TeleportManager")
+local satNav = require("SatNav")
 
 local Commands = {}
 
@@ -38,6 +39,12 @@ Commands["/teleport"] = function(PC, args)
 end
 
 Commands["/tp"] = Commands["/teleport"]
+
+Commands["/satnav"] = function(PC, args)
+  satNav.Toggle()
+end
+
+Commands["/nav"] = Commands["/satnav"]
 
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then
