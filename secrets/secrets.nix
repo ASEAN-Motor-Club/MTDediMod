@@ -9,6 +9,7 @@ in {
   "backend-staging.age".publicKeys = [owner asean-mt-server];
   "cookies.age".publicKeys = [owner peripheral asean-mt-server];
   "ecoUserToken.age".publicKeys = [owner peripheral asean-mt-server];
+  "github-pat.age".publicKeys = [owner peripheral];
   "github-runner-token.age".publicKeys = [owner asean-mt-server];
   "github-runner-token-peripheral.age".publicKeys = [owner peripheral];
   "github-runner-ssh.age".publicKeys = [owner asean-mt-server peripheral];
