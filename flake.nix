@@ -87,7 +87,7 @@
             stripRoot = false;
           };
 
-          # Client-side proxy path (dwmapi.dll instead of version.dll)
+          # Client-side proxy path
           clientProxyPath = "C:\\Windows\\System32\\dwmapi.dll";
           clientBuildDir = "build-cross-client";
 

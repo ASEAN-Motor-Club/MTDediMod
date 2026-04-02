@@ -162,14 +162,15 @@ def main():
 
         f.write("    return hModule;\n}\n\n")
 
-        # DllMain
+        # DllMain - CRITICAL: setup_functions() must run BEFORE load_ue4ss_dll()
+        # because UE4SS initialization may call proxied Windows API functions.
+        # If mProcs[] is not populated, the ASM trampolines jump to address 0 → crash.
         f.write("BOOL WINAPI DllMain(HMODULE hInstDll, DWORD fdwReason, LPVOID lpvReserved)\n{\n")
         f.write("    if (fdwReason == DLL_PROCESS_ATTACH)\n    {\n")
         f.write("        load_original_dll();\n")
+        f.write("        setup_functions();\n\n")
         f.write("        HMODULE hUE4SSDll = load_ue4ss_dll(hInstDll);\n")
-        f.write("        if (hUE4SSDll)\n        {\n")
-        f.write("            setup_functions();\n        }\n")
-        f.write("        else\n        {\n")
+        f.write("        if (!hUE4SSDll)\n        {\n")
         f.write("            MessageBox(nullptr, L\"Failed to load UE4SS.dll. Please see the docs on correct installation: \"\n")
         f.write("                \"https://docs.ue4ss.com/installation-guide\", L\"UE4SS Error\", MB_OK | MB_ICONERROR);\n")
         f.write("            ExitProcess(0);\n        }\n    }\n")
