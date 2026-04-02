@@ -2,10 +2,13 @@
 ---Reads shortcut config from ModConfig and registers keyboard/gamepad binds
 
 local config = require("ModConfig")
+local statics = require("Statics")
+local vehicleManager = require("VehicleManager")
 
 --- Minimum interval between shortcut triggers (ms)
 local DEBOUNCE_MS = 1000
 local lastTriggerTime = 0
+local lastRaycastDespawnTriggerTime = 0
 
 ---Send the /arrest command via ServerSendChat
 local function TriggerArrest()
@@ -124,8 +127,63 @@ local function RegisterGamepadShortcut()
     end
 end
 
+---Trigger raycast despawn via VehicleManager
+local function TriggerRaycastDespawn()
+    local now = os.clock() * 1000
+    if now - lastRaycastDespawnTriggerTime < DEBOUNCE_MS then
+        return
+    end
+    lastRaycastDespawnTriggerTime = now
+
+    ExecuteInGameThread(function()
+        vehicleManager.RaycastDespawnVehicle()
+    end)
+end
+
+---Register the raycast despawn keyboard shortcut
+local function RegisterRaycastDespawnShortcut()
+    local shortcuts = config.GetModConfig("shortcuts")
+    if not shortcuts or not shortcuts.raycast_despawn or not shortcuts.raycast_despawn.keyboard then
+        LogOutput("WARN", "No keyboard shortcut config for raycast_despawn")
+        return
+    end
+
+    local kb = shortcuts.raycast_despawn.keyboard
+    local keyCode = Key[kb.key]
+    if not keyCode then
+        LogOutput("ERROR", "Invalid shortcut key: %s", kb.key)
+        return
+    end
+
+    local mods = {}
+    if kb.modifiers then
+        for _, m in ipairs(kb.modifiers) do
+            if ModifierKey[m] then
+                table.insert(mods, ModifierKey[m])
+            else
+                LogOutput("WARN", "Unknown modifier key: %s", m)
+            end
+        end
+    end
+
+    RegisterKeyBind(keyCode, mods, TriggerRaycastDespawn)
+    LogOutput("INFO", "Raycast despawn keyboard shortcut registered: %s + %s",
+        table.concat(kb.modifiers or {}, "+"), kb.key)
+end
+
+---Reload the mod via UE4SS hot reload
+local function RegisterReloadModShortcut()
+    RegisterKeyBind(Key.R, { ModifierKey.CONTROL, ModifierKey.SHIFT }, function()
+        LogOutput("INFO", "Reloading mod: %s", statics.ModName)
+        ReloadMod(statics.ModName)
+    end)
+    LogOutput("INFO", "Reload mod shortcut registered: Ctrl+Shift+R")
+end
+
 -- Initialize shortcuts
 RegisterKeyboardShortcut()
 RegisterGamepadShortcut()
+RegisterRaycastDespawnShortcut()
+RegisterReloadModShortcut()
 
 return {}

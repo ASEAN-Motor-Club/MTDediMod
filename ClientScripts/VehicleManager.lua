@@ -101,8 +101,46 @@ local function DespawnOtherPlayerVehicles(PC)
   return count
 end
 
+---Despawn a vehicle pointed at via camera center raycast
+---Calls PC:ServerDespawnVehicle directly (server validates admin)
+local function RaycastDespawnVehicle()
+  local wasHit, hitResult = GetHitResultFromCenterLineTrace()
+  if not wasHit then
+    LogOutput("WARN", "Raycast hit nothing")
+    return
+  end
+
+  local actor = GetActorFromHitResult(hitResult)
+  if not actor:IsValid() then
+    LogOutput("WARN", "Hit actor is not valid")
+    return
+  end
+
+  local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+  ---@cast vehicleClass UClass
+
+  if not vehicleClass:IsValid() then
+    LogOutput("ERROR", "Vehicle class not found")
+    return
+  end
+
+  if not actor:IsA(vehicleClass) then
+    LogOutput("INFO", "Raycast hit non-vehicle: %s", actor:GetFullName())
+    return
+  end
+
+  local PC = GetMyPlayerController()
+  if PC:IsValid() then
+    ---@cast actor AMTVehicle
+    local vehicleName = actor:GetFullName()
+    PC:ServerDespawnVehicle(actor, 0)
+    LogOutput("INFO", "Despawned vehicle via raycast: %s", vehicleName)
+  end
+end
+
 return {
   DespawnPlayerVehicle = DespawnPlayerVehicle,
   DespawnAllPlayerVehicles = DespawnAllPlayerVehicles,
   DespawnOtherPlayerVehicles = DespawnOtherPlayerVehicles,
+  RaycastDespawnVehicle = RaycastDespawnVehicle,
 }

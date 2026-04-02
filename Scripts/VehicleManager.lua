@@ -1874,6 +1874,41 @@ RegisterConsoleCommandHandler("despawnvehicle", function()
   return true
 end)
 
+RegisterKeyBind(Key.X, { ModifierKey.CONTROL, ModifierKey.SHIFT }, function()
+  local wasHit, hitResult = GetHitResultFromCenterLineTrace()
+  if not wasHit then
+    LogOutput("WARN", "Raycast hit nothing")
+    return
+  end
+
+  local actor = GetActorFromHitResult(hitResult)
+  if not actor:IsValid() then
+    LogOutput("WARN", "Hit actor is not valid")
+    return
+  end
+
+  local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+  ---@cast vehicleClass UClass
+
+  if not vehicleClass:IsValid() then
+    LogOutput("ERROR", "Vehicle class not found")
+    return
+  end
+
+  if not actor:IsA(vehicleClass) then
+    LogOutput("INFO", "Raycast hit non-vehicle: %s", actor:GetFullName())
+    return
+  end
+
+  if not actor:IsActorBeingDestroyed() then
+    ---@cast actor AMTVehicle
+    local vehicleName = actor:GetFullName()
+    if DespawnVehicleById(actor.Net_VehicleId, GetPlayerUniqueId(GetMyPlayerController())) then
+      LogOutput("INFO", "Despawned vehicle via raycast: %s", vehicleName)
+    end
+  end
+end)
+
 RegisterConsoleCommandHandler("setvehicleparam", function(Cmd, CommandParts, Ar)
   if not pcall(function()
         local fields = SplitString(table.remove(CommandParts, 1), ".")
