@@ -42,14 +42,14 @@ Init()
 ---Get actor from hit result
 ---@param HitResult FHitResult
 ---@return AActor
-local function GetActorFromHitResult(HitResult)
-  if UnrealVersion:IsBelow(5, 0) then
-    return HitResult.Actor:Get()
-  elseif UnrealVersion:IsBelow(5, 4) then
-    return HitResult.HitObjectHandle.Actor:Get()
-  else
-    return HitResult.HitObjectHandle.ReferenceObject:Get()
+function GetActorFromHitResult(HitResult)
+  local obj = HitResult.HitObjectHandle.ReferenceObject:Get()
+  local actorClass = StaticFindObject("/Script/Engine.Actor")
+  ---@cast actorClass UClass
+  while obj:IsValid() and not obj:IsA(actorClass) do
+    obj = GetKismetSystemLibrary():GetOuterObject(obj)
   end
+  return obj
 end
 
 local selectedActor = CreateInvalidObject()

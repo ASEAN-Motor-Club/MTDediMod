@@ -27,6 +27,9 @@ local modConfig = {
         arrest = {
             keyboard = { key = "A", modifiers = { "CONTROL" } },
             gamepad = { buttons = { "Gamepad_RightShoulder", "Gamepad_FaceButton_Bottom" } }
+        },
+        raycast_despawn = {
+            keyboard = { key = "X", modifiers = { "CONTROL", "SHIFT" } },
         }
     },
     teleportPoints = {
