@@ -141,6 +141,16 @@
             add_header 'Access-Control-Allow-Methods' 'GET, OPTIONS' always;
           '';
         };
+        "/api/player_positions_b" = {
+          proxyPass = "http://localhost:9000/api/player_positions_b";
+          recommendedProxySettings = true;
+          extraConfig = ''
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            add_header 'Access-Control-Allow-Origin' '*' always;
+          '';
+        };
         "/api" = {
           proxyPass = "http://127.0.0.1:9000/api";
           recommendedProxySettings = true;
@@ -172,6 +182,13 @@
         };
         "/eco" = {
           proxyPass = "http://127.0.0.1:3001";
+        };
+        "/errors/" = {
+          alias = "/var/lib/amc/error-reports/";
+          extraConfig = ''
+            autoindex off;
+            types { text/html html; }
+          '';
         };
         "/" = {
           root = "/srv/www";

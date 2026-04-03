@@ -89,6 +89,32 @@ in {
     Storage=none
   '';
 
+  # ── Nix GitHub App token refresh ────────────────────────────────────
+  # GitHub App installation tokens expire after 1 hour.
+  # This timer regenerates the token every 30 min and writes it to
+  # /etc/nix/github-access-tokens.conf which nix.conf !include's.
+  systemd.services.nix-github-token-refresh = {
+    description = "Refresh GitHub App token for Nix daemon";
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig.Type = "oneshot";
+    path = [ gh-token ];
+    script = ''
+      set -euo pipefail
+      TOKEN=$(gh-token)
+      mkdir -p /etc/nix
+      echo "access-tokens = github.com=$TOKEN" > /etc/nix/github-access-tokens.conf
+      chmod 644 /etc/nix/github-access-tokens.conf
+    '';
+  };
+  systemd.timers.nix-github-token-refresh = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "30s";
+      OnUnitActiveSec = "30min";
+    };
+  };
+
   # ── Data volume bind mounts ────────────────────────────────────────
   # The 99GB volume is mounted at /var/lib/data (hardware-configuration.nix).
   # Bind-mount subdirectories to their expected paths so services work
@@ -110,7 +136,7 @@ in {
   networking.domain = "";
   networking.firewall = {
     enable = true;
-    allowedTCPPorts = [22 80 443 8008 1935 1936];
+    allowedTCPPorts = [22 80 443 8000 8008 1935 1936];
     allowedUDPPorts = [1935];
     # Icecast admin UI accessible only over Tailscale
     interfaces."tailscale0".allowedTCPPorts = [8000];
@@ -749,6 +775,21 @@ in {
       - `flake.nix` — flake wiring, secrets, overlays
       - `amc-peripheral/` — submodule with the radio/bot Python package
       - `secrets/secrets.nix` — ragenix secret definitions
+
+      ## GitHub Authentication
+
+      All GitHub access uses the **GitHub App** (`asean-coding-agent[bot]`).
+      There is no static PAT — tokens are generated on demand and expire after 1 hour.
+
+      - **Git push/pull**: Automatic — `git-credential-github-app` is the global credential helper.
+      - **GitHub CLI** (`gh pr create`, etc.): Run `export GH_TOKEN=$(gh-token)` first.
+      - **Nix fetches**: Automatic — a systemd timer (`nix-github-token-refresh`) refreshes the token every 30 min.
+
+      If Nix builds fail with "Bad credentials" or 401 errors on GitHub fetches:
+      ```bash
+      sudo systemctl start nix-github-token-refresh
+      ```
+      Do NOT suggest creating or regenerating a PAT — the GitHub App handles everything.
 
       ## Architecture Notes
 
