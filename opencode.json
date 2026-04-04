@@ -1,0 +1,88 @@
+{
+  "commands": {
+    "/commit": {
+      "description": "Quality-checked commit workflow with tests, lint, type checks, and atomic commits",
+      "steps": [
+        {
+          "name": "discovery",
+          "description": "Read AGENTS.md files to identify project-specific commands for testing, linting, migrations, and type checking."
+        },
+        {
+          "name": "quality-safety-checks",
+          "description": "Run quality and safety checks before committing.",
+          "checks": [
+            {
+              "id": "tests",
+              "description": "Non-trivial changes/fixes should be accompanied by tests. If there are none, prompt the user whether tests should be created and run before continuing."
+            },
+            {
+              "id": "migrations",
+              "description": "If models.py changed, ensure migrations are generated and included.",
+              "command": "cd amc-backend && python src/manage.py makemigrations --check --dry-run",
+              "fix_command": "cd amc-backend && python src/manage.py makemigrations"
+            },
+            {
+              "id": "types",
+              "description": "Ensure non-trivial changes maintain type annotation rigor. Run the type checker if it exists.",
+              "command": "cd amc-backend && nix flake check .#pyrefly"
+            },
+            {
+              "id": "secrets",
+              "description": "Scan for hardcoded secrets or leftover debug statements (print, breakpoint)."
+            },
+            {
+              "id": "dependencies",
+              "description": "If new imports are added, verify if pyproject.toml or Nix files need updating."
+            }
+          ]
+        },
+        {
+          "name": "testing",
+          "description": "Run the test suite.",
+          "steps": [
+            "Locate test suite instructions in the README.md or AGENTS.md.",
+            "For non-trivial changes or refactors, adjust existing tests or implement new ones.",
+            "Run the tests. If they fail, fix the code before committing."
+          ],
+          "commands": [
+            {
+              "label": "Nix flake check (recommended, no local DB needed)",
+              "command": "cd amc-backend && nix flake check .#pytest"
+            },
+            {
+              "label": "Local pytest (requires existing PostgreSQL + Redis)",
+              "command": "cd amc-backend && python -m pytest src/ --tb=short -q"
+            },
+            {
+              "label": "Django test runner",
+              "command": "cd amc-backend && uv run task test"
+            }
+          ]
+        },
+        {
+          "name": "lint",
+          "description": "Run linters and auto-fix safe issues.",
+          "commands": [
+            {
+              "label": "Ruff lint with auto-fix",
+              "command": "cd amc-backend && ruff check --fix"
+            },
+            {
+              "label": "Ruff lint via Nix flake check",
+              "command": "cd amc-backend && nix flake check .#ruff"
+            }
+          ],
+          "on_unsafe_fix": "Hold the commit and ask the user if a fix is potentially unsafe before applying."
+        },
+        {
+          "name": "commit",
+          "description": "Review the diff and create atomic commits.",
+          "rules": [
+            "Split unrelated changes (e.g., refactor vs. feat) into separate commits.",
+            "Use Conventional Commits best practices."
+          ]
+        }
+      ]
+    }
+  }
+}
