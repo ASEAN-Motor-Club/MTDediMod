@@ -25,7 +25,7 @@ local modConfig = {
     modVersion = statics.ModVersion,
     shortcuts = {
         arrest = {
-            keyboard = { key = "A", modifiers = { "CONTROL" } },
+            keyboard = { key = "A", modifiers = { "CONTROL", "SHIFT" } },
             gamepad = { buttons = { "Gamepad_RightShoulder", "Gamepad_FaceButton_Bottom" } }
         }
     },

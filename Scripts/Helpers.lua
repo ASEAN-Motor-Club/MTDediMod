@@ -44,12 +44,22 @@ Init()
 ---@param HitResult FHitResult
 ---@return AActor
 local function GetActorFromHitResult(HitResult)
+  local actorClass = StaticFindObject("/Script/Engine.Actor")
+  ---@cast actorClass UClass
+
   if UnrealVersion:IsBelow(5, 0) then
     return HitResult.Actor:Get()
   elseif UnrealVersion:IsBelow(5, 4) then
     return HitResult.HitObjectHandle.Actor:Get()
   else
-    return HitResult.HitObjectHandle.ReferenceObject:Get()
+    -- In UE 5.5, ReferenceObject can return a component (e.g. StaticMeshComponent)
+    -- instead of the actor. Walk up the Outer chain to find the owning actor,
+    -- mirroring what the C++ FHitResult::GetActor() does internally.
+    local hitObject = HitResult.HitObjectHandle.ReferenceObject:Get()
+    if hitObject:IsValid() and not hitObject:IsA(actorClass) then
+      hitObject = hitObject:GetOuter()
+    end
+    return hitObject
   end
 end
 
