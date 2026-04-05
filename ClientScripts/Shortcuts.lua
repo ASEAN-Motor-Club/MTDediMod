@@ -334,6 +334,7 @@ end
 RegisterKeyboardShortcut()
 RegisterGamepadShortcut()
 RegisterKeyBind(Key.X, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnAimed)
+RegisterKeyBind(Key.RIGHT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnAimed)
 RegisterKeyBind(Key.I, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.T, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerTeleportDialog)
