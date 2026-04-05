@@ -2,26 +2,76 @@
 
 ## Overview
 
-**MTDediMod** is a C++ and Lua mod for the Motor Town Dedicated Server. It is built on top of [RE-UE4SS](https://github.com/ASEAN-Motor-Club/RE-UE4SS), an Unreal Engine 4 script system and mod loader. 
+**MTDediMod** is a C++ and Lua mod for Motor Town. It is built on top of [RE-UE4SS](https://github.com/ASEAN-Motor-Club/RE-UE4SS), an Unreal Engine 4 script system and mod loader.
 
-This repository contains:
-1. **C++ Mods** (`src/`) — Hooks into UE4 engine logic, runs a local management webserver (port `55000` / `55001`), and emits events to the AMC backend.
-2. **Lua Scripts** (`Scripts/` & `shared/`) — Game logic extensions and API handlers.
-3. **Nix Toolchain** (`flake.nix` & `setup_cross_compile.sh`) — A fully reproducible, zero-setup cross-compilation toolchain for building the Windows DLL from Linux or macOS.
+This repository produces **two independent artifacts**:
+
+| Artifact | Output | Proxy DLL | Source | Distribution |
+|----------|--------|-----------|--------|-------------|
+| **Server mod** | `MotorTownMods-package.zip` | `version.dll` | `src/`, `Scripts/`, `shared/` | Downloaded by game server at startup |
+| **Client mod** | `MotorTownClientMod-package.zip` | `dwmapi.dll` | `ClientScripts/`, `shared/` | Distributed to players |
 
 ---
 
-## Mod Architecture
+## Code Organization
+
+- `src/` — C++ source code. Compiles into `MotorTownMods.dll`.
+  - `dllmain.cpp`: Entry point, registers Lua functions, hooks Unreal Engine functions (e.g., Event Owner creation, Webhooks).
+- `Scripts/` — **Server-side** Lua scripts loaded by UE4SS at runtime.
+- `ClientScripts/` — **Client-side** Lua scripts bundled into the client mod.
+- `shared/` — Shared Lua utilities used by both server and client scripts.
+- `client-signatures/` — UE4SS_Signatures for Motor Town client binary.
+- `types/` — Lua type annotations for server-side game APIs (for IntelliSense).
+- `client-types/` — Lua type annotations for client-side game APIs.
 
 ### Dependencies
-- **RE-UE4SS**: The underlying mod loader. MTDediMod points to the `main` branch of the AMC fork (`ASEAN-Motor-Club/RE-UE4SS`).
+- **RE-UE4SS**: The underlying mod loader. Points to the `main` branch of the AMC fork (`ASEAN-Motor-Club/RE-UE4SS`).
 - **UEPseudo**: A private submodule of RE-UE4SS. Requires valid GitHub authentication to fetch during the Nix build phase.
 
-### Code Organization
-- `src/` — The main C++ source code. Compiles into `MotorTownMods.dll`.
-  - `dllmain.cpp`: Entry point, registers Lua functions, hooks Unreal Engine functions (e.g., Event Owner creation, Webhooks).
-- `Scripts/` — Lua scripts loaded directly by UE4SS at runtime.
-- `shared/` — Shared Lua files exposing utility functions utilized by `Scripts/`.
+---
+
+## Versioning
+
+Server and client mods are versioned **independently** using prefixed git tags:
+
+```
+server/v0.34.0-rc5    # server mod releases
+client/v0.1.0         # client mod releases
+```
+
+### When to bump what
+
+| Change | Server tag | Client tag |
+|--------|-----------|------------|
+| Server Lua fix (`Scripts/`) | bump RC | no change |
+| Client Lua fix (`ClientScripts/`) | no change | bump RC or patch |
+| New C++ hook (`src/`) | bump minor | bump minor (if proxy DLL rebuilt) |
+| Shared Lua change (`shared/`) | bump both | bump both |
+| Config-only tweak | bump RC on affected side | — |
+
+### Listing existing tags
+
+```bash
+git tag -l 'server/*' --sort=-v:refname | head -5   # Server versions
+git tag -l 'client/*' --sort=-v:refname | head -5   # Client versions
+```
+
+> **Note**: Legacy tags (`v0.20.x` through `v0.34.0-rc4`) predate the split and cover server-only releases.
+
+---
+
+## Changelog
+
+Every release **must** update [`CHANGELOG.md`](CHANGELOG.md) before tagging.
+
+The changelog uses [Keep a Changelog](https://keepachangelog.com/) format with separate **Server** and **Client** sections. Each version gets a `### [tag] — YYYY-MM-DD` heading with categorized entries (Added, Changed, Fixed, Removed).
+
+### Rules
+
+1. Add the entry **before tagging** — the changelog update should be part of the tagged commit
+2. New entries go **at the top** of their section (Server or Client)
+3. One entry per tag — each tag gets exactly one version block
+4. Keep descriptions concise — one line per change
 
 ---
 
@@ -29,9 +79,7 @@ This repository contains:
 
 The entire build pipeline is managed by **Nix**. It provisions the Clang compiler, downloads Windows MSVC headers (via `xwin`), and compiles the C++ codebase for the `x86_64-windows` target.
 
-### Building Locally (macOS or Linux)
-
-You must have Nix installed with flake support.
+### Server Mod Build
 
 ```bash
 # 1. Download MSVC headers and run CMake configuration
@@ -44,68 +92,33 @@ nix run --no-update-lock-file .#build
 nix run --no-update-lock-file .#package
 ```
 
+### Client Mod Build
+
+```bash
+# 1. Download MSVC headers and configure with dwmapi.dll proxy
+nix run --no-update-lock-file .#configure-client
+
+# 2. Cross-compile UE4SS with dwmapi.dll proxy
+nix run --no-update-lock-file .#build-client
+
+# 3. Package the client zip (MotorTownClientMod-package.zip)
+nix run --no-update-lock-file .#package-client
+```
+
+The client package bundles `dwmapi.dll`, `UE4SS.dll`, client Lua scripts from `ClientScripts/`, shared Lua libraries, and `UE4SS_Signatures`. UE4SS settings are patched for client use (console + hot reload enabled).
+
 > **Note**: The `--no-update-lock-file` flag is crucial to prevent Nix from attempting to hit the GitHub API to update locked upstream inputs (like `nixpkgs` or `flake-parts`), which can cause unnecessary authentication errors if a restricted PAT is configured system-wide.
 
 ### GitHub Actions CI
 
-The `.github/workflows/nix-release.yml` workflow runs on every push. It performs the exact same three Nix commands listed above on an Ubuntu runner.
+The `.github/workflows/nix-release.yml` workflow triggers on tag pushes matching `server/v*` and `client/v*`. It performs the Nix build on an Ubuntu runner.
 
-**Authentication Note:** 
-Because `UEPseudo` is a private submodule of the `Re-UE4SS` organization, the Nix daemon requires authentication to fetch it. The CI uses a **Classic GitHub PAT** (with `repo` scope) passed to the Nix installer via `access-tokens = github.com=PAT`. 
+**Authentication Note:**
+Because `UEPseudo` is a private submodule of the `Re-UE4SS` organization, the Nix daemon requires authentication to fetch it. The CI uses a **Classic GitHub PAT** (with `repo` scope) passed to the Nix installer via `access-tokens = github.com=PAT`.
 *Do not use a fine-grained PAT.* Fine-grained PATs are scoped to specific organizations and will cause Nix to throw HTTP 401 Unauthorized errors when it attempts to fetch public inputs (like `flake-parts`) via the GitHub API using that token.
 
 ---
 
-## Deployment Pipeline (Self-Hosted)
+## Deployment
 
-We utilize a self-hosted artifact deployment model to bypass GitHub Actions release limitations and deploy quickly from local builds.
-
-### 1. Upload Artifact
-Once the zip is built locally via `nix run .#package`, `rsync` it into the Nginx hosting directory on the peripheral server:
-
-```bash
-VERSION="v0.31.0"
-rsync -avz MotorTownMods-package.zip \
-  root@amc-peripheral:/var/lib/mod-releases/MotorTownMods_${VERSION}.zip
-```
-
-### 2. Update `mods.nix` in amc-server
-In the root `amc-server` repository, update `motortown-server-flake/mods.nix` to include the newly hosted URL. 
-First, get the SRI hash of the file:
-```bash
-nix hash to-sri --type sha256 $(nix-prefetch-url --unpack https://www.aseanmotorclub.com/releases/MotorTownMods_${VERSION}.zip)
-```
-Add the block to the `motorTownModsVersions` attribute set in `mods.nix`:
-```nix
-    "v0.31.0" = let
-      release = pkgs.fetchzip {
-        url = "https://www.aseanmotorclub.com/releases/MotorTownMods_v0.31.0.zip";
-        hash = "sha256-<THE_SRI_HASH>=";
-        stripRoot = false;
-      };
-    in {
-      ue4ss = release;
-      mod = "${release}/ue4ss/Mods/MotorTownMods";
-      shared = "${release}/ue4ss/Mods/shared";
-    };
-```
-
-### 3. Deploy NixOS Server
-Bump the `modVersion` in `amc-server/flake.nix` (e.g., for `motortown-server-containers-test`), and trigger a deploy:
-
-```bash
-deploy root@asean-mt-server
-```
-
-### 4. Apply the Mod
-Once deployed, the `motortown-server` service container needs to be restarted to inject the new DLL and scripts:
-
-```bash
-ssh root@asean-mt-server "systemctl restart container@motortown-server-test.service"
-```
-
-Verify by listening to the UE4SS output:
-```bash
-ssh root@asean-mt-server
-machinectl shell motortown-server-test /bin/bash -c "tail -f /var/lib/motortown-server/MotorTown/Binaries/Win64/ue4ss/UE4SS.log"
-```
+For the full end-to-end deployment workflow (uploading, NixOS config, cache purging, server restart, client distribution), see the [mtdedimod-deploy skill](../.agents/skills/mtdedimod-deploy/SKILL.md) in the parent `amc-server` repository.
