@@ -275,7 +275,18 @@ local function HandleTeleportPlayer(session)
               return
             end
             if pawn:IsA(charClass) then
-              PC:ServerTeleportCharacter(location, false, false)
+              if data.Force then
+                -- Bypass Motor Town's native suspect check which blocks
+                -- ServerTeleportCharacter for suspects with a popup.
+                -- K2_SetActorLocation moves the pawn server-side, then
+                -- ClientTeleportedCharacter notifies the owning client
+                -- (camera reset, loading screen, etc.) — mimicking what
+                -- ServerTeleportCharacter does internally sans suspect gate.
+                pawn:K2_SetActorLocation(location, false, {}, true)
+                PC:ClientTeleportedCharacter(location)
+              else
+                PC:ServerTeleportCharacter(location, false, false)
+              end
             elseif pawn:IsA(vehicleClass) and data.NoVehicles then
               return json.stringify { error = string.format("Failed to teleport player %s: Player is inside a vehicle", playerId) }, nil, 400
             elseif pawn:IsA(vehicleClass) then
