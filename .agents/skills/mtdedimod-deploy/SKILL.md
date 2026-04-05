@@ -1,18 +1,111 @@
 ---
 name: mtdedimod-deploy
-description: Building, packaging, and deploying MTDediMod releases to the Motor Town game servers
+description: Building, packaging, and deploying MTDediMod releases (server and client mods)
 ---
 
 # MTDediMod Deployment
 
 ## Overview
 
-MTDediMod is the UE4SS C++ mod for Motor Town dedicated servers. Releases are packaged as zips and served via HTTP — the game server downloads them at startup via `curl`.
+MTDediMod is the UE4SS C++ mod for Motor Town. The repo produces **two independent artifacts**:
 
-## Release Workflow
+| Artifact | Tag prefix | Source | Proxy DLL | Distribution |
+|----------|-----------|--------|-----------|-------------|
+| **Server mod** (`MotorTownMods-package.zip`) | `server/v*` | `src/`, `Scripts/`, `shared/` | `version.dll` | Downloaded by game server at startup via `curl` |
+| **Client mod** (`MotorTownClientMod-package.zip`) | `client/v*` | `ClientScripts/`, `shared/` | `dwmapi.dll` | Distributed to players (manual install / Discord) |
+
+Each artifact has **independent semver** — a server hotfix does not bump the client version and vice versa.
 
 > [!IMPORTANT]
 > Every deploy — test or production — **must** have a corresponding git commit and tag. Do not build from a dirty tree. Do not reuse version numbers with different code.
+
+---
+
+## Versioning
+
+### Tag scheme
+
+```
+server/v0.34.0-rc5    # server mod releases
+client/v0.1.0         # client mod releases
+```
+
+### When to bump what
+
+| Change | Server tag | Client tag |
+|--------|-----------|------------|
+| Server Lua fix (`Scripts/`) | bump RC | no change |
+| Client Lua fix (`ClientScripts/`) | no change | bump RC or patch |
+| New C++ hook (`src/`) | bump minor | bump minor (if proxy DLL rebuilt) |
+| Shared Lua change (`shared/`) | bump both | bump both |
+| Config-only tweak | bump RC on affected side | — |
+
+### Listing existing tags
+
+```bash
+cd MTDediMod
+git tag -l 'server/*' --sort=-v:refname | head -5   # Server versions
+git tag -l 'client/*' --sort=-v:refname | head -5   # Client versions
+```
+
+> [!NOTE]
+> Legacy tags (`v0.20.x` through `v0.34.0-rc4`) predate the split and cover server-only releases.
+
+---
+
+## Changelog
+
+Every release **must** update [`CHANGELOG.md`](../../../MTDediMod/CHANGELOG.md) before tagging.
+
+### Format
+
+The changelog uses [Keep a Changelog](https://keepachangelog.com/) format with separate `## Server` and `## Client` sections. Each version entry goes under its respective section:
+
+```markdown
+## Server
+
+### [server/v0.35.0-rc1] — 2026-04-10
+
+#### Added
+- New webhook endpoint for cargo events
+
+#### Fixed
+- Race condition in player teleport handler
+
+---
+
+## Client
+
+### [client/v0.2.0] — 2026-04-10
+
+#### Added
+- New keybind for quick vehicle spawn
+
+#### Changed
+- Improved gamepad shortcut responsiveness
+```
+
+### Categories
+
+Use these categories (omit empty ones):
+- **Added** — new features or endpoints
+- **Changed** — modifications to existing behavior
+- **Fixed** — bug fixes
+- **Removed** — removed features or endpoints
+- **Security** — security-related changes
+
+### Rules
+
+1. **Add the entry before tagging** — the changelog update should be part of the tagged commit or an earlier commit in the same release
+2. **New entries go at the top** of their section (Server or Client), right after the `## Server` / `## Client` heading
+3. **One entry per tag** — each tag gets exactly one `### [tag] — date` block
+4. **Use the tag as the heading** — e.g. `### [server/v0.35.0-rc1] — 2026-04-10`
+5. **Date format** — `YYYY-MM-DD`
+6. **Keep descriptions concise** — one line per change, written from a user/operator perspective
+
+---
+
+## Server Mod Release Workflow
 
 ### 1. Commit all changes
 
@@ -21,30 +114,15 @@ All changes must be committed before building. The tree must be clean.
 ```bash
 cd MTDediMod
 git status  # Must show "nothing to commit, working tree clean"
-
-# If dirty, commit first:
-git add -A
-git commit -m "feat: description of changes"
 ```
 
-### 2. Determine and tag the next version
-
-Check existing tags and bump the RC number:
+### 2. Tag the next server version
 
 ```bash
-git tag --sort=-v:refname | head -5
-# Example: v0.34.0-rc2, v0.34.0-rc1, v0.33.0-rc8, ...
-# → Next version: v0.34.0-rc3
-```
+git tag -l 'server/*' --sort=-v:refname | head -5
+# Example: server/v0.34.0-rc4 → Next: server/v0.34.0-rc5
 
-**When to bump what:**
-- **RC number** (e.g. `rc2` → `rc3`): Lua changes, bug fixes, config tweaks
-- **Minor version** (e.g. `v0.34.0` → `v0.35.0-rc1`): New C++ hooks, new endpoints, ABI changes
-
-Tag the current HEAD:
-
-```bash
-git tag v0.34.0-rc3
+git tag server/v0.34.0-rc5
 ```
 
 ### 3. Build the mod
@@ -72,7 +150,7 @@ This automatically:
 ### 5. Upload to the release server
 
 ```bash
-scp MotorTownMods-package.zip root@asean-mt-server:/var/lib/mod-releases/MotorTownMods_v0.34.0-rc3.zip
+scp MotorTownMods-package.zip root@asean-mt-server:/var/lib/mod-releases/MotorTownMods_server-v0.34.0-rc5.zip
 ```
 
 Mod zips are served locally from `/var/lib/mod-releases/` on `asean-mt-server`. Containers access this via a read-only bind mount; the main server service accesses it directly.
@@ -83,10 +161,10 @@ In the root `flake.nix`, update the `modVersion` for the **target server only**:
 
 ```nix
 # Test server — update this for test deploys
-modVersion = "v0.34.0-rc3";
+modVersion = "server-v0.34.0-rc5";
 
 # Main server (in nixosModules.motortown-server) — update separately when promoting
-modVersion = "v0.33.0-rc7";
+modVersion = "server-v0.33.0-rc7";
 ```
 
 **No hash calculation needed** — the mod is downloaded at runtime via `curl` during service `preStart`.
@@ -103,8 +181,8 @@ Then purge the old cache and restart the container:
 ```bash
 # 1. Remove cached zip AND extracted directory for the OLD version
 ssh root@asean-mt-server "\
-  rm -f  /var/lib/motortown-server-test/.mod-cache/MotorTownMods_v0.34.0-rc2.zip && \
-  rm -rf /var/lib/motortown-server-test/.mod-cache/extracted-v0.34.0-rc2"
+  rm -f  /var/lib/motortown-server-test/.mod-cache/MotorTownMods_server-v0.34.0-rc4.zip && \
+  rm -rf /var/lib/motortown-server-test/.mod-cache/extracted-server-v0.34.0-rc4"
 
 # 2. Fix version.dll ownership if it was previously written by root
 #    (the container's steam user can't overwrite a root-owned file)
@@ -131,7 +209,7 @@ After verifying the deploy is healthy:
 
 ```bash
 cd MTDediMod
-git push origin v0.34.0-rc3
+git push origin server/v0.34.0-rc5
 ```
 
 ### Promoting to production
@@ -145,10 +223,84 @@ When a test RC is validated and ready for the main server:
 
 ---
 
+## Client Mod Release Workflow
+
+### 1. Commit all changes
+
+Same as server — tree must be clean.
+
+### 2. Tag the next client version
+
+```bash
+git tag -l 'client/*' --sort=-v:refname | head -5
+# Example: client/v0.1.0 → Next: client/v0.2.0
+
+git tag client/v0.2.0
+```
+
+### 3. Build the client mod
+
+```bash
+nix run .#configure-client   # First time only — cross-compiles UE4SS with dwmapi.dll proxy
+nix run .#build-client       # Cross-compiles the proxy DLL
+```
+
+### 4. Package the client zip
+
+```bash
+nix run .#package-client
+# Output: MotorTownClientMod-package.zip
+```
+
+This automatically:
+- Bundles `dwmapi.dll` (proxy), `UE4SS.dll`, Lua scripts from `ClientScripts/`, shared deps
+- Copies `UE4SS_Signatures` for Motor Town client
+- Patches UE4SS settings for client use (console + hot reload enabled)
+
+### 5. Distribute
+
+Upload to the releases server for player download:
+
+```bash
+scp MotorTownClientMod-package.zip \
+  root@amc-peripheral:/var/lib/mod-releases/MotorTownClientMod_client-v0.2.0.zip
+```
+
+The zip is then available at `https://www.aseanmotorclub.com/releases/MotorTownClientMod_client-v0.2.0.zip`.
+
+Share the download link with players (e.g. via Discord announcement).
+
+### 6. Push the tag
+
+```bash
+cd MTDediMod
+git push origin client/v0.2.0
+```
+
+---
+
+## Dual Release (both mods changed)
+
+When a commit touches both server and client code (e.g. changes in `shared/`):
+
+1. Commit and clean the tree
+2. Tag **both**: `git tag server/v0.35.0-rc1 && git tag client/v0.2.0`
+3. Build and package both:
+   ```bash
+   nix run .#build && nix run .#package
+   nix run .#build-client && nix run .#package-client
+   ```
+4. Upload and deploy each artifact via its respective workflow above
+5. Push both tags: `git push origin server/v0.35.0-rc1 client/v0.2.0`
+
+---
+
 ## Quick Lua-Only Hot Reload (debugging only)
 
 > [!CAUTION]
 > Hot reload is for **live debugging only**. If the fix is good, commit → tag → deploy properly before calling it done. Untracked hot reloads create ghost versions that can't be reproduced.
+
+### Server-side hot reload
 
 For Lua-only changes (no C++ DLL rebuild), skip the full deploy cycle. SCP scripts directly to the installed directory and hit the reload endpoint:
 
@@ -163,7 +315,30 @@ curl -s -X POST http://asean-mt-server:5001/mods/reload || true
 
 Players stay connected. The mod webserver restarts and re-registers all handlers. No container restart, no cache purge, no NixOS deploy needed.
 
-**After hot-reload debugging:** If the changes are keepers, go back and do a proper versioned release (steps 1–8).
+### Client-side hot reload
+
+Client mods support UE4SS hot reload via `Ctrl+R` in-game (enabled in client UE4SS settings). For testing:
+
+1. Copy updated scripts to the player's local install directory
+2. Press `Ctrl+R` in-game to reload
+
+**After hot-reload debugging:** If the changes are keepers, go back and do a proper versioned release.
+
+---
+
+## GitHub Actions CI
+
+The `.github/workflows/nix-release.yml` workflow triggers on tag pushes matching `v*`. This will need updating to support the new `server/v*` and `client/v*` prefixes:
+
+```yaml
+on:
+  push:
+    tags:
+      - 'server/v*'
+      - 'client/v*'
+```
+
+Currently, CI only builds the **server** mod. A separate job or conditional matrix will be needed if client builds should also be automated via CI.
 
 ---
 
@@ -264,4 +439,6 @@ ssh root@asean-mt-server "\
 | `v12` | v4 | Legacy event server mod, includes `bcrypt.dll`, `ssl.dll` |
 | `v0.20.x` | v5 | Stable releases on GitHub |
 | `v0.30.0` | v5 | Last GitHub release |
-| `v0.31.0-rcX` | v5 | Current RC series, hosted on aseanmotorclub.com |
+| `v0.31.0+` | v5 | Hosted on aseanmotorclub.com (legacy `v*` tags) |
+| `server/v0.34.0-rc5` | v5 | First tag under new `server/` prefix scheme |
+| `client/v0.1.0` | v5 | First tag under new `client/` prefix scheme |
