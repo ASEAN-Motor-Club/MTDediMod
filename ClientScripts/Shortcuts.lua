@@ -3,6 +3,7 @@
 
 local config = require("ModConfig")
 local UEHelpers = require("UEHelpers")
+local teleportManager = require("TeleportManager")
 
 --- Minimum interval between shortcut triggers (ms)
 local DEBOUNCE_MS = 1000
@@ -194,11 +195,18 @@ local function RegisterKeyboardShortcut()
         table.concat(kb.modifiers or {}, "+"), kb.key)
 end
 
---- Register gamepad shortcut from config using InputKey hook
+--- Construct an FKey struct from a UE key name string (e.g. "Gamepad_RightShoulder")
+---@param keyName string UE key name
+---@return table FKey-compatible struct
+local function MakeFKey(keyName)
+    return { KeyName = FName(keyName) }
+end
+
+--- Register gamepad shortcut from config using IsInputKeyDown polling
 local function RegisterGamepadShortcut()
     local shortcuts = config.GetModConfig("shortcuts")
     if not shortcuts or not shortcuts.arrest or not shortcuts.arrest.gamepad then
-        LogOutput("WARN", "No gamepad shortcut config for arrest")
+        LogOutput("INFO", "No gamepad shortcut config for arrest")
         return
     end
 
@@ -208,63 +216,126 @@ local function RegisterGamepadShortcut()
         return
     end
 
-    -- Track held gamepad buttons
-    local heldButtons = {}
+    -- Pre-build FKey structs for each configured button
+    local fkeys = {}
+    for _, btnName in ipairs(gp.buttons) do
+        table.insert(fkeys, MakeFKey(btnName))
+    end
 
-    -- Try to hook the engine InputKey to capture gamepad events
-    local hookSuccess, hookErr = pcall(function()
-        RegisterHook("/Script/Engine.PlayerController:InputKey", function(Context, Params)
-            local ok, err = pcall(function()
-                -- Params.Key is an FKey, Params.Event is EInputEvent
-                local keyName = Params:get().Key.KeyName:ToString()
-                local eventType = Params:get().Event
+    -- Track whether combo was active last tick to prevent repeat-fire while held
+    local wasActive = false
 
-                -- Only process gamepad keys
-                if not keyName:find("Gamepad_") then return end
+    -- Poll every 100ms on the game thread
+    LoopInGameThreadWithDelay(100, function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then return end
 
-                -- IE_Pressed = 0, IE_Released = 1
-                if eventType == 0 then
-                    heldButtons[keyName] = true
-                elseif eventType == 1 then
-                    heldButtons[keyName] = false
-                end
-
-                -- Check if all configured buttons are pressed
-                local allPressed = true
-                for _, btn in ipairs(gp.buttons) do
-                    if not heldButtons[btn] then
-                        allPressed = false
-                        break
-                    end
-                end
-
-                if allPressed then
-                    -- Reset to prevent repeat-fire while held
-                    for _, btn in ipairs(gp.buttons) do
-                        heldButtons[btn] = false
-                    end
-                    TriggerArrest()
-                end
-            end)
-            if not ok then
-                LogOutput("ERROR", "Gamepad hook error: %s", tostring(err))
+        local allDown = true
+        for _, fkey in ipairs(fkeys) do
+            if not PC:IsInputKeyDown(fkey) then
+                allDown = false
+                break
             end
-        end)
+        end
+
+        if allDown and not wasActive then
+            wasActive = true
+            TriggerArrest()
+        elseif not allDown then
+            wasActive = false
+        end
     end)
 
-    if hookSuccess then
-        LogOutput("INFO", "Arrest gamepad shortcut registered: %s",
-            table.concat(gp.buttons, "+"))
-    else
-        LogOutput("WARN", "Failed to register gamepad hook (InputKey not available): %s",
-            tostring(hookErr))
-    end
+    LogOutput("INFO", "Arrest gamepad shortcut registered (polling): %s",
+        table.concat(gp.buttons, "+"))
 end
+
+
+---Open a text input dialog for teleport location, then teleport on submit
+local lastTeleportDialogTime = 0
+local teleportDialogOpen = false
+
+local function TriggerTeleportDialog()
+    local now = os.clock() * 1000
+    if now - lastTeleportDialogTime < DEBOUNCE_MS then
+        return
+    end
+    if teleportDialogOpen then
+        return
+    end
+    lastTeleportDialogTime = now
+    teleportDialogOpen = true
+
+    ExecuteInGameThread(function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then
+            LogOutput("WARN", "Teleport dialog: PlayerController not valid")
+            teleportDialogOpen = false
+            return
+        end
+
+        local HUD = PC.MyHUD
+        if not HUD:IsValid() then
+            LogOutput("WARN", "Teleport dialog: HUD not valid")
+            teleportDialogOpen = false
+            return
+        end
+
+        ---@cast HUD AMTHUD
+        local widgetClass = HUD.EditableTextDialogPopupWidgetClass
+        if not widgetClass:IsValid() then
+            LogOutput("WARN", "Teleport dialog: EditableTextDialogPopupWidgetClass not valid")
+            teleportDialogOpen = false
+            return
+        end
+
+        local widget = HUD:PushFullScreenMenuWidget(widgetClass, false)
+        if not widget:IsValid() then
+            LogOutput("WARN", "Teleport dialog: Failed to create widget")
+            teleportDialogOpen = false
+            return
+        end
+
+        ---@cast widget UEditableTextDialogPopupWidget
+        widget:ReceiveSetTitle(FText("Teleport — enter location name"))
+
+        -- Hook text commit to handle the teleport
+        RegisterHook("/Script/MotorTown.EditableTextDialogPopupWidget:HandleTextBoxCommitted",
+            function(Context, Text, CommitMethod)
+                -- Only handle our dialog instance
+                if not widget:IsValid() then return end
+                if Context:get() ~= widget then return end
+
+                local locationName = Text:get():ToString()
+
+                -- Clean up: pop from HUD stack (restores input mode)
+                HUD:PopFullScreenMenuWidget(widget)
+                teleportDialogOpen = false
+
+                if locationName == "" then
+                    LogOutput("INFO", "Teleport dialog: cancelled (empty input)")
+                    return
+                end
+
+                -- Parse into args the same way Commands.lua does
+                local args = SplitString(locationName, " ") or {}
+                local myPC = GetMyPlayerController()
+                if myPC:IsValid() then
+                    teleportManager.HandleTeleport(myPC, args)
+                end
+            end)
+
+        LogOutput("INFO", "Teleport dialog opened")
+    end)
+end
+
 
 -- Initialize shortcuts
 RegisterKeyboardShortcut()
 RegisterGamepadShortcut()
 RegisterKeyBind(Key.X, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnAimed)
 RegisterKeyBind(Key.I, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
+RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
+RegisterKeyBind(Key.T, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerTeleportDialog)
 
 return {}
