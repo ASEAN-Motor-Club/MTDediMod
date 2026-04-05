@@ -882,6 +882,110 @@ auto MotorTownMods::on_unreal_init() -> void
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerRemovePolicePlayer"),
 		"ServerRemovePolicePlayer"
 	);
+
+	// ========== Vehicle Entry Hook ==========
+
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicle"),
+		"ServerEnterVehicle",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			// --- Extract Vehicle (AMTVehicle) from function params ---
+			auto VehicleProp = static_cast<FObjectProperty*>(
+				FunctionBeingExecuted->GetPropertyByName(STR("Vehicle")));
+			if (!VehicleProp) {
+				Output::send<LogLevel::Warning>(STR("ServerEnterVehicle: Vehicle property not found\n"));
+				return false;
+			}
+			const auto& VehiclePtr = VehicleProp->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
+			if (!VehiclePtr || !*VehiclePtr) {
+				Output::send<LogLevel::Warning>(STR("ServerEnterVehicle: Vehicle object is null\n"));
+				return false;
+			}
+			auto Vehicle = *VehiclePtr;
+
+			// --- Extract SeatType (uint8 enum) ---
+			auto SeatTypeProp = FunctionBeingExecuted->GetPropertyByName(STR("SeatType"));
+			if (SeatTypeProp) {
+				auto SeatType = SeatTypeProp->ContainerPtrToValuePtr<uint8>(Context.TheStack.Locals());
+				if (SeatType) event_data["SeatType"] = *SeatType;
+			}
+
+			// --- Extract SeatIndex (int32) ---
+			auto SeatIndexProp = FunctionBeingExecuted->GetPropertyByName(STR("SeatIndex"));
+			if (SeatIndexProp) {
+				auto SeatIndex = SeatIndexProp->ContainerPtrToValuePtr<int32>(Context.TheStack.Locals());
+				if (SeatIndex) event_data["SeatIndex"] = *SeatIndex;
+			}
+
+			// --- Extract bSteal (bool) ---
+			auto bStealProp = FunctionBeingExecuted->GetPropertyByName(STR("bSteal"));
+			if (bStealProp) {
+				auto bSteal = bStealProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
+				if (bSteal) event_data["bSteal"] = *bSteal;
+			}
+
+			// --- Extract current driver's CharacterGuid from Vehicle -> Net_Seats ---
+			auto SeatsProp = static_cast<FArrayProperty*>(
+				Vehicle->GetPropertyByNameInChain(STR("Net_Seats")));
+			if (SeatsProp) {
+				auto SeatsArray = SeatsProp->ContainerPtrToValuePtr<FScriptArray>(Vehicle);
+				if (SeatsArray && SeatsArray->GetData()) {
+					auto SeatsInnerProp = static_cast<FStructProperty*>(SeatsProp->GetInner());
+					if (SeatsInnerProp) {
+						int32 SeatSize = SeatsInnerProp->GetElementSize();
+						int32 NumSeats = SeatsArray->Num();
+						auto SeatsStruct = SeatsInnerProp->GetStruct();
+						if (SeatsStruct) {
+							for (int32 i = 0; i < NumSeats; ++i) {
+								auto seatPtr = static_cast<uint8_t*>(SeatsArray->GetData()) + (SeatSize * i);
+								auto seatContainer = SeatsInnerProp->ContainerPtrToValuePtr<void>(seatPtr);
+								if (!seatContainer) continue;
+
+								// Check bHasCharacter
+								auto bHasCharProp = SeatsStruct->GetPropertyByNameInChain(STR("bHasCharacter"));
+								if (!bHasCharProp) continue;
+								auto bHasChar = bHasCharProp->ContainerPtrToValuePtr<bool>(seatContainer);
+								if (!bHasChar || !*bHasChar) continue;
+
+								// Get Character object
+								auto CharProp = static_cast<FObjectProperty*>(
+									SeatsStruct->GetPropertyByNameInChain(STR("Character")));
+								if (!CharProp) continue;
+								auto CharPtr = CharProp->ContainerPtrToValuePtr<UObject*>(seatContainer);
+								if (!CharPtr || !*CharPtr) continue;
+
+								// Character (APawn) -> PlayerState -> CharacterGuid
+								auto DriverPlayerState = (*CharPtr)->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
+								if (!DriverPlayerState || !*DriverPlayerState) continue;
+
+								auto DriverCharGuid = (*DriverPlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
+								if (!DriverCharGuid) continue;
+
+								event_data["DriverCharacterGuid"] = json::string(std::format(
+									"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
+									DriverCharGuid->A,
+									(DriverCharGuid->B >> 16),
+									(DriverCharGuid->B & 0xFFFF),
+									(DriverCharGuid->C >> 16),
+									(DriverCharGuid->C & 0xFFFF),
+									DriverCharGuid->D
+								));
+								Output::send<LogLevel::Verbose>(STR("ServerEnterVehicle: found driver in seat {}\n"), i);
+								break; // Found the first seated character (driver)
+							}
+						}
+					}
+				}
+			}
+
+			return true;
+		}
+	);
 }
 
 auto MotorTownMods::on_lua_start(

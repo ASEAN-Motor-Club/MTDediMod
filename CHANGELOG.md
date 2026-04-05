@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.34.0-rc7] — 2026-04-05
+
+#### Added
+- ServerEnterVehicle hook with seat info and current driver's CharacterGuid
+
 ### [server/v0.34.0-rc6] — 2026-04-05
 
 Re-release for test container deployment (no server-side code changes since rc5).
