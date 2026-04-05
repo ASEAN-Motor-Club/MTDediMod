@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.34.0-rc6] — 2026-04-05
+
+Re-release for test container deployment (no server-side code changes since rc5).
+
 ### [server/v0.34.0-rc5] — 2026-04-05
 
 #### Changed
