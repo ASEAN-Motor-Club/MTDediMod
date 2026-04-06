@@ -110,6 +110,76 @@ local function SendReport(guid, values)
   end
 end
 
+---POST a pak scan report to Django backend
+---@param paks table List of {name, path} entries
+local function SendPakReport(paks)
+  local ok, body = pcall(json.stringify, {
+    type = "pak_scan",
+    timestamp = os.time(),
+    mod_version = statics.ModVersion,
+    paks = paks,
+  })
+  if not ok then
+    LogOutput("WARN", "[AC] Failed to serialize pak report: %s", tostring(body))
+    return
+  end
+
+  local PAK_REPORT_URL = REPORT_URL:gsub("/report", "/paks")
+  local response = {}
+  pcall(function()
+    http.request({
+      url = PAK_REPORT_URL,
+      method = "POST",
+      headers = {
+        ["Content-Type"] = "application/json",
+        ["Content-Length"] = tostring(#body),
+      },
+      source = ltn12.source.string(body),
+      sink = ltn12.sink.table(response),
+    })
+  end)
+end
+
+---Scan MotorTown/Content/Paks and report all .pak files to the backend.
+---Runs once at mod load. Detects unauthorized pak mods.
+local function ScanPaks()
+  local dirs = IterateGameDirectories()
+
+  -- Navigate: MotorTown -> Content -> Paks
+  local gameDir = dirs.MotorTown
+  if not gameDir then
+    LogOutput("WARN", "[AC] ScanPaks: MotorTown dir not found")
+    return
+  end
+  local contentDir = gameDir.Content
+  if not contentDir then
+    LogOutput("WARN", "[AC] ScanPaks: Content dir not found")
+    return
+  end
+  local paksDir = contentDir.Paks
+  if not paksDir then
+    LogOutput("WARN", "[AC] ScanPaks: Paks dir not found")
+    return
+  end
+
+  local paks = {}
+  local files = paksDir.__files
+  if files then
+    for _, file in pairs(files) do
+      local name = file.__name
+      local path = file.__absolute_path
+      LogOutput("INFO", "[AC] Pak: %s", name)
+      table.insert(paks, { name = name, path = path })
+    end
+  end
+
+  LogOutput("INFO", "[AC] ScanPaks: found %d file(s) in Paks", #paks)
+  SendPakReport(paks)
+end
+
+-- Run pak scan immediately at mod load (no hook needed — filesystem is always available)
+ScanPaks()
+
 ---Run an on-demand integrity check on the current vehicle.
 ---Prints values to log and sends a report to the backend.
 ---@return boolean success
