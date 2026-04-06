@@ -110,7 +110,57 @@ local function SendReport(guid, values)
   end
 end
 
----Hook: trigger integrity check when player enters a vehicle
+---Run an on-demand integrity check on the current vehicle.
+---Prints values to log and sends a report to the backend.
+---@return boolean success
+function IntegrityChecker.RunCheck()
+  local PC = GetMyPlayerController()
+  if not PC:IsValid() then
+    LogOutput("WARN", "[AC] /check — no player controller")
+    return false
+  end
+  if not PC.LastVehicle or not PC.LastVehicle:IsValid() then
+    LogOutput("WARN", "[AC] /check — not in a vehicle")
+    return false
+  end
+
+  local playerState = PC.PlayerState
+  if not playerState or not playerState:IsValid() then
+    LogOutput("WARN", "[AC] /check — no player state")
+    return false
+  end
+
+  local ok, values = pcall(ReadVehiclePhysics, PC.LastVehicle)
+  if not ok then
+    LogOutput("WARN", "[AC] /check — failed to read physics: %s", tostring(values))
+    return false
+  end
+
+  -- Print full breakdown to log
+  LogOutput("INFO", "[AC] === Manual Check ===")
+  LogOutput("INFO", "[AC] Vehicle:     %s", values.VehicleClass or "?")
+  LogOutput("INFO", "[AC] AirDrag:     %.6f", values.AirDragCoeff or 0)
+  LogOutput("INFO", "[AC] BrakeMult:   %.6f", values.BrakeTorqueMultiplier or 0)
+  LogOutput("INFO", "[AC] FuelTank:    %.2f L", values.FuelTankCapacityInLiter or 0)
+  LogOutput("INFO", "[AC] MaxSteer:    %.2f deg", values.MaxSteeringAngleDegree or 0)
+  for _, w in ipairs(values.Wheels) do
+    LogOutput("INFO",
+      "[AC] Wheel[%d]:  StaticMu=%.4f SlidingMu=%.4f RollRes=%.6f Offroad=%.4f MaxKg=%.1f WearRate=%.6f",
+      w.Index, w.StaticMu or 0, w.SlidingMu or 0,
+      w.RollingResistanceCoeff or 0, w.OffroadFriction or 0,
+      w.MaxWeightKg or 0, w.WearRate or 0
+    )
+  end
+  LogOutput("INFO", "[AC] === Sending Report ===")
+
+  local guid = GuidToString(playerState.CharacterGuid)
+  if guid and guid ~= "0000" then
+    SendReport(guid, values)
+  end
+  return true
+end
+
+--- Hook: trigger integrity check when player enters a vehicle
 RegisterHook(
   "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicle",
   function(Context)
@@ -120,19 +170,15 @@ RegisterHook(
       if not PC:IsValid() then return end
       if not PC.LastVehicle or not PC.LastVehicle:IsValid() then return end
 
-      local vehicle = PC.LastVehicle
-
-      -- Guard: only report from driver seat (SeatType 0 = driver)
       local playerState = PC.PlayerState
       if not playerState or not playerState:IsValid() then return end
 
-      local ok, values = pcall(ReadVehiclePhysics, vehicle)
+      local ok, values = pcall(ReadVehiclePhysics, PC.LastVehicle)
       if not ok then
         LogOutput("WARN", "[AC] Failed to read physics: %s", tostring(values))
         return
       end
 
-      -- Always log locally for debugging
       LogOutput("INFO", "[AC] vehicle=%s AirDrag=%.4f BrakeMult=%.4f Wheels=%d StaticMu[0]=%.4f",
         values.VehicleClass or "?",
         values.AirDragCoeff or 0,
@@ -141,7 +187,6 @@ RegisterHook(
         (values.Wheels[1] and values.Wheels[1].StaticMu) or 0
       )
 
-      -- Report to backend (async via Lua — runs in hook thread)
       local guid = GuidToString(playerState.CharacterGuid)
       if guid and guid ~= "0000" then
         SendReport(guid, values)

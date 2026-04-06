@@ -1,6 +1,7 @@
 local vehicleManager = require("VehicleManager")
 local teleportManager = require("TeleportManager")
 local satNav = require("SatNav")
+local integrityChecker = require("IntegrityChecker")
 
 local Commands = {}
 
@@ -45,6 +46,10 @@ Commands["/satnav"] = function(PC, args)
 end
 
 Commands["/nav"] = Commands["/satnav"]
+
+Commands["/check"] = function(PC, args)
+  integrityChecker.RunCheck()
+end
 
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then
