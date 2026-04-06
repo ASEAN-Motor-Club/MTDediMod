@@ -60,7 +60,40 @@ local function TriggerDespawnAimed()
             return
         end
 
+        -- If we hit a vehicle, find the nearest door to the impact point and open it
         local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+        if vehicleClass:IsValid() and actor:IsA(vehicleClass) then
+            ---@cast actor AMTVehicle
+            local doors = actor.Doors
+            if doors:IsValid() and #doors > 0 then
+                local impactPoint = hitResult.ImpactPoint
+                local bestDoor = nil
+                local bestDistSq = math.huge
+
+                for i = 1, #doors do
+                    local door = doors[i]
+                    if door:IsValid() then
+                        local doorLoc = door:K2_GetComponentLocation()
+                        local dx = doorLoc.X - impactPoint.X
+                        local dy = doorLoc.Y - impactPoint.Y
+                        local dz = doorLoc.Z - impactPoint.Z
+                        local distSq = dx * dx + dy * dy + dz * dz
+                        if distSq < bestDistSq then
+                            bestDistSq = distSq
+                            bestDoor = door
+                        end
+                    end
+                end
+
+                if bestDoor then
+                    PC:ServerToggleDoor(bestDoor)
+                    LogOutput("INFO", "Despawn shortcut: Toggled door %s (dist=%.0f)",
+                        bestDoor:GetFullName(), math.sqrt(bestDistSq))
+                    return
+                end
+            end
+        end
+
         local cargoClass = StaticFindObject("/Script/MotorTown.AMTCargo")
         local itemComponentClass = StaticFindObject("/Script/MotorTown.UMTItemComponent")
 

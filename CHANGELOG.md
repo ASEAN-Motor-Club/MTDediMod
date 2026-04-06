@@ -45,6 +45,12 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
+### [client/v0.2.0] — 2026-04-06
+
+#### Added
+- IntegrityChecker: reads local vehicle tire physics (FMTTirePhysicsParams) on vehicle entry and reports to backend for anti-cheat monitoring (observe-only PoC)
+- Aimed despawn shortcut: toggle nearest vehicle door when aiming at a vehicle instead of despawning
+
 ### [client/v0.1.0] — 2026-04-05
 
 Initial client mod release.

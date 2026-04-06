@@ -16,5 +16,6 @@ local viewportManager = require("ViewportManager")
 local commands = require("Commands")
 local shortcuts = require("Shortcuts")
 local satnav = require("SatNav")
+local integrityChecker = require("IntegrityChecker")
 
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)
