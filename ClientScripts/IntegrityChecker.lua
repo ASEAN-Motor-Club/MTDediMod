@@ -173,19 +173,39 @@ pcall(function() md5lib = require("md5") end)
 local function ScanPaks()
   local dirs = IterateGameDirectories()
 
-  local gameDir = dirs.MotorTown
-  if not gameDir then
-    LogOutput("WARN", "[AC] ScanPaks: MotorTown dir not found")
-    return
+  -- Dump top-level dir names so we can identify the correct game key
+  LogOutput("INFO", "[AC] ScanPaks: top-level dirs:")
+  for key, dir in pairs(dirs) do
+    if type(dir) == "table" and dir.__name then
+      LogOutput("INFO", "[AC]   key=%s  name=%s  path=%s", tostring(key), tostring(dir.__name), tostring(dir.__absolute_path))
+    end
   end
-  local contentDir = gameDir.Content
-  if not contentDir then
-    LogOutput("WARN", "[AC] ScanPaks: Content dir not found")
-    return
+
+  -- Navigate to Paks — try common Motor Town project names
+  local paksDir = nil
+  local candidates = { "MotorTown", "motortown", "Game", "game" }
+  for _, name in ipairs(candidates) do
+    local candidate = dirs[name]
+    if candidate and candidate.Content and candidate.Content.Paks then
+      paksDir = candidate.Content.Paks
+      LogOutput("INFO", "[AC] ScanPaks: found Paks via key '%s'", name)
+      break
+    end
   end
-  local paksDir = contentDir.Paks
+
   if not paksDir then
-    LogOutput("WARN", "[AC] ScanPaks: Paks dir not found")
+    -- Last resort: walk every top-level dir looking for a Content/Paks subtree
+    for key, dir in pairs(dirs) do
+      if type(dir) == "table" and dir.Content and dir.Content.Paks then
+        paksDir = dir.Content.Paks
+        LogOutput("INFO", "[AC] ScanPaks: found Paks via fallback key '%s'", tostring(key))
+        break
+      end
+    end
+  end
+
+  if not paksDir then
+    LogOutput("WARN", "[AC] ScanPaks: Paks dir not found in any top-level game dir")
     return
   end
 
@@ -198,7 +218,6 @@ local function ScanPaks()
 
       local size = GetFileSize(path)
 
-      -- Partial checksum: first 64 KB only (safe for multi-GB paks)
       local checksum = nil
       if md5lib then
         local head = ReadHead(path, 65536)
