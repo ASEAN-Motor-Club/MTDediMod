@@ -160,8 +160,9 @@ function IntegrityChecker.RunCheck()
   return true
 end
 
---- Shared handler: called by whichever hook fires first after entering a vehicle.
---- Uses a short debounce so multiple hooks don't each trigger a report.
+--- Shared post-hook handler: called after vehicle entry functions execute.
+--- The post-hook fires after the UFunction body runs, so LastVehicle is already set.
+--- Uses a debounce so multiple hooks registering the same entry don't double-fire.
 local lastCheckTime = 0
 local CHECK_DEBOUNCE_MS = 3000
 
@@ -170,68 +171,68 @@ local function OnVehicleEntered()
   if (now - lastCheckTime) < CHECK_DEBOUNCE_MS then return end
   lastCheckTime = now
 
-  ExecuteWithDelay(800, function()
-    local PC = GetMyPlayerController()
-    if not PC:IsValid() then return end
-    if not PC.LastVehicle or not PC.LastVehicle:IsValid() then return end
+  local PC = GetMyPlayerController()
+  if not PC:IsValid() then return end
+  if not PC.LastVehicle or not PC.LastVehicle:IsValid() then return end
 
-    local playerState = PC.PlayerState
-    if not playerState or not playerState:IsValid() then return end
+  local playerState = PC.PlayerState
+  if not playerState or not playerState:IsValid() then return end
 
-    local ok, values = pcall(ReadVehiclePhysics, PC.LastVehicle)
-    if not ok then
-      LogOutput("WARN", "[AC] Failed to read physics: %s", tostring(values))
-      return
-    end
+  local ok, values = pcall(ReadVehiclePhysics, PC.LastVehicle)
+  if not ok then
+    LogOutput("WARN", "[AC] Failed to read physics: %s", tostring(values))
+    return
+  end
 
-    LogOutput("INFO", "[AC] vehicle=%s AirDrag=%.4f BrakeMult=%.4f Wheels=%d StaticMu[0]=%.4f",
-      values.VehicleClass or "?",
-      values.AirDragCoeff or 0,
-      values.BrakeTorqueMultiplier or 0,
-      #values.Wheels,
-      (values.Wheels[1] and values.Wheels[1].StaticMu) or 0
-    )
+  LogOutput("INFO", "[AC] vehicle=%s AirDrag=%.4f BrakeMult=%.4f Wheels=%d StaticMu[0]=%.4f",
+    values.VehicleClass or "?",
+    values.AirDragCoeff or 0,
+    values.BrakeTorqueMultiplier or 0,
+    #values.Wheels,
+    (values.Wheels[1] and values.Wheels[1].StaticMu) or 0
+  )
 
-    local guid = GuidToString(playerState.CharacterGuid)
-    if guid and guid ~= "0000" then
-      SendReport(guid, values)
-    end
-  end)
+  local guid = GuidToString(playerState.CharacterGuid)
+  if guid and guid ~= "0000" then
+    SendReport(guid, values)
+  end
 end
 
--- Hook 1: ServerEnterVehicle (original — Server RPC stub on client)
-RegisterHook(
+-- Post-hook pattern: RegisterHook returns (PreId, PostId).
+-- We discard the pre-id and only use the post callback (2nd arg position),
+-- which fires *after* the UFunction body — LastVehicle is already populated.
+
+local _, _ = RegisterHook(
   "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicle",
-  function(Context) OnVehicleEntered() end
+  function() end,  -- pre (ignored)
+  function() OnVehicleEntered() end  -- post
 )
 
--- Hook 2: ServerEnterVehicleBySeatName (alternative entry path)
-RegisterHook(
+local _, _ = RegisterHook(
   "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicleBySeatName",
-  function(Context) OnVehicleEntered() end
+  function() end,
+  function() OnVehicleEntered() end
 )
 
--- Hook 3: ServerEnterVehicleByIdAndSeatName (another entry path)
-RegisterHook(
+local _, _ = RegisterHook(
   "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicleByIdAndSeatName",
-  function(Context) OnVehicleEntered() end
+  function() end,
+  function() OnVehicleEntered() end
 )
 
--- Hook 4: ServerEnteredVehicleByInitGame (fires on game load if already in vehicle)
-RegisterHook(
+local _, _ = RegisterHook(
   "/Script/MotorTown.MotorTownPlayerController:ServerEnteredVehicleByInitGame",
-  function(Context) OnVehicleEntered() end
+  function() end,
+  function() OnVehicleEntered() end
 )
 
--- Hook 5: MulticastSeatCharacter on AMTVehicle — fires on client when server
--- broadcasts a seating update. Most reliable client-side signal.
--- Filter for local player's character to avoid triggering on other players.
-RegisterHook(
+-- MulticastSeatCharacter: post-hook filters for the local player's pawn.
+local _, _ = RegisterHook(
   "/Script/MotorTown.MTVehicle:MulticastSeatCharacter",
+  function() end,
   function(Context, SeatName, Character)
     local PC = GetMyPlayerController()
     if not PC:IsValid() then return end
-    -- Check if the character being seated is our local pawn
     local myPawn = PC.Pawn
     if not myPawn or not myPawn:IsValid() then return end
     local seatedChar = Character:get()
@@ -245,4 +246,3 @@ RegisterHook(
 LogOutput("INFO", "[AC] IntegrityChecker loaded")
 
 return IntegrityChecker
-
