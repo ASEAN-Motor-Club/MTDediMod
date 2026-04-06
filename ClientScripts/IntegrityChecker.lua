@@ -160,41 +160,89 @@ function IntegrityChecker.RunCheck()
   return true
 end
 
---- Hook: trigger integrity check when player enters a vehicle
+--- Shared handler: called by whichever hook fires first after entering a vehicle.
+--- Uses a short debounce so multiple hooks don't each trigger a report.
+local lastCheckTime = 0
+local CHECK_DEBOUNCE_MS = 3000
+
+local function OnVehicleEntered()
+  local now = os.clock() * 1000
+  if (now - lastCheckTime) < CHECK_DEBOUNCE_MS then return end
+  lastCheckTime = now
+
+  ExecuteWithDelay(800, function()
+    local PC = GetMyPlayerController()
+    if not PC:IsValid() then return end
+    if not PC.LastVehicle or not PC.LastVehicle:IsValid() then return end
+
+    local playerState = PC.PlayerState
+    if not playerState or not playerState:IsValid() then return end
+
+    local ok, values = pcall(ReadVehiclePhysics, PC.LastVehicle)
+    if not ok then
+      LogOutput("WARN", "[AC] Failed to read physics: %s", tostring(values))
+      return
+    end
+
+    LogOutput("INFO", "[AC] vehicle=%s AirDrag=%.4f BrakeMult=%.4f Wheels=%d StaticMu[0]=%.4f",
+      values.VehicleClass or "?",
+      values.AirDragCoeff or 0,
+      values.BrakeTorqueMultiplier or 0,
+      #values.Wheels,
+      (values.Wheels[1] and values.Wheels[1].StaticMu) or 0
+    )
+
+    local guid = GuidToString(playerState.CharacterGuid)
+    if guid and guid ~= "0000" then
+      SendReport(guid, values)
+    end
+  end)
+end
+
+-- Hook 1: ServerEnterVehicle (original — Server RPC stub on client)
 RegisterHook(
   "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicle",
-  function(Context)
-    -- Small delay so LastVehicle is set by the time we read it
-    ExecuteWithDelay(500, function()
-      local PC = GetMyPlayerController()
-      if not PC:IsValid() then return end
-      if not PC.LastVehicle or not PC.LastVehicle:IsValid() then return end
+  function(Context) OnVehicleEntered() end
+)
 
-      local playerState = PC.PlayerState
-      if not playerState or not playerState:IsValid() then return end
+-- Hook 2: ServerEnterVehicleBySeatName (alternative entry path)
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicleBySeatName",
+  function(Context) OnVehicleEntered() end
+)
 
-      local ok, values = pcall(ReadVehiclePhysics, PC.LastVehicle)
-      if not ok then
-        LogOutput("WARN", "[AC] Failed to read physics: %s", tostring(values))
-        return
-      end
+-- Hook 3: ServerEnterVehicleByIdAndSeatName (another entry path)
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicleByIdAndSeatName",
+  function(Context) OnVehicleEntered() end
+)
 
-      LogOutput("INFO", "[AC] vehicle=%s AirDrag=%.4f BrakeMult=%.4f Wheels=%d StaticMu[0]=%.4f",
-        values.VehicleClass or "?",
-        values.AirDragCoeff or 0,
-        values.BrakeTorqueMultiplier or 0,
-        #values.Wheels,
-        (values.Wheels[1] and values.Wheels[1].StaticMu) or 0
-      )
+-- Hook 4: ServerEnteredVehicleByInitGame (fires on game load if already in vehicle)
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerEnteredVehicleByInitGame",
+  function(Context) OnVehicleEntered() end
+)
 
-      local guid = GuidToString(playerState.CharacterGuid)
-      if guid and guid ~= "0000" then
-        SendReport(guid, values)
-      end
-    end)
+-- Hook 5: MulticastSeatCharacter on AMTVehicle — fires on client when server
+-- broadcasts a seating update. Most reliable client-side signal.
+-- Filter for local player's character to avoid triggering on other players.
+RegisterHook(
+  "/Script/MotorTown.MTVehicle:MulticastSeatCharacter",
+  function(Context, SeatName, Character)
+    local PC = GetMyPlayerController()
+    if not PC:IsValid() then return end
+    -- Check if the character being seated is our local pawn
+    local myPawn = PC.Pawn
+    if not myPawn or not myPawn:IsValid() then return end
+    local seatedChar = Character:get()
+    if not seatedChar or not seatedChar:IsValid() then return end
+    if seatedChar == myPawn then
+      OnVehicleEntered()
+    end
   end
 )
 
 LogOutput("INFO", "[AC] IntegrityChecker loaded")
 
 return IntegrityChecker
+
