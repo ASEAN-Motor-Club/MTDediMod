@@ -21,13 +21,30 @@ local TABLE = (function()
 end)()
 
 ---Compute CRC32 of a binary string.
+---Uses 8-byte batched string.byte() calls for better Lua 5.4 throughput.
 ---@param data string
 ---@return string 8-character lowercase hex string
 function CRC32.sum(data)
   local crc = 0xFFFFFFFF
-  for i = 1, #data do
-    local byte = data:byte(i)
-    crc = TABLE[(crc ~ byte) & 0xFF] ~ (crc >> 8)
+  local len = #data
+  local i = 1
+  -- Process 8 bytes at a time to amortise string.byte call overhead
+  while i <= len - 7 do
+    local b1,b2,b3,b4,b5,b6,b7,b8 = data:byte(i, i + 7)
+    crc = TABLE[(crc ~ b1) & 0xFF] ~ (crc >> 8)
+    crc = TABLE[(crc ~ b2) & 0xFF] ~ (crc >> 8)
+    crc = TABLE[(crc ~ b3) & 0xFF] ~ (crc >> 8)
+    crc = TABLE[(crc ~ b4) & 0xFF] ~ (crc >> 8)
+    crc = TABLE[(crc ~ b5) & 0xFF] ~ (crc >> 8)
+    crc = TABLE[(crc ~ b6) & 0xFF] ~ (crc >> 8)
+    crc = TABLE[(crc ~ b7) & 0xFF] ~ (crc >> 8)
+    crc = TABLE[(crc ~ b8) & 0xFF] ~ (crc >> 8)
+    i = i + 8
+  end
+  -- Remaining bytes
+  while i <= len do
+    crc = TABLE[(crc ~ data:byte(i)) & 0xFF] ~ (crc >> 8)
+    i = i + 1
   end
   return string.format("%08x", (~crc) & 0xFFFFFFFF)
 end

@@ -206,9 +206,9 @@ local function ScanPaks()
 
       local size = GetFileSize(path)
 
-      -- CRC32 of first 64KB — instant even on multi-GB paks, detects header tampering
+      -- CRC32 of first 4KB — covers the pak header/magic, instant even in pure Lua
       local checksum = nil
-      local head = ReadHead(path, 65536)
+      local head = ReadHead(path, 4096)
       if head then
         checksum = crc32.sum(head)
       end
