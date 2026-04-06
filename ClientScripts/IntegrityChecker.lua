@@ -140,12 +140,39 @@ local function SendPakReport(paks)
   end)
 end
 
+---Get the size of a file in bytes (opens and seeks — no content read)
+---@param path string Absolute file path
+---@return integer|nil
+local function GetFileSize(path)
+  local f, err = io.open(path, "rb")
+  if not f then return nil end
+  local size = f:seek("end")
+  f:close()
+  return size
+end
+
+---Read the first `n` bytes of a file as a binary string
+---@param path string
+---@param n integer
+---@return string|nil
+local function ReadHead(path, n)
+  local f, err = io.open(path, "rb")
+  if not f then return nil end
+  local data = f:read(n)
+  f:close()
+  return data
+end
+
+-- Try to load md5 library (may not be bundled)
+local md5lib = nil
+pcall(function() md5lib = require("md5") end)
+
 ---Scan MotorTown/Content/Paks and report all .pak files to the backend.
----Runs once at mod load. Detects unauthorized pak mods.
+---Reports filename, size, and (if md5 available) a partial checksum of first 64KB.
+---Runs once at mod load. Detects unauthorized/modified pak mods.
 local function ScanPaks()
   local dirs = IterateGameDirectories()
 
-  -- Navigate: MotorTown -> Content -> Paks
   local gameDir = dirs.MotorTown
   if not gameDir then
     LogOutput("WARN", "[AC] ScanPaks: MotorTown dir not found")
@@ -168,12 +195,35 @@ local function ScanPaks()
     for _, file in pairs(files) do
       local name = file.__name
       local path = file.__absolute_path
-      LogOutput("INFO", "[AC] Pak: %s", name)
-      table.insert(paks, { name = name, path = path })
+
+      local size = GetFileSize(path)
+
+      -- Partial checksum: first 64 KB only (safe for multi-GB paks)
+      local checksum = nil
+      if md5lib then
+        local head = ReadHead(path, 65536)
+        if head then
+          checksum = md5lib.sumhexa(head)
+        end
+      end
+
+      LogOutput("INFO", "[AC] Pak: %s  size=%s  md5_head=%s",
+        name,
+        size and tostring(size) or "?",
+        checksum or "n/a"
+      )
+
+      table.insert(paks, {
+        name = name,
+        path = path,
+        size = size,
+        md5_head = checksum,
+      })
     end
   end
 
-  LogOutput("INFO", "[AC] ScanPaks: found %d file(s) in Paks", #paks)
+  LogOutput("INFO", "[AC] ScanPaks: found %d file(s) in Paks (md5=%s)",
+    #paks, md5lib and "yes" or "no")
   SendPakReport(paks)
 end
 
