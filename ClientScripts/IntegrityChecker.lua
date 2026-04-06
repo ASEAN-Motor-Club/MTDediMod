@@ -198,45 +198,41 @@ local function OnVehicleEntered()
   end
 end
 
--- Post-hook pattern: RegisterHook returns (PreId, PostId).
--- We discard the pre-id and only use the post callback (2nd arg position),
--- which fires *after* the UFunction body — LastVehicle is already populated.
-
+-- Hook 1: AMTCharacter:OnRep_Seat
+-- Fires on the CLIENT when the character's replicated Seat property changes.
+-- This is the most direct client-side signal for "I entered/exited a seat".
+-- Context is the AMTCharacter (our pawn). Filter: only act if LastVehicle is valid.
 local _, _ = RegisterHook(
-  "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicle",
-  function() end,  -- pre (ignored)
-  function() OnVehicleEntered() end  -- post
-)
-
-local _, _ = RegisterHook(
-  "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicleBySeatName",
+  "/Script/MotorTown.MTCharacter:OnRep_Seat",
   function() end,
-  function() OnVehicleEntered() end
-)
-
-local _, _ = RegisterHook(
-  "/Script/MotorTown.MotorTownPlayerController:ServerEnterVehicleByIdAndSeatName",
-  function() end,
-  function() OnVehicleEntered() end
-)
-
-local _, _ = RegisterHook(
-  "/Script/MotorTown.MotorTownPlayerController:ServerEnteredVehicleByInitGame",
-  function() end,
-  function() OnVehicleEntered() end
-)
-
--- MulticastSeatCharacter: post-hook filters for the local player's pawn.
-local _, _ = RegisterHook(
-  "/Script/MotorTown.MTVehicle:MulticastSeatCharacter",
-  function() end,
-  function(Context, SeatName, Character)
+  function(Context)
+    local character = Context:get()
+    if not character or not character:IsValid() then return end
+    -- Only handle our own character
     local PC = GetMyPlayerController()
     if not PC:IsValid() then return end
     local myPawn = PC.Pawn
     if not myPawn or not myPawn:IsValid() then return end
-    local seatedChar = Character:get()
+    if character ~= myPawn then return end
+    -- Only fire if we entered a vehicle (LastVehicle valid)
+    if PC.LastVehicle and PC.LastVehicle:IsValid() then
+      OnVehicleEntered()
+    end
+  end
+)
+
+-- Hook 2: UMTSeatComponent:MulticastSeatCharacter
+-- Fires on ALL clients when any character is seated. Filter for local pawn.
+local _, _ = RegisterHook(
+  "/Script/MotorTown.MTSeatComponent:MulticastSeatCharacter",
+  function() end,
+  function(Context, InCharacter, Location)
+    local seatedChar = InCharacter:get()
     if not seatedChar or not seatedChar:IsValid() then return end
+    local PC = GetMyPlayerController()
+    if not PC:IsValid() then return end
+    local myPawn = PC.Pawn
+    if not myPawn or not myPawn:IsValid() then return end
     if seatedChar == myPawn then
       OnVehicleEntered()
     end
