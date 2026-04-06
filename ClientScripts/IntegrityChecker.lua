@@ -10,6 +10,7 @@ local http = require("socket.http")
 local ltn12 = require("ltn12")
 local config = require("ModConfig")
 local statics = require("Statics")
+local crc32 = require("CRC32")
 
 -- Backend report URL — override via config.json `acReportUrl` key in future
 local REPORT_URL = "http://api.aseanmotorclub.com/api/ac/report"
@@ -163,49 +164,36 @@ local function ReadHead(path, n)
   return data
 end
 
--- Try to load md5 library (may not be bundled)
-local md5lib = nil
-pcall(function() md5lib = require("md5") end)
 
 ---Scan MotorTown/Content/Paks and report all .pak files to the backend.
----Reports filename, size, and (if md5 available) a partial checksum of first 64KB.
+---Reports filename, size, and CRC32 of first 64KB header bytes.
 ---Runs once at mod load. Detects unauthorized/modified pak mods.
 local function ScanPaks()
   local dirs = IterateGameDirectories()
 
-  -- Dump top-level dir names so we can identify the correct game key
-  LogOutput("INFO", "[AC] ScanPaks: top-level dirs:")
-  for key, dir in pairs(dirs) do
-    if type(dir) == "table" and dir.__name then
-      LogOutput("INFO", "[AC]   key=%s  name=%s  path=%s", tostring(key), tostring(dir.__name), tostring(dir.__absolute_path))
-    end
-  end
-
-  -- Navigate to Paks — try common Motor Town project names
+  -- "Game" key maps to the MotorTown project dir (confirmed from field logs)
   local paksDir = nil
-  local candidates = { "MotorTown", "motortown", "Game", "game" }
-  for _, name in ipairs(candidates) do
-    local candidate = dirs[name]
+  local candidates = { "Game", "MotorTown", "game", "motortown" }
+  for _, key in ipairs(candidates) do
+    local candidate = dirs[key]
     if candidate and candidate.Content and candidate.Content.Paks then
       paksDir = candidate.Content.Paks
-      LogOutput("INFO", "[AC] ScanPaks: found Paks via key '%s'", name)
       break
     end
   end
 
   if not paksDir then
-    -- Last resort: walk every top-level dir looking for a Content/Paks subtree
-    for key, dir in pairs(dirs) do
+    -- Fallback: walk every top-level dir
+    for _, dir in pairs(dirs) do
       if type(dir) == "table" and dir.Content and dir.Content.Paks then
         paksDir = dir.Content.Paks
-        LogOutput("INFO", "[AC] ScanPaks: found Paks via fallback key '%s'", tostring(key))
         break
       end
     end
   end
 
   if not paksDir then
-    LogOutput("WARN", "[AC] ScanPaks: Paks dir not found in any top-level game dir")
+    LogOutput("WARN", "[AC] ScanPaks: Paks dir not found")
     return
   end
 
@@ -218,31 +206,28 @@ local function ScanPaks()
 
       local size = GetFileSize(path)
 
+      -- CRC32 of first 64KB — instant even on multi-GB paks, detects header tampering
       local checksum = nil
-      if md5lib then
-        local head = ReadHead(path, 65536)
-        if head then
-          checksum = md5lib.sumhexa(head)
-        end
+      local head = ReadHead(path, 65536)
+      if head then
+        checksum = crc32.sum(head)
       end
 
-      LogOutput("INFO", "[AC] Pak: %s  size=%s  md5_head=%s",
+      LogOutput("INFO", "[AC] Pak: %s  size=%s  crc32=%s",
         name,
         size and tostring(size) or "?",
-        checksum or "n/a"
+        checksum or "err"
       )
 
       table.insert(paks, {
         name = name,
-        path = path,
         size = size,
-        md5_head = checksum,
+        crc32_head = checksum,
       })
     end
   end
 
-  LogOutput("INFO", "[AC] ScanPaks: found %d file(s) in Paks (md5=%s)",
-    #paks, md5lib and "yes" or "no")
+  LogOutput("INFO", "[AC] ScanPaks: %d pak(s) scanned", #paks)
   SendPakReport(paks)
 end
 
