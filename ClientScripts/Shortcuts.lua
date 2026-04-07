@@ -4,12 +4,15 @@
 local config = require("ModConfig")
 local UEHelpers = require("UEHelpers")
 local teleportManager = require("TeleportManager")
+local vehicleManager = require("VehicleManager")
 
 --- Minimum interval between shortcut triggers (ms)
 local DEBOUNCE_MS = 1000
 local lastTriggerTime = 0
 local lastDespawnTime = 0
 local lastImpulseTime = 0
+local lastDespawnDialogTime = 0
+local despawnDialogOpen = false
 
 --- Impulse strength for the aimed impulse shortcut
 local IMPULSE_STRENGTH = 100000.0
@@ -196,8 +199,137 @@ local function TriggerImpulseAimed()
 end
 
 
+---Despawn selection dialog: opens a ButtonsDialog with three choices
+---Ctrl+Shift+D → modal widget (Current / All / Others)
+local function TriggerDespawnDialog()
+    local now = os.clock() * 1000
+    if now - lastDespawnDialogTime < DEBOUNCE_MS then
+        return
+    end
+    if despawnDialogOpen then
+        return
+    end
+    lastDespawnDialogTime = now
+    despawnDialogOpen = true
 
---- Register keyboard shortcut from config
+    ExecuteInGameThread(function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then
+            LogOutput("WARN", "DespawnDialog: PlayerController not valid")
+            despawnDialogOpen = false
+            return
+        end
+
+        ---@cast PC AMotorTownPlayerController
+        local HUD = PC.MyHUD
+        if not HUD:IsValid() then
+            LogOutput("WARN", "DespawnDialog: HUD not valid")
+            despawnDialogOpen = false
+            return
+        end
+
+        ---@cast HUD AMTHUD
+        local widgetClass = HUD.ButtonsDialogueWidgetClass
+        if not widgetClass:IsValid() then
+            LogOutput("WARN", "DespawnDialog: ButtonsDialogueWidgetClass not valid")
+            despawnDialogOpen = false
+            return
+        end
+
+        local widget = HUD:PushFullScreenMenuWidget(widgetClass, false)
+        if not widget:IsValid() then
+            LogOutput("WARN", "DespawnDialog: Failed to create ButtonsDialogWidget")
+            despawnDialogOpen = false
+            return
+        end
+
+        ---@cast widget UButtonsDialogWidget
+
+        -- Label the title via the inner popup template, if present
+        local popupTemplate = widget.W_Template_PopupWindow
+        if popupTemplate and popupTemplate:IsValid() then
+            popupTemplate['Set New Title Text'](popupTemplate, FText("Despawn Vehicles"))
+        end
+
+        -- Wire each button in order: [1]=Current, [2]=All, [3]=Others
+        -- ButtonsVerticalBox contains UMTButtonWidget children added by the game.
+        -- We hook OnMenuButtonClickedEvent on each child by index.
+        local HOOKS = {
+            {
+                label = "Despawn Current",
+                action = function()
+                    local count = vehicleManager.DespawnPlayerVehicle(PC)
+                    if count > 0 then
+                        LogOutput("INFO", "DespawnDialog: Despawned %d vehicle(s)", count)
+                    else
+                        LogOutput("INFO", "DespawnDialog: No current vehicle to despawn")
+                    end
+                end
+            },
+            {
+                label = "Despawn All",
+                action = function()
+                    local count = vehicleManager.DespawnAllPlayerVehicles(PC)
+                    if count > 0 then
+                        LogOutput("INFO", "DespawnDialog: Despawned all %d vehicle(s)", count)
+                    else
+                        LogOutput("INFO", "DespawnDialog: No vehicles to despawn")
+                    end
+                end
+            },
+            {
+                label = "Despawn Others",
+                action = function()
+                    local count = vehicleManager.DespawnOtherPlayerVehicles(PC)
+                    if count > 0 then
+                        LogOutput("INFO", "DespawnDialog: Despawned %d other vehicle(s)", count)
+                    else
+                        LogOutput("INFO", "DespawnDialog: No other vehicles to despawn")
+                    end
+                end
+            },
+        }
+
+        -- Hook each button's click event. ButtonsVerticalBox children are the
+        -- MT button widgets added by the Blueprint at construction time.
+        local buttonBox = widget.ButtonsVerticalBox
+        if not buttonBox:IsValid() then
+            LogOutput("WARN", "DespawnDialog: ButtonsVerticalBox not valid")
+            HUD:PopFullScreenMenuWidget(widget)
+            despawnDialogOpen = false
+            return
+        end
+
+        for i, entry in ipairs(HOOKS) do
+            -- GetChildAt is 0-indexed in UMG
+            local btn = buttonBox:GetChildAt(i - 1)
+            if btn and btn:IsValid() then
+                -- Set the display label via the NameTextBlock on UMTButtonWidget
+                local nameBlock = btn.NameTextBlock
+                if nameBlock and nameBlock:IsValid() then
+                    nameBlock:SetText(FText(entry.label))
+                end
+
+                -- Capture loop index in closure
+                local capturedAction = entry.action
+                RegisterHook("/Script/MotorTown.MTButtonWidget:OnButtonClicked",
+                    function(Context)
+                        if not widget:IsValid() then return end
+                        if Context:get() ~= btn then return end
+                        capturedAction()
+                        HUD:PopFullScreenMenuWidget(widget)
+                        despawnDialogOpen = false
+                    end)
+            else
+                LogOutput("WARN", "DespawnDialog: Button %d not found in ButtonsVerticalBox", i)
+            end
+        end
+
+        LogOutput("INFO", "DespawnDialog: Opened (Current / All / Others)")
+    end)
+end
+
+
 local function RegisterKeyboardShortcut()
     local shortcuts = config.GetModConfig("shortcuts")
     if not shortcuts or not shortcuts.arrest or not shortcuts.arrest.keyboard then
@@ -371,5 +503,6 @@ RegisterKeyBind(Key.RIGHT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT
 RegisterKeyBind(Key.I, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.T, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerTeleportDialog)
+RegisterKeyBind(Key.D, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnDialog)
 
 return {}

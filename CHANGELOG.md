@@ -45,6 +45,13 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
+### [client/v0.2.10] — 2026-04-07
+
+#### Added
+- Despawn selection dialog (Ctrl+Shift+D): modal widget with Current / All / Others vehicle despawn options
+
+---
+
 ### [client/v0.2.0] — 2026-04-06
 
 #### Added
