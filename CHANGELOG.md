@@ -58,6 +58,14 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
+### [client/v0.2.11] — 2026-04-08
+
+#### Fixed
+- Correct cargo class path from `AMTCargo` to `MTCargo` (fixes cargo despawn for Blueprint subclasses like TrashBag)
+- Use `ServerTrashItem` RPC for item despawn instead of client-only `K2_DestroyActor` (replicates on dedicated servers)
+
+---
+
 ### [client/v0.2.10] — 2026-04-07
 
 #### Added

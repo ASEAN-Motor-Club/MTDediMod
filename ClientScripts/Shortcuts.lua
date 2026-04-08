@@ -12,10 +12,21 @@ local lastTriggerTime = 0
 local lastDespawnTime = 0
 local lastImpulseTime = 0
 local lastDespawnDialogTime = 0
+local lastDoorToggleTime = 0
 local despawnDialogOpen = false
 
 --- Impulse strength for the aimed impulse shortcut
 local IMPULSE_STRENGTH = 100000.0
+
+---Check whether the local player has admin privileges
+---@return boolean
+local function IsAdmin()
+    local PC = GetMyPlayerController()
+    if not PC:IsValid() then return false end
+    local PS = PC.PlayerState
+    if not PS:IsValid() then return false end
+    return PS.bIsAdmin == true
+end
 
 ---Send the /arrest command via ServerSendChat
 local function TriggerArrest()
@@ -36,8 +47,85 @@ local function TriggerArrest()
     end)
 end
 
+---Toggle the nearest door on the vehicle the player is aiming at
+local function TriggerDoorToggle()
+    if not IsAdmin() then
+        LogOutput("WARN", "Door toggle shortcut: Admin only")
+        return
+    end
+
+    local now = os.clock() * 1000
+    if now - lastDoorToggleTime < DEBOUNCE_MS then
+        return
+    end
+    lastDoorToggleTime = now
+
+    ExecuteInGameThread(function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then
+            LogOutput("WARN", "Door toggle shortcut: PlayerController not valid")
+            return
+        end
+
+        local wasHit, hitResult = GetHitResultFromCenterLineTrace()
+        if not wasHit then
+            LogOutput("INFO", "Door toggle shortcut: Nothing aimed at")
+            return
+        end
+
+        local actor = GetActorFromHitResult(hitResult)
+        if not actor:IsValid() then
+            LogOutput("INFO", "Door toggle shortcut: Invalid aimed actor")
+            return
+        end
+
+        local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+        if not vehicleClass:IsValid() or not actor:IsA(vehicleClass) then
+            LogOutput("INFO", "Door toggle shortcut: Aimed actor is not a vehicle")
+            return
+        end
+
+        ---@cast actor AMTVehicle
+        local doors = actor.Doors
+        if not doors:IsValid() or #doors == 0 then
+            LogOutput("INFO", "Door toggle shortcut: Vehicle has no doors")
+            return
+        end
+
+        local impactPoint = hitResult.ImpactPoint
+        local bestDoor = nil
+        local bestDistSq = math.huge
+
+        for i = 1, #doors do
+            local door = doors[i]
+            if door:IsValid() then
+                local doorLoc = door:K2_GetComponentLocation()
+                local dx = doorLoc.X - impactPoint.X
+                local dy = doorLoc.Y - impactPoint.Y
+                local dz = doorLoc.Z - impactPoint.Z
+                local distSq = dx * dx + dy * dy + dz * dz
+                if distSq < bestDistSq then
+                    bestDistSq = distSq
+                    bestDoor = door
+                end
+            end
+        end
+
+        if bestDoor then
+            PC:ServerToggleDoor(bestDoor)
+            LogOutput("INFO", "Door toggle shortcut: Toggled door %s (dist=%.0f)",
+                bestDoor:GetFullName(), math.sqrt(bestDistSq))
+        end
+    end)
+end
+
 ---Despawn the actor the player is aiming at (vehicle, cargo, or item)
 local function TriggerDespawnAimed()
+    if not IsAdmin() then
+        LogOutput("WARN", "Despawn shortcut: Admin only")
+        return
+    end
+
     local now = os.clock() * 1000
     if now - lastDespawnTime < DEBOUNCE_MS then
         return
@@ -63,41 +151,8 @@ local function TriggerDespawnAimed()
             return
         end
 
-        -- If we hit a vehicle, find the nearest door to the impact point and open it
         local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
-        if vehicleClass:IsValid() and actor:IsA(vehicleClass) then
-            ---@cast actor AMTVehicle
-            local doors = actor.Doors
-            if doors:IsValid() and #doors > 0 then
-                local impactPoint = hitResult.ImpactPoint
-                local bestDoor = nil
-                local bestDistSq = math.huge
-
-                for i = 1, #doors do
-                    local door = doors[i]
-                    if door:IsValid() then
-                        local doorLoc = door:K2_GetComponentLocation()
-                        local dx = doorLoc.X - impactPoint.X
-                        local dy = doorLoc.Y - impactPoint.Y
-                        local dz = doorLoc.Z - impactPoint.Z
-                        local distSq = dx * dx + dy * dy + dz * dz
-                        if distSq < bestDistSq then
-                            bestDistSq = distSq
-                            bestDoor = door
-                        end
-                    end
-                end
-
-                if bestDoor then
-                    PC:ServerToggleDoor(bestDoor)
-                    LogOutput("INFO", "Despawn shortcut: Toggled door %s (dist=%.0f)",
-                        bestDoor:GetFullName(), math.sqrt(bestDistSq))
-                    return
-                end
-            end
-        end
-
-        local cargoClass = StaticFindObject("/Script/MotorTown.AMTCargo")
+        local cargoClass = StaticFindObject("/Script/MotorTown.MTCargo")
         local itemComponentClass = StaticFindObject("/Script/MotorTown.UMTItemComponent")
 
         if vehicleClass:IsValid() and actor:IsA(vehicleClass) then
@@ -115,8 +170,8 @@ local function TriggerDespawnAimed()
         elseif itemComponentClass:IsValid() then
             local itemComponent = actor:GetComponentByClass(itemComponentClass)
             if itemComponent:IsValid() and not actor:IsActorBeingDestroyed() then
-                actor:K2_DestroyActor()
-                LogOutput("INFO", "Despawn shortcut: Destroyed item %s", actor:GetFullName())
+                PC:ServerTrashItem(actor)
+                LogOutput("INFO", "Despawn shortcut: Trashed item %s", actor:GetFullName())
             else
                 LogOutput("INFO", "Despawn shortcut: Aimed actor is not despawnable: %s", actor:GetFullName())
             end
@@ -129,6 +184,11 @@ end
 ---[EXPERIMENTAL] Apply a physics impulse to the actor the player is aiming at.
 ---Uses the game's built-in ServerApplyImpact RPC which replicates automatically.
 local function TriggerImpulseAimed()
+    if not IsAdmin() then
+        LogOutput("WARN", "Impulse shortcut: Admin only")
+        return
+    end
+
     local now = os.clock() * 1000
     if now - lastImpulseTime < DEBOUNCE_MS then
         return
@@ -498,10 +558,10 @@ end
 -- Initialize shortcuts
 RegisterKeyboardShortcut()
 RegisterGamepadShortcut()
-RegisterKeyBind(Key.X, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnAimed)
 RegisterKeyBind(Key.RIGHT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnAimed)
 RegisterKeyBind(Key.I, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
+RegisterKeyBind(Key.O, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDoorToggle)
 RegisterKeyBind(Key.T, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerTeleportDialog)
 RegisterKeyBind(Key.D, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnDialog)
 
