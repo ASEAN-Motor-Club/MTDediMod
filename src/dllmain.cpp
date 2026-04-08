@@ -41,6 +41,20 @@ MotorTownMods::~MotorTownMods()
 	HookManager::UnregisterAllHooks();
 }
 
+static std::string FormatGuid(const FGuid* guid)
+{
+	if (!guid) return "";
+	return std::format(
+		"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
+		guid->A,
+		(guid->B >> 16),
+		(guid->B & 0xFFFF),
+		(guid->C >> 16),
+		(guid->C & 0xFFFF),
+		guid->D
+	);
+}
+
 auto MotorTownMods::on_unreal_init() -> void
 {
 	HookManager::UnregisterAllHooks(); // Prevent duplicate hooks on hot-reload if destructor wasn't fully processed
@@ -983,6 +997,493 @@ auto MotorTownMods::on_unreal_init() -> void
 				}
 			}
 
+			return true;
+		}
+	);
+
+	// ========== Event System Hooks ==========
+
+	// Helper: extract full FMTEvent from a struct pointer into JSON
+	auto extract_event_struct = [](void* event_ptr, UScriptStruct* event_struct, json::object& event_obj) {
+		if (!event_ptr || !event_struct) return;
+
+		// EventGuid
+		auto egProp = event_struct->GetPropertyByNameInChain(STR("EventGuid"));
+		if (egProp) {
+			auto eg = egProp->ContainerPtrToValuePtr<FGuid>(event_ptr);
+			if (eg) event_obj["EventGuid"] = json::string(FormatGuid(eg));
+		}
+
+		// EventName
+		auto enProp = event_struct->GetPropertyByNameInChain(STR("EventName"));
+		if (enProp) {
+			auto en = enProp->ContainerPtrToValuePtr<FString>(event_ptr);
+			if (en && en->GetCharArray().GetData()) {
+				event_obj["EventName"] = json::string(to_string(en->GetCharArray().GetData()));
+			}
+		}
+
+		// State (uint8 enum)
+		auto stateProp = event_struct->GetPropertyByNameInChain(STR("State"));
+		if (stateProp) {
+			auto state = stateProp->ContainerPtrToValuePtr<uint8>(event_ptr);
+			if (state) event_obj["State"] = *state;
+		}
+
+		// OwnerCharacterId
+		auto ownerProp = static_cast<FStructProperty*>(event_struct->GetPropertyByNameInChain(STR("OwnerCharacterId")));
+		if (ownerProp) {
+			auto owner = ownerProp->ContainerPtrToValuePtr<void>(event_ptr);
+			auto ownerStruct = ownerProp->GetStruct();
+			if (owner && ownerStruct) {
+				json::object owner_obj;
+				auto ogProp = ownerStruct->GetPropertyByNameInChain(STR("CharacterGuid"));
+				if (ogProp) {
+					auto og = ogProp->ContainerPtrToValuePtr<FGuid>(owner);
+					if (og) owner_obj["CharacterGuid"] = json::string(FormatGuid(og));
+				}
+				auto ouProp = ownerStruct->GetPropertyByNameInChain(STR("UniqueNetId"));
+				if (ouProp) {
+					auto ou = ouProp->ContainerPtrToValuePtr<FString>(owner);
+					if (ou && ou->GetCharArray().GetData()) {
+						owner_obj["UniqueNetId"] = json::string(to_string(ou->GetCharArray().GetData()));
+					}
+				}
+				event_obj["OwnerCharacterId"] = owner_obj;
+			}
+		}
+
+		// Players TArray
+		auto playersProp = static_cast<FArrayProperty*>(event_struct->GetPropertyByNameInChain(STR("Players")));
+		if (playersProp) {
+			auto playersArray = playersProp->ContainerPtrToValuePtr<FScriptArray>(event_ptr);
+			auto playersInner = static_cast<FStructProperty*>(playersProp->GetInner());
+			if (playersArray && playersArray->GetData() && playersInner) {
+				int32 elemSize = playersInner->GetElementSize();
+				int32 numPlayers = playersArray->Num();
+				auto playerStruct = playersInner->GetStruct();
+				json::array players_json;
+
+				for (int32 i = 0; i < numPlayers && playerStruct; ++i) {
+					auto playerPtr = static_cast<uint8_t*>(playersArray->GetData()) + (elemSize * i);
+					auto player = playersInner->ContainerPtrToValuePtr<void>(playerPtr);
+					if (!player) continue;
+
+					json::object pj;
+
+					// CharacterId
+					auto cidProp = static_cast<FStructProperty*>(playerStruct->GetPropertyByNameInChain(STR("CharacterId")));
+					if (cidProp) {
+						auto cid = cidProp->ContainerPtrToValuePtr<void>(player);
+						auto cidStruct = cidProp->GetStruct();
+						if (cid && cidStruct) {
+							json::object cid_obj;
+							auto cgProp = cidStruct->GetPropertyByNameInChain(STR("CharacterGuid"));
+							if (cgProp) {
+								auto cg = cgProp->ContainerPtrToValuePtr<FGuid>(cid);
+								if (cg) cid_obj["CharacterGuid"] = json::string(FormatGuid(cg));
+							}
+							auto unProp = cidStruct->GetPropertyByNameInChain(STR("UniqueNetId"));
+							if (unProp) {
+								auto un = unProp->ContainerPtrToValuePtr<FString>(cid);
+								if (un && un->GetCharArray().GetData()) {
+									cid_obj["UniqueNetId"] = json::string(to_string(un->GetCharArray().GetData()));
+								}
+							}
+							pj["CharacterId"] = cid_obj;
+						}
+					}
+
+					// PlayerName
+					auto pnProp = playerStruct->GetPropertyByNameInChain(STR("PlayerName"));
+					if (pnProp) {
+						auto pn = pnProp->ContainerPtrToValuePtr<FString>(player);
+						if (pn && pn->GetCharArray().GetData()) {
+							pj["PlayerName"] = json::string(to_string(pn->GetCharArray().GetData()));
+						}
+					}
+
+					// Scalar fields
+					auto rProp = playerStruct->GetPropertyByNameInChain(STR("Rank"));
+					if (rProp) { auto v = rProp->ContainerPtrToValuePtr<int32>(player); if (v) pj["Rank"] = *v; }
+
+					auto siProp = playerStruct->GetPropertyByNameInChain(STR("SectionIndex"));
+					if (siProp) { auto v = siProp->ContainerPtrToValuePtr<int32>(player); if (v) pj["SectionIndex"] = *v; }
+
+					auto lpProp = playerStruct->GetPropertyByNameInChain(STR("Laps"));
+					if (lpProp) { auto v = lpProp->ContainerPtrToValuePtr<int32>(player); if (v) pj["Laps"] = *v; }
+
+					auto lsProp = playerStruct->GetPropertyByNameInChain(STR("LastSectionTotalTimeSeconds"));
+					if (lsProp) { auto v = lsProp->ContainerPtrToValuePtr<float>(player); if (v) pj["LastSectionTotalTimeSeconds"] = *v; }
+
+					auto blProp = playerStruct->GetPropertyByNameInChain(STR("BestLapTime"));
+					if (blProp) { auto v = blProp->ContainerPtrToValuePtr<float>(player); if (v) pj["BestLapTime"] = *v; }
+
+					auto dqProp = playerStruct->GetPropertyByNameInChain(STR("bDisqualified"));
+					if (dqProp) { auto v = dqProp->ContainerPtrToValuePtr<bool>(player); if (v) pj["bDisqualified"] = *v; }
+
+					auto fnProp = playerStruct->GetPropertyByNameInChain(STR("bFinished"));
+					if (fnProp) { auto v = fnProp->ContainerPtrToValuePtr<bool>(player); if (v) pj["bFinished"] = *v; }
+
+					auto wvProp = playerStruct->GetPropertyByNameInChain(STR("bWrongVehicle"));
+					if (wvProp) { auto v = wvProp->ContainerPtrToValuePtr<bool>(player); if (v) pj["bWrongVehicle"] = *v; }
+
+					auto weProp = playerStruct->GetPropertyByNameInChain(STR("bWrongEngine"));
+					if (weProp) { auto v = weProp->ContainerPtrToValuePtr<bool>(player); if (v) pj["bWrongEngine"] = *v; }
+
+					// LapTimes TArray<float>
+					auto ltProp = static_cast<FArrayProperty*>(playerStruct->GetPropertyByNameInChain(STR("LapTimes")));
+					if (ltProp) {
+						auto ltArray = ltProp->ContainerPtrToValuePtr<FScriptArray>(player);
+						if (ltArray && ltArray->GetData()) {
+							json::array lt_json;
+							auto ltInner = ltProp->GetInner();
+							if (ltInner) {
+								int32 ltElemSize = ltInner->GetElementSize();
+								for (int32 j = 0; j < ltArray->Num(); ++j) {
+									auto ltVal = reinterpret_cast<const float*>(
+										static_cast<const uint8_t*>(ltArray->GetData()) + (ltElemSize * j));
+									lt_json.push_back(*ltVal);
+								}
+							}
+							pj["LapTimes"] = lt_json;
+						}
+					}
+
+					// Reward_Money (FMTShadowedInt64)
+					auto rmProp = static_cast<FStructProperty*>(playerStruct->GetPropertyByNameInChain(STR("Reward_Money")));
+					if (rmProp) {
+						auto rm = rmProp->ContainerPtrToValuePtr<void>(player);
+						auto rmStruct = rmProp->GetStruct();
+						if (rm && rmStruct) {
+							json::object rm_obj;
+							auto bvProp = rmStruct->GetPropertyByNameInChain(STR("BaseValue"));
+							if (bvProp) {
+								auto bv = bvProp->ContainerPtrToValuePtr<int64>(rm);
+								if (bv) rm_obj["BaseValue"] = *bv;
+							}
+							pj["Reward_Money"] = rm_obj;
+						}
+					}
+
+					players_json.push_back(pj);
+				}
+				event_obj["Players"] = players_json;
+			}
+		}
+
+		// RaceSetup (FMTRaceEventSetup)
+		auto rsProp = static_cast<FStructProperty*>(event_struct->GetPropertyByNameInChain(STR("RaceSetup")));
+		if (rsProp) {
+			auto rs = rsProp->ContainerPtrToValuePtr<void>(event_ptr);
+			auto rsStruct = rsProp->GetStruct();
+			if (rs && rsStruct) {
+				json::object rs_obj;
+
+				auto nlProp = rsStruct->GetPropertyByNameInChain(STR("NumLaps"));
+				if (nlProp) { auto v = nlProp->ContainerPtrToValuePtr<int32>(rs); if (v) rs_obj["NumLaps"] = *v; }
+
+				// VehicleKeys TArray<FName>
+				auto vkProp = static_cast<FArrayProperty*>(rsStruct->GetPropertyByNameInChain(STR("VehicleKeys")));
+				if (vkProp) {
+					auto vkArray = vkProp->ContainerPtrToValuePtr<FScriptArray>(rs);
+					if (vkArray && vkArray->GetData()) {
+						json::array vk_json;
+						auto vkInner = vkProp->GetInner();
+						if (vkInner) {
+							int32 vkElemSize = vkInner->GetElementSize();
+							for (int32 j = 0; j < vkArray->Num(); ++j) {
+								auto vkVal = reinterpret_cast<const FName*>(
+									static_cast<const uint8_t*>(vkArray->GetData()) + (vkElemSize * j));
+								vk_json.push_back(json::string(to_string(vkVal->ToString())));
+							}
+						}
+						rs_obj["VehicleKeys"] = vk_json;
+					}
+				}
+
+				// EngineKeys TArray<FName>
+				auto ekProp = static_cast<FArrayProperty*>(rsStruct->GetPropertyByNameInChain(STR("EngineKeys")));
+				if (ekProp) {
+					auto ekArray = ekProp->ContainerPtrToValuePtr<FScriptArray>(rs);
+					if (ekArray && ekArray->GetData()) {
+						json::array ek_json;
+						auto ekInner = ekProp->GetInner();
+						if (ekInner) {
+							int32 ekElemSize = ekInner->GetElementSize();
+							for (int32 j = 0; j < ekArray->Num(); ++j) {
+								auto ekVal = reinterpret_cast<const FName*>(
+									static_cast<const uint8_t*>(ekArray->GetData()) + (ekElemSize * j));
+								ek_json.push_back(json::string(to_string(ekVal->ToString())));
+							}
+						}
+						rs_obj["EngineKeys"] = ek_json;
+					}
+				}
+
+				// Route (FMTRoute)
+				auto routeProp = static_cast<FStructProperty*>(rsStruct->GetPropertyByNameInChain(STR("Route")));
+				if (routeProp) {
+					auto route = routeProp->ContainerPtrToValuePtr<void>(rs);
+					auto routeStruct = routeProp->GetStruct();
+					if (route && routeStruct) {
+						json::object route_obj;
+
+						auto rnProp = routeStruct->GetPropertyByNameInChain(STR("RouteName"));
+						if (rnProp) {
+							auto rn = rnProp->ContainerPtrToValuePtr<FString>(route);
+							if (rn && rn->GetCharArray().GetData()) {
+								route_obj["RouteName"] = json::string(to_string(rn->GetCharArray().GetData()));
+							}
+						}
+
+						// Waypoints TArray<FTransform>
+						auto wpProp = static_cast<FArrayProperty*>(routeStruct->GetPropertyByNameInChain(STR("Waypoints")));
+						if (wpProp) {
+							auto wpArray = wpProp->ContainerPtrToValuePtr<FScriptArray>(route);
+							auto wpInner = static_cast<FStructProperty*>(wpProp->GetInner());
+							if (wpArray && wpArray->GetData() && wpInner) {
+								int32 wpElemSize = wpInner->GetElementSize();
+								int32 numWp = wpArray->Num();
+								auto tfStruct = wpInner->GetStruct();
+								json::array wp_json;
+
+								for (int32 k = 0; k < numWp && tfStruct; ++k) {
+									auto tfPtr = static_cast<uint8_t*>(wpArray->GetData()) + (wpElemSize * k);
+									auto tf = wpInner->ContainerPtrToValuePtr<void>(tfPtr);
+									if (!tf) continue;
+
+									json::object wp_obj;
+
+									auto trProp = static_cast<FStructProperty*>(tfStruct->GetPropertyByNameInChain(STR("Translation")));
+									if (trProp) {
+										auto tr = trProp->ContainerPtrToValuePtr<FVector>(tf);
+										if (tr) {
+											json::object loc;
+											loc["X"] = tr->X(); loc["Y"] = tr->Y(); loc["Z"] = tr->Z();
+											wp_obj["Location"] = loc;
+										}
+									}
+
+									auto roProp = static_cast<FStructProperty*>(tfStruct->GetPropertyByNameInChain(STR("Rotation")));
+									if (roProp) {
+										auto ro = roProp->ContainerPtrToValuePtr<FQuat>(tf);
+										if (ro) {
+											json::object rot;
+											rot["X"] = ro->X(); rot["Y"] = ro->Y();
+											rot["Z"] = ro->Z(); rot["W"] = ro->W();
+											wp_obj["Rotation"] = rot;
+										}
+									}
+
+									auto scProp = static_cast<FStructProperty*>(tfStruct->GetPropertyByNameInChain(STR("Scale3D")));
+									if (scProp) {
+										auto sc = scProp->ContainerPtrToValuePtr<FVector>(tf);
+										if (sc) {
+											json::object scl;
+											scl["X"] = sc->X(); scl["Y"] = sc->Y(); scl["Z"] = sc->Z();
+											wp_obj["Scale3D"] = scl;
+										}
+									}
+
+									wp_json.push_back(wp_obj);
+								}
+								route_obj["Waypoints"] = wp_json;
+							}
+						}
+
+						rs_obj["Route"] = route_obj;
+					}
+				}
+
+				event_obj["RaceSetup"] = rs_obj;
+			}
+		}
+	};
+
+	// --- ServerAddEvent: extract full FMTEvent from function param ---
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerAddEvent"),
+		"ServerAddEvent",
+		[extract_event_struct](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			auto EventProperty = static_cast<FStructProperty*>(
+				FunctionBeingExecuted->GetPropertyByNameInChain(STR("Event")));
+			if (!EventProperty) return false;
+
+			auto event_ptr = EventProperty->ContainerPtrToValuePtr<void>(Context.TheStack.Locals());
+			auto event_struct = EventProperty->GetStruct();
+			if (!event_ptr || !event_struct) return false;
+
+			json::object event_obj;
+			extract_event_struct(event_ptr, event_struct, event_obj);
+			event_data["Event"] = event_obj;
+			return true;
+		}
+	);
+
+	// --- ServerChangeEventState: post-hook to get full event after state update ---
+	HookManager::RegisterPlayerEventPostHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerChangeEventState"),
+		"ServerChangeEventState",
+		[extract_event_struct](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			// Extract EventGuid from function params
+			auto guidProp = FunctionBeingExecuted->GetPropertyByNameInChain(STR("EventGuid"));
+			if (!guidProp) return false;
+			auto eventGuid = guidProp->ContainerPtrToValuePtr<FGuid>(Context.TheStack.Locals());
+			if (!eventGuid) return false;
+			std::string targetGuid = FormatGuid(eventGuid);
+
+			// Extract EventState from function params
+			auto stateProp = FunctionBeingExecuted->GetPropertyByNameInChain(STR("EventState"));
+			if (stateProp) {
+				auto state = stateProp->ContainerPtrToValuePtr<uint8>(Context.TheStack.Locals());
+				if (state) event_data["EventState"] = *state;
+			}
+
+			// Traverse AMTEventSystem::Net_Events to get full event data
+			auto GS = UObjectGlobals::FindFirstOf(STR("AMotorTownGameState"));
+			if (!GS) return true;
+
+			auto eventSystemProp = static_cast<FObjectProperty*>(GS->GetPropertyByNameInChain(STR("Net_EventSystem")));
+			if (!eventSystemProp) return true;
+			auto eventSystemPtr = eventSystemProp->ContainerPtrToValuePtr<UObject*>(GS);
+			if (!eventSystemPtr || !*eventSystemPtr) return true;
+			auto eventSystem = *eventSystemPtr;
+
+			auto eventsProp = static_cast<FArrayProperty*>(eventSystem->GetPropertyByNameInChain(STR("Net_Events")));
+			if (!eventsProp) return true;
+			auto eventsArray = eventsProp->ContainerPtrToValuePtr<FScriptArray>(eventSystem);
+			auto eventsInner = static_cast<FStructProperty*>(eventsProp->GetInner());
+			if (!eventsArray || !eventsArray->GetData() || !eventsInner) return true;
+
+			int32 elemSize = eventsInner->GetElementSize();
+			int32 numEvents = eventsArray->Num();
+			auto eventStruct = eventsInner->GetStruct();
+			if (!eventStruct) return true;
+
+			for (int32 i = 0; i < numEvents; ++i) {
+				auto elemPtr = static_cast<uint8_t*>(eventsArray->GetData()) + (elemSize * i);
+				auto elem = eventsInner->ContainerPtrToValuePtr<void>(elemPtr);
+				if (!elem) continue;
+
+				auto egProp = eventStruct->GetPropertyByNameInChain(STR("EventGuid"));
+				if (!egProp) continue;
+				auto eg = egProp->ContainerPtrToValuePtr<FGuid>(elem);
+				if (!eg) continue;
+
+				if (FormatGuid(eg) == targetGuid) {
+					json::object event_obj;
+					extract_event_struct(elem, eventStruct, event_obj);
+					event_data["Event"] = event_obj;
+					break;
+				}
+			}
+
+			return true;
+		}
+	);
+
+	// --- ServerPassedRaceSection: extract race section data ---
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerPassedRaceSection"),
+		"ServerPassedRaceSection",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			auto guidProp = FunctionBeingExecuted->GetPropertyByNameInChain(STR("EventGuid"));
+			if (!guidProp) return false;
+			auto eventGuid = guidProp->ContainerPtrToValuePtr<FGuid>(Context.TheStack.Locals());
+			if (!eventGuid) return false;
+			event_data["EventGuid"] = json::string(FormatGuid(eventGuid));
+
+			auto siProp = FunctionBeingExecuted->GetPropertyByNameInChain(STR("SectionIndex"));
+			if (siProp) {
+				auto si = siProp->ContainerPtrToValuePtr<int32>(Context.TheStack.Locals());
+				if (si) event_data["SectionIndex"] = *si;
+			}
+
+			auto tsProp = FunctionBeingExecuted->GetPropertyByNameInChain(STR("TotalTimeSeconds"));
+			if (tsProp) {
+				auto ts = tsProp->ContainerPtrToValuePtr<float>(Context.TheStack.Locals());
+				if (ts) event_data["TotalTimeSeconds"] = *ts;
+			}
+
+			auto lsProp = FunctionBeingExecuted->GetPropertyByNameInChain(STR("LaptimeSeconds"));
+			if (lsProp) {
+				auto ls = lsProp->ContainerPtrToValuePtr<float>(Context.TheStack.Locals());
+				if (ls) event_data["LaptimeSeconds"] = *ls;
+			}
+
+			return true;
+		}
+	);
+
+	// --- ServerRemoveEvent: extract EventGuid ---
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerRemoveEvent"),
+		"ServerRemoveEvent",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			auto guidProp = FunctionBeingExecuted->GetPropertyByNameInChain(STR("EventGuid"));
+			if (!guidProp) return false;
+			auto eventGuid = guidProp->ContainerPtrToValuePtr<FGuid>(Context.TheStack.Locals());
+			if (!eventGuid) return false;
+			event_data["EventGuid"] = json::string(FormatGuid(eventGuid));
+			return true;
+		}
+	);
+
+	// --- ServerJoinEvent: extract EventGuid ---
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerJoinEvent"),
+		"ServerJoinEvent",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			auto guidProp = FunctionBeingExecuted->GetPropertyByNameInChain(STR("EventGuid"));
+			if (!guidProp) return false;
+			auto eventGuid = guidProp->ContainerPtrToValuePtr<FGuid>(Context.TheStack.Locals());
+			if (!eventGuid) return false;
+			event_data["EventGuid"] = json::string(FormatGuid(eventGuid));
+			return true;
+		}
+	);
+
+	// --- ServerLeaveEvent: extract EventGuid ---
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerLeaveEvent"),
+		"ServerLeaveEvent",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			auto guidProp = FunctionBeingExecuted->GetPropertyByNameInChain(STR("EventGuid"));
+			if (!guidProp) return false;
+			auto eventGuid = guidProp->ContainerPtrToValuePtr<FGuid>(Context.TheStack.Locals());
+			if (!eventGuid) return false;
+			event_data["EventGuid"] = json::string(FormatGuid(eventGuid));
 			return true;
 		}
 	);
