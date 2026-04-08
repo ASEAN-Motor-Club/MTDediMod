@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.35.0-rc1] — 2026-04-08
+
+#### Added
+- C++ hooks for event system: ServerAddEvent, ServerChangeEventState, ServerPassedRaceSection, ServerRemoveEvent, ServerJoinEvent, ServerLeaveEvent
+- Events now flow through SSE /events/stream pipeline (replacing Lua webhook POSTs)
+- ServerChangeEventState post-hook traverses AMTEventSystem::Net_Events for full event data
+- ServerAddEvent extracts full FMTEvent struct including players, race setup, and waypoints
+
 ### [server/v0.34.0-rc8] — 2026-04-08
 
 #### Added
