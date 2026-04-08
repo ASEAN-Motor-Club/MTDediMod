@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.34.0-rc8] — 2026-04-08
+
+#### Added
+- Exposed `Net_bAFK` field in `/players` endpoint response
+
 ### [server/v0.34.0-rc7] — 2026-04-05
 
 #### Added

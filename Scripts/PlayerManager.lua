@@ -41,6 +41,7 @@ local function PlayerStateToTable(playerState)
       data.Rotation = RotatorToTable(pawn:K2_GetActorRotation())
     end
     data.VehicleKey = playerState.VehicleKey:ToString()
+    data.bAFK = playerState.Net_bAFK
   end
 
   return data
