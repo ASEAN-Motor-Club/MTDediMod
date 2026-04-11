@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.35.0-rc2] — 2026-04-11
+
+#### Removed
+- Disabled ServerLoadCargo C++ hook to mitigate FAsyncLoadingThread crash (EXCEPTION_ACCESS_VIOLATION during rapid successive cargo loads)
+
 ### [server/v0.35.0-rc1] — 2026-04-08
 
 #### Added

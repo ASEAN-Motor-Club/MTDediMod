@@ -127,6 +127,12 @@ auto MotorTownMods::on_unreal_init() -> void
 		}
 	);
 
+	// DISABLED: ServerLoadCargo hook commented out to mitigate FAsyncLoadingThread crash
+	// (EXCEPTION_ACCESS_VIOLATION in async asset loader during rapid successive cargo loads).
+	// See crash_analysis.md — crash signature PCallStackHash: 49693C391E78AB2A79B10F68E0C919823E80BAF3
+	// TODO: Re-enable once Motor Town devs fix the engine-level race condition, or implement
+	// a debounce/mutex guard around cargo property reads.
+	/*
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerLoadCargo"),
 		"ServerLoadCargo",
@@ -206,6 +212,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			return true;
 		}
 	);
+	*/
 
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerPickupCargo"),
