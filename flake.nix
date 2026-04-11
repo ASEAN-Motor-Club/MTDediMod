@@ -180,7 +180,7 @@
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "beta";
-                modVersion = "v0.33.0-rc7";
+                modVersion = "server-v0.35.0-rc4";
                 enableExternalMods = {
                   CarPartsImport_P = false;
                   MoneyRun_P = true;
@@ -394,7 +394,7 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "server-v0.35.0-rc3";
+            modVersion = "server-v0.35.0-rc4";
             enableExternalMods = {
               "MajasDetailWorksV3-7.18_P" = false;
               "MajasMnTrailerworksV6-7.18_P" = false;
