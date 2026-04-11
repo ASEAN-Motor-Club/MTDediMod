@@ -180,13 +180,13 @@
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "beta";
-                modVersion = "v0.35.0-rc1";
+                modVersion = "v0.33.0-rc7";
                 enableExternalMods = {
                   CarPartsImport_P = false;
                   MoneyRun_P = true;
                   qxZap_CranyUnlocked_P = false;
-                  MajasDetailWorks7_17_P = false;
-                  MajasMnTrailerworks7_17_P = false;
+                  "MajasDetailWorksV3-7.18_P" = true;
+                  "MajasMnTrailerworksV6-7.18_P" = true;
                 };
                 engineIni = ''
                   mh.maxCombinedVehicleLength=4000
@@ -196,8 +196,8 @@
                   mh.housingValidateHousingArea=0
                   mh.invalidPartsDisableLeaderboard=0
                   mh.cargoPaymentMultiplier=10
-                  mh.refuelEVMinPercentPerSeconds=0.001000000026077032
-                  mh.refuelkWPerSeconds=0.2
+                  mh.refuelEVMinPercentPerSeconds=0.002000000026077032
+                  mh.refuelkWPerSeconds=0.5
                   mh.trafficSpawnVehicleMaxDistance=20000.0
                   mh.trafficSpawnVehicleMinDistance=10000.0
                   mh.fuelPriceByInventoryMax=10.0
@@ -394,12 +394,12 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "v0.33.0-rc7";
+            modVersion = "server-v0.35.0-rc2";
             enableExternalMods = {
-              MajasDetailWorks7_17_P = true;
-              MajasMnTrailerworks7_17_P = true;
+              "MajasDetailWorksV3-7.18_P" = false;
+              "MajasMnTrailerworksV6-7.18_P" = false;
               qxZap_CranyUnlocked_P = true;
-              MoneyRun_P = true;
+              MoneyRun_P = false;
             };
             engineIni = ''
               mh.maxCombinedVehicleLength=10000
@@ -571,6 +571,14 @@
               restartScript = pkgs.writeShellScriptBin "restart-motortown" ''
                 echo "restart requested at $(date)" > ${restartTriggerDir}/trigger
               '';
+
+              # === File-based Update Bridge ===
+              # Backend writes a trigger file → host systemd .path unit watches → starts the update service.
+              updateTriggerDir = "/var/lib/motortown-update-trigger";
+
+              updateScript = pkgs.writeShellScriptBin "update-motortown" ''
+                echo "update requested at $(date)" > ${updateTriggerDir}/trigger
+              '';
             in {
               imports = [
                 amc-backend.nixosModules.backend
@@ -607,6 +615,7 @@
                   EVENT_GAME_SERVER_API_URL = "http://127.0.0.1:8082";
                   EVENT_MOD_SERVER_API_URL = "http://localhost:5011";
                   RESTART_MOTORTOWN_SCRIPT = "${restartScript}/bin/restart-motortown";
+                  UPDATE_MOTORTOWN_SCRIPT = "${updateScript}/bin/update-motortown";
                   PARTY_BONUS_ENABLED = "1";
                   WEBHOOK_SSE_ENABLED = "1";
                 };
@@ -695,6 +704,7 @@
               # --- NAT for private-network container port forwarding ---
               networking.nat = {
                 enable = true;
+                externalInterface = "enp13s0";
                 internalInterfaces = [ "ve-+" ];
               };
 
@@ -725,6 +735,7 @@
               systemd.tmpfiles.rules = [
                 "d /var/lib/amc-postgresql 0750 postgres postgres -"
                 "d ${restartTriggerDir} 0777 root root -"
+                "d ${updateTriggerDir} 0777 root root -"
                 "d /var/lib/amc/error-reports 0755 amc amc -"
                 "e /var/lib/amc/error-reports/*.html - - - 30d"
               ];
@@ -748,6 +759,45 @@
                 script = ''
                   rm -f ${restartTriggerDir}/trigger
                   systemctl start motortown-server-restart.service
+                '';
+              };
+
+              # === File-based Update Bridge ===
+              # Recovery service: restarts the game server if the update service fails
+              systemd.services.motortown-update-recovery = {
+                description = "Restart motortown-server after failed update";
+                serviceConfig = {
+                  Type = "oneshot";
+                };
+                script = ''
+                  systemctl start motortown-server.service
+                '';
+              };
+
+              # Wire failure recovery to the update service
+              systemd.services.motortown-server-update = {
+                onFailure = [ "motortown-update-recovery.service" ];
+              };
+
+              # Host-side: watch for trigger file and start the update service
+              systemd.paths.motortown-update-trigger = {
+                description = "Watch for update trigger from backend";
+                wantedBy = [ "multi-user.target" ];
+                pathConfig = {
+                  PathChanged = "${updateTriggerDir}/trigger";
+                  Unit = "motortown-update-triggered.service";
+                };
+              };
+
+              # Triggered by the .path unit — starts the existing motortown-server-update service
+              systemd.services.motortown-update-triggered = {
+                description = "Update motortown-server (triggered from backend)";
+                serviceConfig = {
+                  Type = "oneshot";
+                };
+                script = ''
+                  rm -f ${updateTriggerDir}/trigger
+                  systemctl start motortown-server-update.service
                 '';
               };
             })
