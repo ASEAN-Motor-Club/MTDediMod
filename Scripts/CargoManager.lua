@@ -748,73 +748,81 @@ end
 ---@type RequestPathHandler
 local function HandleGetVehicleCargos(session)
   local characterGuid = session.pathComponents[2]
-  local PC = GetPlayerControllerFromGuid(characterGuid)
-  if not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
-  end
 
-  if not PC.LastVehicle or not PC.LastVehicle:IsValid() then
-    return json.stringify { error = "Player has no LastVehicle" }, nil, 404
-  end
+  local result = nil
+  local errMsg = nil
+  local errCode = 400
+  local ok = ExecuteInGameThreadSync(function()
+    local PC = GetPlayerControllerFromGuid(characterGuid)
+    if not PC:IsValid() then errMsg = "Invalid player controller"; return end
 
-  local chain = GetVehicleChain(PC.LastVehicle)
-  local result = {}
-
-  for _, vehicle in ipairs(chain) do
-    local vehicleData = {
-      vehicleId = vehicle.Net_VehicleId,
-      fullName = vehicle:GetFullName(),
-      cargoSpaces = {},
-    }
-
-    if vehicle.CargoSpaces:IsValid() then
-      for i = 1, #vehicle.CargoSpaces do
-        local space = vehicle.CargoSpaces[i]
-        local spaceData = {
-          index = i,
-          isValid = space:IsValid(),
-          cargos = {},
-          droppedCargos = {},
-        }
-
-        if space:IsValid() then
-          spaceData.cargoSpaceType = space.CargoSpaceType
-          spaceData.bCanLoadCargo = space.bCanLoadCargo
-
-          if space.Net_Cargos:IsValid() then
-            spaceData.netCargosLen = #space.Net_Cargos
-            space.Net_Cargos:ForEach(function(index, element)
-              local cargo = element:get()
-              if cargo ~= nil and cargo:IsValid() then
-                table.insert(spaceData.cargos, CargoToTableSummary(cargo))
-              end
-            end)
-          else
-            spaceData.netCargosLen = -1
-          end
-
-          if space.Net_DroppedCargos:IsValid() then
-            spaceData.netDroppedCargosLen = #space.Net_DroppedCargos
-            space.Net_DroppedCargos:ForEach(function(index, element)
-              local cargo = element:get()
-              if cargo ~= nil and cargo:IsValid() then
-                table.insert(spaceData.droppedCargos, CargoToTableSummary(cargo))
-              end
-            end)
-          else
-            spaceData.netDroppedCargosLen = -1
-          end
-        end
-
-        table.insert(vehicleData.cargoSpaces, spaceData)
-      end
+    if not PC.LastVehicle or not PC.LastVehicle:IsValid() then
+      errMsg = "Player has no LastVehicle"; errCode = 404; return
     end
 
-    table.insert(result, vehicleData)
-  end
+    local chain = GetVehicleChain(PC.LastVehicle)
+    local resultData = {}
 
+    for _, vehicle in ipairs(chain) do
+      local vehicleData = {
+        vehicleId = vehicle.Net_VehicleId,
+        fullName = vehicle:GetFullName(),
+        cargoSpaces = {},
+      }
+
+      if vehicle.CargoSpaces:IsValid() then
+        for i = 1, #vehicle.CargoSpaces do
+          local space = vehicle.CargoSpaces[i]
+          local spaceData = {
+            index = i,
+            isValid = space:IsValid(),
+            cargos = {},
+            droppedCargos = {},
+          }
+
+          if space:IsValid() then
+            spaceData.cargoSpaceType = space.CargoSpaceType
+            spaceData.bCanLoadCargo = space.bCanLoadCargo
+
+            if space.Net_Cargos:IsValid() then
+              spaceData.netCargosLen = #space.Net_Cargos
+              space.Net_Cargos:ForEach(function(index, element)
+                local cargo = element:get()
+                if cargo ~= nil and cargo:IsValid() then
+                  table.insert(spaceData.cargos, CargoToTableSummary(cargo))
+                end
+              end)
+            else
+              spaceData.netCargosLen = -1
+            end
+
+            if space.Net_DroppedCargos:IsValid() then
+              spaceData.netDroppedCargosLen = #space.Net_DroppedCargos
+              space.Net_DroppedCargos:ForEach(function(index, element)
+                local cargo = element:get()
+                if cargo ~= nil and cargo:IsValid() then
+                  table.insert(spaceData.droppedCargos, CargoToTableSummary(cargo))
+                end
+              end)
+            else
+              spaceData.netDroppedCargosLen = -1
+            end
+          end
+
+          table.insert(vehicleData.cargoSpaces, spaceData)
+        end
+      end
+
+      table.insert(resultData, vehicleData)
+    end
+    result = resultData
+  end, "HandleGetVehicleCargos", 300)
+
+  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
+  if errMsg then return json.stringify { error = errMsg }, nil, errCode end
   return json.stringify { data = result }, nil, 200
 end
+
 
 ---Clear all cargo from a player's last vehicle (and trailer chain)
 ---@param PC AMotorTownPlayerController

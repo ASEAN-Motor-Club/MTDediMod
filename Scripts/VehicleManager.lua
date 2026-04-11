@@ -1581,10 +1581,10 @@ local function VehicleToTable(vehicle)
   data.Net_VehicleId = vehicle.Net_VehicleId
   -- data.Server_OwnerPlayerController = vehicle.Server_OwnerPlayerController
 
+  -- SAFETY: Net_Parts TArray is mutated by the replication system on the game thread.
+  -- Reading it from the async webserver thread causes EXCEPTION_ACCESS_VIOLATION.
+  -- Parts are delivered safely via the C++ ServerEnterVehicle hook instead.
   data.Net_Parts = {}
-  vehicle.Net_Parts:ForEach(function(index, element)
-    table.insert(data.Net_Parts, VehiclePartToTable(element:get()))
-  end)
 
   -- data.UtilitySlots = vehicle.UtilitySlots
   data.Net_AINetData = VehicleAINetStateToTable(vehicle.Net_AINetData)
@@ -1712,10 +1712,8 @@ local function GetVehiclesByTag(tags)
     )
     for i, actorContainer in ipairs(actors) do
       local vehicle = actorContainer:get()
+      -- SAFETY: Net_Parts TArray concurrent access crash — skip on async thread.
       local parts = {}
-      vehicle.Net_Parts:ForEach(function(index, element)
-        table.insert(parts, VehiclePartToTable(element:get()))
-      end)
       table.insert(arr, {
         fullName = vehicle:GetFullName(),
         classFullName = vehicle:GetClass():GetFullName(),
@@ -2108,50 +2106,54 @@ local function HandleDetachPlayerVehicle(session)
   end
 
   local PC = GetPlayerControllerFromGuid(playerId)
-  if PC:IsValid() then
+  if not PC:IsValid() then
+    return json.stringify { error = "Invalid player controller" }, nil, 400
+  end
+
+  -- SAFETY: Net_SpawnedVehicles and Net_Hooks are replicated TArrays.
+  -- All traversal + ServerDetachTrailer must run on the game thread.
+  local ok = ExecuteInGameThreadSync(function()
+    if not PC:IsValid() then return end
     PC.Net_SpawnedVehicles:ForEach(function(index, element)
       local vehicle = element:get()
       if vehicle:IsValid() then
         vehicle.Net_Hooks:ForEach(function(i, val)
           local hook = val:get()
-          ---@diagnostic disable-next-line: need-check-nil
           if hook:IsValid() and hook.Trailer:IsValid() and hook.Trailer.Net_VehicleId == content.vehicleId then
             PC:ServerDetachTrailer(hook.Tractor, hook.Trailer)
             if content.message ~= nil then
-              ExecuteInGameThreadSync(function()
-                PC:ClientShowSystemMessage(FText(content.message))
-              end, "HandleDetachPlayerVehicle")
+              PC:ClientShowSystemMessage(FText(content.message))
             end
           end
         end)
       end
     end)
-  end
+  end, "HandleDetachPlayerVehicle", 200)
+  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
 end
 
 local function HandleGetPlayerVehicleDecal(session)
   local playerId = session.pathComponents[2]
 
-  local PC = GetPlayerControllerFromUniqueId(playerId)
-  if PC:IsValid() then
+  local result = nil
+  local errMsg = nil
+  local errCode = 400
+  local ok = ExecuteInGameThreadSync(function()
+    local PC = GetPlayerControllerFromUniqueId(playerId)
+    if not PC:IsValid() then errMsg = "Invalid player controller"; return end
     local vehicle = GetPlayerVehicle(PC)
-    if vehicle == nil then
-      return json.stringify { error = "Player is not in a vehicle" }, nil, 400
-    end
-    if vehicle:IsValid() then
-      local decal = VehicleDecalToTable(vehicle.Net_Decal)
-      local customization = VehicleCustomizationToTable(vehicle.Customization)
-      local garageMode = vehicle:IsGarageMode()
-      return json.stringify {
-        decal = decal,
-        garageMode = garageMode,
-        customization = customization,
-      }, nil, 200
-    end
-    return json.stringify { error = "Invalid vehicle" }, nil, 400
-  end
+    if vehicle == nil then errMsg = "Player is not in a vehicle"; return end
+    if not vehicle:IsValid() then errMsg = "Invalid vehicle"; return end
+    result = {
+      decal = VehicleDecalToTable(vehicle.Net_Decal),
+      garageMode = vehicle:IsGarageMode(),
+      customization = VehicleCustomizationToTable(vehicle.Customization),
+    }
+  end, "HandleGetPlayerVehicleDecal", 200)
 
-  return json.stringify { error = "Invalid player controller" }, nil, 400
+  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
+  if errMsg then return json.stringify { error = errMsg }, nil, errCode end
+  return json.stringify(result), nil, 200
 end
 
 
@@ -2284,16 +2286,8 @@ local function PlayerVehicleToTable(vehicle, complete)
     if vehicle.Customization:IsValid() then
       vehicleInfo["customization"] = VehicleCustomizationToTable(vehicle.Customization)
     end
-    LogOutput("INFO", "Getting parts")
+    -- SAFETY: Net_Parts TArray concurrent access crash — skip on async thread.
     vehicleInfo["parts"] = {}
-    if vehicle.Net_Parts:IsValid() then
-      vehicle.Net_Parts:ForEach(function(index, element)
-        local part = element:get()
-        if part:IsValid() then
-          table.insert(vehicleInfo["parts"], VehiclePartToTable(part))
-        end
-      end)
-    end
   end
   return vehicleInfo
 end

@@ -159,7 +159,11 @@ end)
 ---@type RequestPathHandler
 local function HandleGetPlayerStates(session)
   local playerId = session.pathComponents[2]
-  local res = GetPlayerStates(playerId)
+  local res = {}
+  local ok = ExecuteInGameThreadSync(function()
+    res = GetPlayerStates(playerId)
+  end, "HandleGetPlayerStates", 200)
+  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
   if playerId and #res == 0 then
     return json.stringify { message = string.format("Player with unique ID %s not found", playerId) }, nil, 404
   end
@@ -347,7 +351,12 @@ end
 ---Handle request for parties
 ---@type RequestPathHandler
 local function HandleGetParties(session)
-  return json.stringify { data = GetParties() }, nil, 200
+  local data = {}
+  local ok = ExecuteInGameThreadSync(function()
+    data = GetParties()
+  end, "HandleGetParties", 100)
+  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
+  return json.stringify { data = data }, nil, 200
 end
 
 ---Handle request to make a player a suspect

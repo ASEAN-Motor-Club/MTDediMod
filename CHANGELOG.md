@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.35.0-rc4] — 2026-04-11
+
+#### Fixed
+- ExecuteInGameThreadSync: added optional `label` and `maxMs` parameters; returns `false` on timeout and logs a WARN (prevents indefinite async thread stalls)
+- All Lua webserver handlers that read UObject properties now return HTTP 503 when the game thread does not respond within the time budget (instead of silently returning empty/nil data)
+- HandleGetPlayerStates, HandleGetParties: wrapped in ExecuteInGameThreadSync (200ms / 100ms)
+- HandleGetPlayerVehicleDecal, HandleDetachPlayerVehicle: wrapped in ExecuteInGameThreadSync (200ms)
+- HandleGetVehicleCargos: wrapped in ExecuteInGameThreadSync (300ms); full vehicle chain and nested TArray traversal moved to game thread
+- HandleGetServerState, HandleSetServerConfig, HandleGetPolicePatrolAreas: wrapped in ExecuteInGameThreadSync (100ms / 200ms / 150ms)
+- VehicleManager: removed three unsafe Net_Parts ForEach iterations from the async thread (primary EXCEPTION_ACCESS_VIOLATION crash sites)
+
 ### [server/v0.35.0-rc3] — 2026-04-11
 
 #### Fixed

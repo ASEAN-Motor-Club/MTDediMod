@@ -197,10 +197,12 @@ end)
 ---Handle the get server state commands
 ---@type RequestPathHandler
 local function HandleGetServerState(session)
-    local serverStatus = json.stringify {
+    local data = {}
+    local ok = ExecuteInGameThreadSync(function()
         data = GetServerState()
-    }
-    return serverStatus
+    end, "HandleGetServerState", 100)
+    if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
+    return json.stringify { data = data }
 end
 
 ---Handle the get zone state commands
@@ -273,31 +275,36 @@ local function HandleSetServerConfig(session)
   if not gameState:IsValid() then
     return nil, nil, 503
   end
-  
+
   local body = json.parse(session.content)
   if not body then
     return json.stringify { error = "Invalid JSON body" }, nil, 400
   end
-  
-  if body.MaxVehiclePerPlayer ~= nil then
-    gameState.Net_ServerConfig.MaxVehiclePerPlayer = body.MaxVehiclePerPlayer
-  end
-  if body.bAllowCorporation ~= nil then
-    gameState.Net_ServerConfig.bAllowCorporation = body.bAllowCorporation
-  end
-  if body.MaxHousingPlotRentalDays ~= nil then
-    gameState.Net_ServerConfig.MaxHousingPlotRentalDays = body.MaxHousingPlotRentalDays
-  end
-  if body.bAllowAdminToRemoveAdmin ~= nil then
-    gameState.Net_ServerConfig.bAllowAdminToRemoveAdmin = body.bAllowAdminToRemoveAdmin
-  end
-  if body.bAllowModdedVehicle ~= nil then
-    gameState.Net_ServerConfig.bAllowModdedVehicle = body.bAllowModdedVehicle
-  end
-  if body.bAllowPlayerToJoinWithCompanyVehicles ~= nil then
-    gameState.Net_ServerConfig.bAllowPlayerToJoinWithCompanyVehicles = body.bAllowPlayerToJoinWithCompanyVehicles
-  end
-  return nil,nil, 200
+
+  -- SAFETY: Net_ServerConfig is a replicated property; mutations must be on the game thread.
+  local ok = ExecuteInGameThreadSync(function()
+    if not gameState:IsValid() then return end
+    if body.MaxVehiclePerPlayer ~= nil then
+      gameState.Net_ServerConfig.MaxVehiclePerPlayer = body.MaxVehiclePerPlayer
+    end
+    if body.bAllowCorporation ~= nil then
+      gameState.Net_ServerConfig.bAllowCorporation = body.bAllowCorporation
+    end
+    if body.MaxHousingPlotRentalDays ~= nil then
+      gameState.Net_ServerConfig.MaxHousingPlotRentalDays = body.MaxHousingPlotRentalDays
+    end
+    if body.bAllowAdminToRemoveAdmin ~= nil then
+      gameState.Net_ServerConfig.bAllowAdminToRemoveAdmin = body.bAllowAdminToRemoveAdmin
+    end
+    if body.bAllowModdedVehicle ~= nil then
+      gameState.Net_ServerConfig.bAllowModdedVehicle = body.bAllowModdedVehicle
+    end
+    if body.bAllowPlayerToJoinWithCompanyVehicles ~= nil then
+      gameState.Net_ServerConfig.bAllowPlayerToJoinWithCompanyVehicles = body.bAllowPlayerToJoinWithCompanyVehicles
+    end
+  end, "HandleSetServerConfig", 200)
+  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
+  return nil, nil, 200
 end
 
 ---Handle get police patrol areas with payment data
@@ -307,29 +314,32 @@ local function HandleGetPolicePatrolAreas(session)
     if not gameState:IsValid() then
         return nil, nil, 503
     end
-    local police = gameState.Net_Police
-    if not police:IsValid() then
-        return json.stringify { data = {} }
-    end
+
     local areas = {}
-    for i = 1, #police.Net_ColdState.PatrolAreas, 1 do
-        local area = police.Net_ColdState.PatrolAreas[i]
-        local points = {}
-        for j = 1, #area.PointsToPatrol, 1 do
-            local pt = area.PointsToPatrol[j]
-            table.insert(points, {
-                PatrolPointId = pt.PatrolPointId,
-                BasePayment = pt.BasePayment,
-                AreaBonusPayment = pt.AreaBonusPayment,
+    local ok = ExecuteInGameThreadSync(function()
+        if not gameState:IsValid() then return end
+        local police = gameState.Net_Police
+        if not police:IsValid() then return end
+        for i = 1, #police.Net_ColdState.PatrolAreas, 1 do
+            local area = police.Net_ColdState.PatrolAreas[i]
+            local points = {}
+            for j = 1, #area.PointsToPatrol, 1 do
+                local pt = area.PointsToPatrol[j]
+                table.insert(points, {
+                    PatrolPointId = pt.PatrolPointId,
+                    BasePayment = pt.BasePayment,
+                    AreaBonusPayment = pt.AreaBonusPayment,
+                })
+            end
+            table.insert(areas, {
+                PatrolAreaId = area.PatrolAreaId,
+                ZoneKey = area.ZoneKey:ToString(),
+                NumTotalPoints = area.NumTotalPoints,
+                Points = points,
             })
         end
-        table.insert(areas, {
-            PatrolAreaId = area.PatrolAreaId,
-            ZoneKey = area.ZoneKey:ToString(),
-            NumTotalPoints = area.NumTotalPoints,
-            Points = points,
-        })
-    end
+    end, "HandleGetPolicePatrolAreas", 150)
+    if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
     return json.stringify { data = areas }
 end
 

@@ -572,9 +572,13 @@ function Sleep(ms)
   end
 end
 
----Execute given function in the GameThread
+---Execute given function in the GameThread and wait for it to finish.
 ---@param exec fun()
-function ExecuteInGameThreadSync(exec)
+---@param label string? Label for timeout warnings (optional)
+---@param maxMs number? Upper bound in ms for the async wait (default 1000)
+---@return boolean completed true if the function completed within maxMs, false if timed out
+function ExecuteInGameThreadSync(exec, label, maxMs)
+  maxMs = maxMs or 1000
   local wait = 0
   local isProcessing = true
   ExecuteInGameThread(function()
@@ -582,9 +586,14 @@ function ExecuteInGameThreadSync(exec)
     isProcessing = false
   end)
 
-  while isProcessing and wait < 1000 do
+  while isProcessing and wait < maxMs do
     wait = wait + 1
     Sleep(1)
   end
-end
 
+  if isProcessing then
+    LogOutput("WARN", "ExecuteInGameThreadSync timed out after %dms: %s", maxMs, label or "unknown")
+    return false
+  end
+  return true
+end
