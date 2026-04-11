@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.35.0-rc3] — 2026-04-11
+
+#### Fixed
+- ServerLoadCargo: switched from pre-hook to post-hook to avoid racing with FAsyncLoadingThread during rapid successive cargo loads
+- ServerLoadCargo: added UObject flag validation (RF_BeginDestroyed, RF_NeedLoad, AsyncLoading, PendingKill) before reading cargo properties
+
 ### [server/v0.35.0-rc2] — 2026-04-11
 
 #### Removed

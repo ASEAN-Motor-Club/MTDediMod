@@ -127,13 +127,12 @@ auto MotorTownMods::on_unreal_init() -> void
 		}
 	);
 
-	// DISABLED: ServerLoadCargo hook commented out to mitigate FAsyncLoadingThread crash
-	// (EXCEPTION_ACCESS_VIOLATION in async asset loader during rapid successive cargo loads).
-	// See crash_analysis.md — crash signature PCallStackHash: 49693C391E78AB2A79B10F68E0C919823E80BAF3
-	// TODO: Re-enable once Motor Town devs fix the engine-level race condition, or implement
-	// a debounce/mutex guard around cargo property reads.
-	/*
-	HookManager::RegisterPlayerEventHook(
+	// ServerLoadCargo: post-hook to avoid racing with FAsyncLoadingThread.
+	// Previously a pre-hook, which caused EXCEPTION_ACCESS_VIOLATION when two cargo loads
+	// arrived ~95ms apart (crash hash 49693C391E78AB2A79B10F68E0C919823E80BAF3).
+	// Post-hook runs after the engine completes ServerLoadCargo, so async asset loading
+	// is finished and the cargo object is in a stable state.
+	HookManager::RegisterPlayerEventPostHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerLoadCargo"),
 		"ServerLoadCargo",
 		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
@@ -156,6 +155,18 @@ auto MotorTownMods::on_unreal_init() -> void
 				return false;
 			}
 			auto cargo = *CargoPtr;
+
+			// --- Safety: validate cargo UObject is in a stable state ---
+			// Skip if the object is mid-destruction or still needs loading/post-load
+			if (cargo->HasAnyFlags(static_cast<EObjectFlags>(RF_BeginDestroyed | RF_FinishDestroyed | RF_NeedLoad | RF_NeedPostLoad))) {
+				Output::send<LogLevel::Warning>(STR("ServerLoadCargo: Cargo object in unsafe state (ObjectFlags)\n"));
+				return false;
+			}
+			// Skip if the object is pending kill or still being async-loaded
+			if (cargo->HasAnyInternalFlags(EInternalObjectFlags::PendingKill | EInternalObjectFlags::AsyncLoading)) {
+				Output::send<LogLevel::Warning>(STR("ServerLoadCargo: Cargo object in unsafe state (InternalFlags)\n"));
+				return false;
+			}
 
 			// --- Extract bReposition ---
 			auto bRepositionProp = FunctionBeingExecuted->GetPropertyByName(STR("bReposition"));
@@ -212,7 +223,6 @@ auto MotorTownMods::on_unreal_init() -> void
 			return true;
 		}
 	);
-	*/
 
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerPickupCargo"),
