@@ -394,7 +394,7 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "server-v0.35.0-rc2";
+            modVersion = "server-v0.35.0-rc3";
             enableExternalMods = {
               "MajasDetailWorksV3-7.18_P" = false;
               "MajasMnTrailerworksV6-7.18_P" = false;
