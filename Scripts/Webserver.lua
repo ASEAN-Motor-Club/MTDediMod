@@ -9,7 +9,6 @@ local url = require("socket.url")
 local statics = require("Statics")
 local json = require("JsonParser")
 local auth = os.getenv("MOD_SERVER_PASSWORD")
-local procAmount = tonumber(os.getenv("MOD_SERVER_PROCESS_AMOUNT")) or 5
 local usePartialSend = os.getenv("MOD_SERVER_SEND_PARTIAL")
 local bcrypt = RequireSafe("bcrypt")
 
@@ -591,7 +590,7 @@ local function init(host, initPort)
     local bindAddr, bindPort = g_server:getsockname()
     LogOutput("INFO", "Webserver listening to host %s on port %i", (bindAddr or host), (bindPort or initPort))
 
-    g_server:settimeout(0.05)
+    g_server:settimeout(0)  -- Non-blocking: webserver runs on the game thread via LoopInGameThreadWithDelay
 
     -- Add the server socket to the client arrays so we will wait on it in select()
     table.insert(clients, g_server)
@@ -612,15 +611,12 @@ local function run(bindHost, bindPort)
 
     init(bindHost, bindPort)
     isServerRunning = true
-    LoopAsync(1, function()
-        -- Not sure why, but executing process back to back reduces the latency
-        -- Increasing the amount of process further decreases total latency but will block async thread by the amount * timeout
-        -- Best to keep the amount low to allow for other function to use ExecuteAsync
-        local count = 0
-        while count < procAmount do
-            process(0.1)
-            count = count + 1
-        end
+    -- Run the webserver loop on the game thread (EngineTick) via LoopInGameThreadWithDelay.
+    -- This means all HTTP handlers execute on the game thread, so UObject access is safe
+    -- without any ExecuteInGameThreadSync bridge.
+    -- process() uses timeout=0 (non-blocking socket.select) so we never stall the engine.
+    LoopInGameThreadWithDelay(1, function()
+        process(0)
         if not isServerRunning then
             LogOutput("INFO", "Webserver stopped")
         end

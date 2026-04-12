@@ -1,6 +1,6 @@
 local UEHelpers = require("UEHelpers")
 local json = require("JsonParser")
-local socket = require("socket")
+-- socket require removed: SpawnActor spin-wait replaced by direct game-thread call
 
 ---Spawn an actor at the desired place
 ---@param assetPath string
@@ -19,45 +19,39 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
     ---@cast staticMeshClass UClass
     local actor = CreateInvalidObject() ---@cast actor AActor
     local object = StaticFindObject(assetPath)
-    local isProcessing = true
-
+    -- Direct game-thread call — no spin-wait needed since SpawnActor handlers
+    -- run on the game thread via LoopInGameThreadWithDelay.
     local assetTag = tag
-    ExecuteInGameThread(function()
-      pcall(function()
-        LoadAsset(assetPath)
-        local assetClass = {}
+    pcall(function()
+      LoadAsset(assetPath)
+      local assetClass = {}
 
-        if object:IsA(staticMeshClass) then
-          assetClass = staticMeshActorClass
-        else
-          assetClass = object
-        end
+      if object:IsA(staticMeshClass) then
+        assetClass = staticMeshActorClass
+      else
+        assetClass = object
+      end
 
-        LogOutput("DEBUG", "Loaded and found asset %s", assetClass:GetFullName())
-        if not assetClass:IsValid() then
-          error("Invalid asset loaded: " .. assetPath)
-        end
+      LogOutput("DEBUG", "Loaded and found asset %s", assetClass:GetFullName())
+      if not assetClass:IsValid() then
+        error("Invalid asset loaded: " .. assetPath)
+      end
 
-        ---@type AActor
-        actor = world:SpawnActor(
-          assetClass,
-          {
-            X = location and location.X or 0,
-            Y = location and location.Y or 0,
-            Z = location and location.Z or 0,
-          },
-          {
-            Pitch = rotation and rotation.Pitch or 0,
-            Roll = rotation and rotation.Roll or 0,
-            Yaw = rotation and rotation.Yaw or 0
-          }
-        )
-      end)
-      isProcessing = false
+      ---@type AActor
+      actor = world:SpawnActor(
+        assetClass,
+        {
+          X = location and location.X or 0,
+          Y = location and location.Y or 0,
+          Z = location and location.Z or 0,
+        },
+        {
+          Pitch = rotation and rotation.Pitch or 0,
+          Roll = rotation and rotation.Roll or 0,
+          Yaw = rotation and rotation.Yaw or 0
+        }
+      )
     end)
-    while isProcessing do
-      socket.sleep(0.01)
-    end
     if actor:IsValid() then
       LogOutput("DEBUG", "Spawned actor %s", actor:GetFullName())
       actor:SetReplicates(true)

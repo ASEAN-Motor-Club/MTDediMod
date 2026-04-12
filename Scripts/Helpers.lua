@@ -561,39 +561,19 @@ function MergeTable(base, append)
 end
 
 
-local socket = RequireSafe("socket") ---@type Socket?
----Halts CPU operation for the given duration
----@param ms integer Duration to sleep in miliseconds
-function Sleep(ms)
-  if ms ~= 0 then
-    if socket then
-      socket.sleep(ms / 1000)
-    end
-  end
-end
 
----Execute given function in the GameThread and wait for it to finish.
----@param exec fun()
----@param label string? Label for timeout warnings (optional)
----@param maxMs number? Upper bound in ms for the async wait (default 1000)
----@return boolean completed true if the function completed within maxMs, false if timed out
+---Execute the given function directly on the current thread.
+---
+---Previously this was a spin-wait synchronization bridge from the async thread to the game
+---thread. Now that the webserver runs on the game thread via LoopInGameThreadWithDelay,
+---we simply call the function inline. Kept as a shim for API compatibility with all
+---existing call sites (PlayerManager, VehicleManager, CargoManager, etc.).
+---
+---@param exec fun() Function to execute (runs immediately, inline)
+---@param label string? (unused — kept for call-site compatibility)
+---@param maxMs number? (unused — kept for call-site compatibility)
+---@return boolean completed Always returns true
 function ExecuteInGameThreadSync(exec, label, maxMs)
-  maxMs = maxMs or 1000
-  local wait = 0
-  local isProcessing = true
-  ExecuteInGameThread(function()
-    exec()
-    isProcessing = false
-  end)
-
-  while isProcessing and wait < maxMs do
-    wait = wait + 1
-    Sleep(1)
-  end
-
-  if isProcessing then
-    LogOutput("WARN", "ExecuteInGameThreadSync timed out after %dms: %s", maxMs, label or "unknown")
-    return false
-  end
+  exec()
   return true
 end

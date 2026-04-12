@@ -1,29 +1,18 @@
 ---Thread execution helper functions
 ---@class Execution
 
-local socket = require("socket")
-
 local Execution = {}
 
----Execute function in game thread synchronously (blocking)
----Waits up to 1 second for completion before timing out
----@param fn function Function to execute in game thread
----@param callerName string? Optional caller name for logging
+---Execute the given function directly on the current thread.
+---
+---Previously this was a spin-wait synchronization bridge from the async thread to the game
+---thread. Now that the webserver runs on the game thread via LoopInGameThreadWithDelay,
+---we simply call the function inline.
+---
+---@param fn function Function to execute (runs immediately, inline)
+---@param callerName string? (unused — kept for call-site compatibility)
 function Execution.InGameThreadSync(fn, callerName)
-  callerName = callerName or "unknown"
-  local wait = 0
-  local isFinished = false
-  ExecuteInGameThread(function()
-    LogOutput('INFO', 'ExecuteInGameThreadSync callback: %s', callerName)
-    fn()
-    isFinished = true
-    LogOutput('INFO', 'finished ExecuteInGameThreadSync callback: %s', callerName)
-  end)
-
-  while not isFinished and wait < 1000 do
-    wait = wait + 1
-    socket.sleep(1 / 1000)
-  end
+  fn()
 end
 
 return Execution

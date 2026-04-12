@@ -6,6 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.36.0-rc1] — 2026-04-12
+
+#### Changed
+- **Webserver loop migrated to game thread**: replaced `LoopAsync` with `LoopInGameThreadWithDelay`, eliminating all `socket.sleep`-based spin-wait synchronization
+- `ExecuteInGameThreadSync` is now a transparent passthrough (direct inline call) since handlers already run on the game thread
+- `AssetManager.SpawnActor` no longer uses a spin-wait polling loop; calls `LoadAsset`/`SpawnActor` directly on the game thread
+
+#### Removed
+- `Sleep()` helper and its `socket` require from `Helpers.lua`
+- `procAmount` / `MOD_SERVER_PROCESS_AMOUNT` env var usage in webserver (no longer needed)
+- Spin-wait loop in shared `MTHelpers/Execution.lua`
+
 ### [server/v0.35.0-rc4] — 2026-04-11
 
 #### Fixed
