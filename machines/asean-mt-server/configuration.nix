@@ -17,8 +17,9 @@
   disko.devices.disk.main.device = "/dev/nvme0n1";
 
   boot.tmp.cleanOnBoot = true;
-  zramSwap.enable = true;
-  boot.kernel.sysctl."vm.swappiness" = 10;
+  zramSwap.enable = false;
+  boot.kernel.sysctl."vm.swappiness" = 0;
+  boot.kernel.sysctl."kernel.sched_autogroup_enabled" = 0;  # Disable desktop fairness — hurts dedicated server workloads
   boot.kernel.sysctl."net.core.rmem_max" = 4194304;       # 4MB — game server UDP receive buffers (was 208KB)
   boot.kernel.sysctl."net.core.wmem_max" = 4194304;       # 4MB — game server UDP send buffers
   boot.kernel.sysctl."net.core.rmem_default" = 1048576;   # 1MB default for new sockets
@@ -282,6 +283,11 @@
   systemd.tmpfiles.rules = [
     "d /var/lib/opencode/workspace 0755 opencode opencode -"
     "d /var/lib/mod-releases 0755 root root -"
+    # Transparent Huge Pages: reduces TLB misses for game server's 7.6 GB working set.
+    # Wine/Proton won't call madvise(), so 'always' is needed.
+    # defer+madvise defrag avoids stalling the allocating process.
+    "w /sys/kernel/mm/transparent_hugepage/enabled - - - - always"
+    "w /sys/kernel/mm/transparent_hugepage/defrag - - - - defer+madvise"
   ];
 
 

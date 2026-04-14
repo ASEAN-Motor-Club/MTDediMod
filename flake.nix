@@ -180,7 +180,7 @@
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "beta";
-                modVersion = "server-v0.35.0-rc4";
+                modVersion = "server-v0.36.0-rc1";
                 enableExternalMods = {
                   CarPartsImport_P = false;
                   MoneyRun_P = true;
@@ -394,10 +394,10 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "server-v0.35.0-rc4";
+            modVersion = "server-v0.36.0-rc1";
             enableExternalMods = {
-              "MajasDetailWorksV3-7.18_P" = false;
-              "MajasMnTrailerworksV6-7.18_P" = false;
+              "MajasDetailWorksV3-7.18_P" = true;
+              "MajasMnTrailerworksV6-7.18_P" = true;
               qxZap_CranyUnlocked_P = true;
               MoneyRun_P = false;
             };
