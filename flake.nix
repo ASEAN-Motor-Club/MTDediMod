@@ -414,9 +414,9 @@ EOF
               echo "✓ Copied UE4SS.dll (cross-compiled)"
 
               # Copy UE4SS settings (patched for client use)
+              # NOTE: shipped for new installs — use non-clobbering extraction on the player side
               if [ -f "$UE4SS_SETTINGS_SRC" ]; then
                 cp --no-preserve=mode,ownership "$UE4SS_SETTINGS_SRC" "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
-                # Client settings: console enabled for dev, hot reload enabled (Ctrl+R)
                 sed -i 's/^ConsoleEnabled\s*=.*/ConsoleEnabled = 1/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
                 sed -i 's/^GuiConsoleEnabled\s*=.*/GuiConsoleEnabled = 1/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
                 sed -i 's/^GuiConsoleVisible\s*=.*/GuiConsoleVisible = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
@@ -469,14 +469,44 @@ EOF
               fi
 
               # Create mods.txt
-              echo "$MOD_NAME : 1" > "$PACKAGE_DIR/ue4ss/Mods/mods.txt"
+              # BPModLoaderMod + BPML_GenericFunctions required for Blueprint pak mods in LogicMods/
+              cat > "$PACKAGE_DIR/ue4ss/Mods/mods.txt" << MODSTXT
+$MOD_NAME : 1
+BPML_GenericFunctions : 1
+BPModLoaderMod : 1
+MODSTXT
               echo "✓ Created mods.txt"
+
+              # Copy BPModLoaderMod and BPML_GenericFunctions from UE4SS v3 release
+              UE4SS_RELEASE_MODS="$HOME/Downloads/UE4SS_v3.0.1-946-g265115c0/ue4ss/Mods"
+              if [ -d "$UE4SS_RELEASE_MODS/BPModLoaderMod" ]; then
+                cp -r "$UE4SS_RELEASE_MODS/BPModLoaderMod" "$PACKAGE_DIR/ue4ss/Mods/"
+                touch "$PACKAGE_DIR/ue4ss/Mods/BPModLoaderMod/enabled.txt"
+                echo "✓ Copied BPModLoaderMod (Scripts + load_order.txt + enabled.txt)"
+              else
+                echo "⚠ Warning: BPModLoaderMod not found at $UE4SS_RELEASE_MODS/BPModLoaderMod"
+              fi
+              if [ -d "$UE4SS_RELEASE_MODS/BPML_GenericFunctions" ]; then
+                cp -r "$UE4SS_RELEASE_MODS/BPML_GenericFunctions" "$PACKAGE_DIR/ue4ss/Mods/"
+                touch "$PACKAGE_DIR/ue4ss/Mods/BPML_GenericFunctions/enabled.txt"
+                echo "✓ Copied BPML_GenericFunctions (Scripts + enabled.txt)"
+              else
+                echo "⚠ Warning: BPML_GenericFunctions not found at $UE4SS_RELEASE_MODS/BPML_GenericFunctions"
+              fi
 
               # Create mods.json
               cat > "$PACKAGE_DIR/ue4ss/Mods/mods.json" << EOF
 [
     {
         "mod_name": "$MOD_NAME",
+        "mod_enabled": true
+    },
+    {
+        "mod_name": "BPML_GenericFunctions",
+        "mod_enabled": true
+    },
+    {
+        "mod_name": "BPModLoaderMod",
         "mod_enabled": true
     }
 ]
@@ -564,6 +594,38 @@ EOF
           apps.package-client = {
             type = "app";
             program = "${packageClientScript}/bin/${clientModName}-package";
+          };
+
+          # pak-manager: rebuild ModManager_P.pak from freshly cooked bp_assets/
+          apps.pack-manager = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "pack-manager";
+              runtimeInputs = [];
+              text = ''
+                REPAK="$HOME/repak/target/release/repak"
+
+                ASSETS="$PWD/bp_assets"
+                PAK_OUT="$HOME/mt-pak-extract/ModManager.pak"
+                STAGE="$(mktemp -d)"
+
+                echo "Staging assets from $ASSETS..."
+                mkdir -p "$STAGE/MotorTown/Content/Mods/ModManager"
+                for f in ModActor.uasset ModActor.uexp WBP_ModManager.uasset WBP_ModManager.uexp WBP_ModManagerEntry.uasset WBP_ModManagerEntry.uexp; do
+                  if [ -f "$ASSETS/$f" ]; then
+                    cp "$ASSETS/$f" "$STAGE/MotorTown/Content/Mods/ModManager/"
+                    echo "  ✓ $f"
+                  else
+                    echo "  ⚠ Missing: $ASSETS/$f"
+                  fi
+                done
+
+                rm -f "$PAK_OUT"
+                "$REPAK" pack --version V11 "$STAGE" "$PAK_OUT"
+                rm -rf "$STAGE"
+                echo "✓ Built: $PAK_OUT ($(du -sh "$PAK_OUT" | cut -f1))"
+              '';
+            }}/bin/pack-manager";
           };
 
           # Default to build

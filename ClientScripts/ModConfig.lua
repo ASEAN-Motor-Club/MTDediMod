@@ -23,6 +23,7 @@ local modConfig = {
     uiScale = 1.0,
     modName = statics.ModName,
     modVersion = statics.ModVersion,
+    modApiUrl = "http://127.0.0.1:5001",
     shortcuts = {
         arrest = {
             keyboard = { key = "A", modifiers = { "CONTROL", "SHIFT" } },

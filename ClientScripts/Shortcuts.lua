@@ -5,6 +5,9 @@ local config = require("ModConfig")
 local UEHelpers = require("UEHelpers")
 local teleportManager = require("TeleportManager")
 local vehicleManager = require("VehicleManager")
+local json = require("JsonParser")
+local http = require("socket.http")
+local ltn12 = require("ltn12")
 
 --- Minimum interval between shortcut triggers (ms)
 local DEBOUNCE_MS = 1000
@@ -26,6 +29,49 @@ local function IsAdmin()
     local PS = PC.PlayerState
     if not PS:IsValid() then return false end
     return PS.bIsAdmin == true
+end
+
+local lastGhostTime = 0
+local lastGodTime = 0
+local lastHideCostumeTime = 0
+local lastInvisibleTime = 0
+
+---Get local player's character GUID string
+---@return string? guid
+local function GetMyCharacterGuid()
+    local PC = GetMyPlayerController()
+    if not PC:IsValid() then return nil end
+    local PS = PC.PlayerState
+    if not PS:IsValid() then return nil end
+    local guid = GuidToString(PS.CharacterGuid)
+    if not guid or guid == "0000" then return nil end
+    return guid
+end
+
+---Send a JSON POST request to the mod server API
+---@param endpoint string e.g. "/players/{guid}/experimental/ghost"
+---@param payload table
+local function ModApiPost(endpoint, payload)
+    local apiUrl = config.GetModConfig("modApiUrl")
+    if not apiUrl then
+        LogOutput("WARN", "ModApiPost: modApiUrl not configured")
+        return
+    end
+    local url = apiUrl .. endpoint
+    local body = json.stringify(payload)
+    local res = {}
+    local ok, code = pcall(http.request, {
+        url = url,
+        method = "POST",
+        headers = { ["Content-Type"] = "application/json", ["Content-Length"] = #body },
+        source = ltn12.source.string(body),
+        sink = ltn12.sink.table(res),
+    })
+    if ok then
+        LogOutput("INFO", "ModApiPost %s -> %s", endpoint, tostring(code))
+    else
+        LogOutput("WARN", "ModApiPost %s failed: %s", endpoint, tostring(code))
+    end
 end
 
 ---Send the /arrest command via ServerSendChat
@@ -116,6 +162,143 @@ local function TriggerDoorToggle()
             LogOutput("INFO", "Door toggle shortcut: Toggled door %s (dist=%.0f)",
                 bestDoor:GetFullName(), math.sqrt(bestDistSq))
         end
+    end)
+end
+
+---Toggle ghost mode via server API (replicated to all clients)
+local function TriggerGhostToggle()
+    if not IsAdmin() then
+        LogOutput("WARN", "Ghost toggle shortcut: Admin only")
+        return
+    end
+
+    local now = os.clock() * 1000
+    if now - lastGhostTime < DEBOUNCE_MS then
+        return
+    end
+    lastGhostTime = now
+
+    local guid = GetMyCharacterGuid()
+    if not guid then
+        LogOutput("WARN", "Ghost toggle shortcut: Could not get character GUID")
+        return
+    end
+
+    ExecuteInGameThread(function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then return end
+        local pawn = PC:K2_GetPawn()
+        if not pawn:IsValid() then return end
+
+        local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+        if not charClass:IsValid() or not pawn:IsA(charClass) then return end
+
+        ---@cast pawn AMTCharacter
+        local ghostOn = (pawn.Net_CharacterFlags & 4) == 0
+        ModApiPost("/players/" .. guid .. "/experimental/ghost", { ghost = ghostOn })
+        LogOutput("INFO", "Ghost toggle shortcut: ghost=%s (server-side)", tostring(ghostOn))
+    end)
+end
+
+---Toggle god mode via bCanBeDamaged
+local function TriggerGodToggle()
+    if not IsAdmin() then
+        LogOutput("WARN", "God toggle shortcut: Admin only")
+        return
+    end
+
+    local now = os.clock() * 1000
+    if now - lastGodTime < DEBOUNCE_MS then
+        return
+    end
+    lastGodTime = now
+
+    ExecuteInGameThread(function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then
+            LogOutput("WARN", "God toggle shortcut: PlayerController not valid")
+            return
+        end
+
+        local pawn = PC:K2_GetPawn()
+        if not pawn:IsValid() then
+            LogOutput("WARN", "God toggle shortcut: Pawn not valid")
+            return
+        end
+
+        if pawn.bCanBeDamaged then
+            pawn.bCanBeDamaged = false
+            LogOutput("INFO", "God toggle shortcut: God ON")
+        else
+            pawn.bCanBeDamaged = true
+            LogOutput("INFO", "God toggle shortcut: God OFF")
+        end
+    end)
+end
+
+---Toggle HideCostume flag via server API (replicated to all clients)
+local function TriggerHideCostume()
+    if not IsAdmin() then
+        LogOutput("WARN", "Hide costume shortcut: Admin only")
+        return
+    end
+
+    local now = os.clock() * 1000
+    if now - lastHideCostumeTime < DEBOUNCE_MS then
+        return
+    end
+    lastHideCostumeTime = now
+
+    local guid = GetMyCharacterGuid()
+    if not guid then
+        LogOutput("WARN", "Hide costume shortcut: Could not get character GUID")
+        return
+    end
+
+    ExecuteInGameThread(function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then return end
+        local pawn = PC:K2_GetPawn()
+        if not pawn:IsValid() then return end
+
+        local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+        if not charClass:IsValid() or not pawn:IsA(charClass) then return end
+
+        ---@cast pawn AMTCharacter
+        local hideOn = (pawn.Net_CharacterFlags & 16) == 0
+        ModApiPost("/players/" .. guid .. "/experimental/hide_costume", { hide_costume = hideOn })
+        LogOutput("INFO", "Hide costume shortcut: hide_costume=%s (server-side)", tostring(hideOn))
+    end)
+end
+
+---Toggle actor visibility via server API (replicated to all clients)
+local function TriggerInvisibleToggle()
+    if not IsAdmin() then
+        LogOutput("WARN", "Invisible toggle shortcut: Admin only")
+        return
+    end
+
+    local now = os.clock() * 1000
+    if now - lastInvisibleTime < DEBOUNCE_MS then
+        return
+    end
+    lastInvisibleTime = now
+
+    local guid = GetMyCharacterGuid()
+    if not guid then
+        LogOutput("WARN", "Invisible toggle shortcut: Could not get character GUID")
+        return
+    end
+
+    ExecuteInGameThread(function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then return end
+        local pawn = PC:K2_GetPawn()
+        if not pawn:IsValid() then return end
+
+        local hidden = not pawn.bHidden
+        ModApiPost("/players/" .. guid .. "/experimental/hide_actor", { hidden = hidden })
+        LogOutput("INFO", "Invisible toggle shortcut: hidden=%s (server-side)", tostring(hidden))
     end)
 end
 
@@ -564,5 +747,9 @@ RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT 
 RegisterKeyBind(Key.O, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDoorToggle)
 RegisterKeyBind(Key.T, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerTeleportDialog)
 RegisterKeyBind(Key.D, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnDialog)
+RegisterKeyBind(Key.G, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerGhostToggle)
+RegisterKeyBind(Key.J, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerGodToggle)
+RegisterKeyBind(Key.H, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerHideCostume)
+RegisterKeyBind(Key.V, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerInvisibleToggle)
 
 return {}
