@@ -61,7 +61,11 @@
         "aarch64-darwin"
       ];
       flake = {
-        nixosModules.gameSyslog = {lib, config, ...}: {
+        nixosModules.gameSyslog = {
+          lib,
+          config,
+          ...
+        }: {
           options.services.gameSyslog.relpPort = lib.mkOption {
             type = lib.types.int;
             default = 2514;
@@ -118,9 +122,21 @@
               hostAddress = "10.250.0.1";
               localAddress = "10.250.0.2";
               extraForwardPorts = [
-                { containerPort = 9001; hostPort = 9001; protocol = "tcp"; }
-                { containerPort = 8081; hostPort = 8081; protocol = "tcp"; }
-                { containerPort = 5001; hostPort = 5001; protocol = "tcp"; }
+                {
+                  containerPort = 9001;
+                  hostPort = 9001;
+                  protocol = "tcp";
+                }
+                {
+                  containerPort = 8081;
+                  hostPort = 8081;
+                  protocol = "tcp";
+                }
+                {
+                  containerPort = 5001;
+                  hostPort = 5001;
+                  protocol = "tcp";
+                }
               ];
               imports = [
                 self.nixosModules.gameSyslog
@@ -143,7 +159,7 @@
 
                 # Private network: standard ports, no conflicts with host
                 # Trust the veth interface so the host can reach forwarded services
-                networking.firewall.trustedInterfaces = [ "eth0" ];
+                networking.firewall.trustedInterfaces = ["eth0"];
 
                 # --- Staging backend ---
                 services.amc-backend = {
@@ -488,9 +504,9 @@
             config.services.motortown-server.dedicatedServerConfig.HostWebAPIServerPort
             (lib.strings.toInt config.services.motortown-server.environment.MOD_SERVER_PORT)
             # Test container ports are forwarded via privateNetwork forwardPorts
-            9001   # Staging backend API (forwarded from container)
-            8081   # Test game API (forwarded from container)
-            5001   # Test mod server (forwarded from container)
+            9001 # Staging backend API (forwarded from container)
+            8081 # Test game API (forwarded from container)
+            5001 # Test mod server (forwarded from container)
           ];
         };
 
@@ -554,7 +570,6 @@
                 mode = "400";
               };
             })
-
 
             self.nixosModules.motortown-server
             self.nixosModules.motortown-server-containers
@@ -705,7 +720,7 @@
               networking.nat = {
                 enable = true;
                 externalInterface = "enp13s0";
-                internalInterfaces = [ "ve-+" ];
+                internalInterfaces = ["ve-+"];
               };
 
               # --- Test container: bind-mount staging secret ---
@@ -728,8 +743,8 @@
 
               # Expose RELP + PostgreSQL on tailscale interface
               networking.firewall.interfaces."tailscale0".allowedTCPPorts = lib.mkIf config.services.tailscale.enable [
-                2514  # RELP log listener
-                5432  # PostgreSQL (bot read access)
+                2514 # RELP log listener
+                5432 # PostgreSQL (bot read access)
               ];
 
               systemd.tmpfiles.rules = [
@@ -743,7 +758,7 @@
               # Host-side: watch for trigger file and start the restart service
               systemd.paths.motortown-restart-trigger = {
                 description = "Watch for restart trigger from backend";
-                wantedBy = [ "multi-user.target" ];
+                wantedBy = ["multi-user.target"];
                 pathConfig = {
                   PathChanged = "${restartTriggerDir}/trigger";
                   Unit = "motortown-restart-triggered.service";
@@ -776,13 +791,13 @@
 
               # Wire failure recovery to the update service
               systemd.services.motortown-server-update = {
-                onFailure = [ "motortown-update-recovery.service" ];
+                onFailure = ["motortown-update-recovery.service"];
               };
 
               # Host-side: watch for trigger file and start the update service
               systemd.paths.motortown-update-trigger = {
                 description = "Watch for update trigger from backend";
-                wantedBy = [ "multi-user.target" ];
+                wantedBy = ["multi-user.target"];
                 pathConfig = {
                   PathChanged = "${updateTriggerDir}/trigger";
                   Unit = "motortown-update-triggered.service";
@@ -822,7 +837,11 @@
               ];
             })
 
-            ({config, pkgs, ...}: {
+            ({
+              config,
+              pkgs,
+              ...
+            }: {
               age.secrets.peripheral-bots = {
                 file = ./secrets/peripheral-bots.age;
                 mode = "400";
@@ -880,7 +899,7 @@
 
               services.github-runners."amc-peripheral-deploy" = {
                 enable = false;
-                replace = true;  # Automatically replace existing runner with same name
+                replace = true; # Automatically replace existing runner with same name
                 url = "https://github.com/ASEAN-Motor-Club";
                 tokenFile = config.age.secrets.github-runner-token.path;
                 package = nixpkgs-unstable.legacyPackages.${pkgs.system}.github-runner;

@@ -95,10 +95,10 @@ in {
   # /etc/nix/github-access-tokens.conf which nix.conf !include's.
   systemd.services.nix-github-token-refresh = {
     description = "Refresh GitHub App token for Nix daemon";
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
+    after = ["network-online.target"];
+    wants = ["network-online.target"];
     serviceConfig.Type = "oneshot";
-    path = [ gh-token ];
+    path = [gh-token];
     script = ''
       set -euo pipefail
       TOKEN=$(gh-token)
@@ -108,7 +108,7 @@ in {
     '';
   };
   systemd.timers.nix-github-token-refresh = {
-    wantedBy = [ "timers.target" ];
+    wantedBy = ["timers.target"];
     timerConfig = {
       OnBootSec = "30s";
       OnUnitActiveSec = "30min";
@@ -448,7 +448,7 @@ in {
           useacl = false;
           userewrite = true;
           updatecheck = false;
-          
+
           authtype = "oauth";
           plugin____oauth____registerOnAuth = true;
           plugin____oauthgeneric____key = "dokuwiki";
@@ -465,7 +465,6 @@ in {
     };
   };
 
-
   # === Wiki Pipeline (game data ETL → DokuWiki) ===
   age.secrets.steam = {
     file = ../../secrets/steam.age;
@@ -475,7 +474,7 @@ in {
 
   systemd.services.amc-wiki-download = {
     description = "Download Motor Town game PAK via steamcmd";
-    path = with pkgs; [ steamcmd ];
+    path = with pkgs; [steamcmd];
     serviceConfig = {
       Type = "oneshot";
       StateDirectory = "wiki-pipeline";
@@ -498,9 +497,9 @@ in {
 
   systemd.services.amc-wiki-etl = {
     description = "Motor Town ETL: extract → aggregate → wiki sync";
-    requires = [ "amc-wiki-download.service" ];
-    after = [ "amc-wiki-download.service" ];
-    path = with pkgs; [ nix git ];
+    requires = ["amc-wiki-download.service"];
+    after = ["amc-wiki-download.service"];
+    path = with pkgs; [nix git];
     serviceConfig = {
       Type = "oneshot";
       StateDirectory = "wiki-pipeline";
@@ -595,8 +594,6 @@ in {
       AllowTcpForwarding no
       X11Forwarding no
   '';
-
-
 
   # === OpenCode Coding Agent ===
   users.users.opencode = {
@@ -1165,7 +1162,6 @@ in {
       '';
     };
   };
-
 
   services.tailscale = {
     enable = true;

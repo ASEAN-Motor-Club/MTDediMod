@@ -19,10 +19,10 @@
   boot.tmp.cleanOnBoot = true;
   zramSwap.enable = false;
   boot.kernel.sysctl."vm.swappiness" = 0;
-  boot.kernel.sysctl."kernel.sched_autogroup_enabled" = 0;  # Disable desktop fairness — hurts dedicated server workloads
-  boot.kernel.sysctl."net.core.rmem_max" = 4194304;       # 4MB — game server UDP receive buffers (was 208KB)
-  boot.kernel.sysctl."net.core.wmem_max" = 4194304;       # 4MB — game server UDP send buffers
-  boot.kernel.sysctl."net.core.rmem_default" = 1048576;   # 1MB default for new sockets
+  boot.kernel.sysctl."kernel.sched_autogroup_enabled" = 0; # Disable desktop fairness — hurts dedicated server workloads
+  boot.kernel.sysctl."net.core.rmem_max" = 4194304; # 4MB — game server UDP receive buffers (was 208KB)
+  boot.kernel.sysctl."net.core.wmem_max" = 4194304; # 4MB — game server UDP send buffers
+  boot.kernel.sysctl."net.core.rmem_default" = 1048576; # 1MB default for new sockets
   boot.kernel.sysctl."net.core.wmem_default" = 1048576;
   networking.hostName = "asean-mt-server";
   networking.domain = "";
@@ -92,8 +92,6 @@
     enable = true;
     authKeyFile = config.age.secrets.tailscale.path;
   };
-
-
 
   services.nginx = {
     enable = true;
@@ -205,8 +203,6 @@
   security.acme.defaults.email = "contact@fmnxl.xyz";
   security.acme.acceptTerms = true;
 
-
-
   # === OpenCode ===
   users.users.opencode = {
     isSystemUser = true;
@@ -289,7 +285,6 @@
     "w /sys/kernel/mm/transparent_hugepage/enabled - - - - always"
     "w /sys/kernel/mm/transparent_hugepage/defrag - - - - defer+madvise"
   ];
-
 
   # oauth2-proxy: GitHub authentication for OpenCode web UI
   services.oauth2-proxy = {
