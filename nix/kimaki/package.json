@@ -3,6 +3,6 @@
   "version": "0.0.1",
   "private": true,
   "dependencies": {
-    "kimaki": "^0.4.82"
+    "kimaki": "^0.5.0"
   }
 }

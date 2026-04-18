@@ -1,7 +1,7 @@
 {pkgs, ...}: let
   package = pkgs.buildNpmPackage {
     pname = "kimaki";
-    version = "0.4.82";
+    version = "0.5.0";
     src = ./.;
 
     # Regenerate after bumping kimaki version:
