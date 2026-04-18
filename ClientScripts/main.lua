@@ -19,4 +19,5 @@ local satnav = require("SatNav")
 local integrityChecker = require("IntegrityChecker")
 local modManager = require("ModManager")
 
+ExecuteConsoleCommand("r.ViewDistanceScale 100")
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)
