@@ -500,14 +500,13 @@ auto MotorTownMods::on_unreal_init() -> void
 		}
 	);
 
-	HookManager::RegisterPlayerEventHook(
+	HookManager::RegisterPlayerEventPostHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerSignContract"),
 		"ServerSignContract",
 		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
 			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 			if (!FunctionBeingExecuted) return false;
 
-			// --- Extract Contract struct from function params ---
 			auto ContractProperty = static_cast<FStructProperty*>(FunctionBeingExecuted->GetPropertyByName(STR("Contract")));
 			if (!ContractProperty) {
 				Output::send<LogLevel::Verbose>(STR("ServerSignContract: Contract property not found\n"));
@@ -522,21 +521,33 @@ auto MotorTownMods::on_unreal_init() -> void
 			const auto& ContractStruct = ContractProperty->GetStruct();
 			if (!ContractStruct) return false;
 
-			// Extract Contract fields
 			json::object contract_obj;
+
+			std::string contract_item;
+			float contract_amount = 0.0f;
+			int64 contract_payment_base = 0;
+			bool has_item = false;
+			bool has_amount = false;
+			bool has_payment = false;
 
 			const auto ItemProp = ContractStruct->GetPropertyByNameInChain(STR("Item"));
 			if (ItemProp) {
 				const auto& Item = ItemProp->ContainerPtrToValuePtr<FString>(Contract);
 				if (Item && Item->GetCharArray().GetData()) {
-					contract_obj["Item"] = to_string(Item->GetCharArray().GetData());
+					contract_item = to_string(Item->GetCharArray().GetData());
+					contract_obj["Item"] = contract_item;
+					has_item = true;
 				}
 			}
 
 			const auto AmountProp = ContractStruct->GetPropertyByNameInChain(STR("Amount"));
 			if (AmountProp) {
 				const auto& Amount = AmountProp->ContainerPtrToValuePtr<float>(Contract);
-				if (Amount) contract_obj["Amount"] = *Amount;
+				if (Amount) {
+					contract_amount = *Amount;
+					contract_obj["Amount"] = contract_amount;
+					has_amount = true;
+				}
 			}
 
 			const auto CompletionPaymentProp = static_cast<FStructProperty*>(ContractStruct->GetPropertyByNameInChain(STR("CompletionPayment")));
@@ -548,9 +559,11 @@ auto MotorTownMods::on_unreal_init() -> void
 					if (BaseValueProp) {
 						const auto& BaseValue = BaseValueProp->ContainerPtrToValuePtr<int64>(CompletionPayment);
 						if (BaseValue) {
+							contract_payment_base = *BaseValue;
 							json::object payment_obj;
-							payment_obj["BaseValue"] = *BaseValue;
+							payment_obj["BaseValue"] = contract_payment_base;
 							contract_obj["CompletionPayment"] = payment_obj;
+							has_payment = true;
 						}
 					}
 				}
@@ -575,7 +588,7 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			event_data["Contract"] = contract_obj;
 
-			// --- Traverse Companies → ContractsInProgress to find ContractGuid ---
+			// --- Post-hook: find ContractGuid by matching CIP against signed contract data ---
 			const auto& PlayerController = Context.Context;
 			if (!PlayerController) return false;
 
@@ -583,7 +596,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			if (!CompaniesProperty) {
 				CompaniesProperty = static_cast<FArrayProperty*>(PlayerController->GetPropertyByNameInChain(STR("Net_CompaniesBase")));
 			}
-			if (!CompaniesProperty) return true; // Still emit without guid
+			if (!CompaniesProperty) return true;
 
 			const auto& Companies = CompaniesProperty->ContainerPtrToValuePtr<FScriptArray>(PlayerController);
 			if (!Companies || !Companies->GetData()) return true;
@@ -611,13 +624,56 @@ auto MotorTownMods::on_unreal_init() -> void
 				const int32 CipSize = CipInnerProp->GetElementSize();
 				const int32 NumCips = CipArray->Num();
 
-				// The most recently signed contract is typically the last element
 				for (int32_t j = NumCips - 1; j >= 0; --j) {
 					auto cip_ptr = static_cast<uint8_t*>(CipArray->GetData()) + CipSize * j;
 					const auto& CipStruct = CipInnerProp->GetStruct();
 					if (!CipStruct) continue;
 					auto ContractInProgress = CipInnerProp->ContainerPtrToValuePtr<void>(cip_ptr);
 					if (!ContractInProgress) continue;
+
+					const auto CipContractProp = static_cast<FStructProperty*>(CipStruct->GetPropertyByNameInChain(STR("Contract")));
+					if (!CipContractProp) continue;
+					const auto& CipContract = CipContractProp->ContainerPtrToValuePtr<void>(ContractInProgress);
+					if (!CipContract) continue;
+					const auto& CipContractStruct = CipContractProp->GetStruct();
+					if (!CipContractStruct) continue;
+
+					bool item_match = false;
+					bool amount_match = false;
+					bool payment_match = false;
+
+					const auto CipItemProp = CipContractStruct->GetPropertyByNameInChain(STR("Item"));
+					if (CipItemProp && has_item) {
+						const auto& CipItem = CipItemProp->ContainerPtrToValuePtr<FString>(CipContract);
+						if (CipItem && CipItem->GetCharArray().GetData()) {
+							item_match = (to_string(CipItem->GetCharArray().GetData()) == contract_item);
+						}
+					}
+
+					const auto CipAmountProp = CipContractStruct->GetPropertyByNameInChain(STR("Amount"));
+					if (CipAmountProp && has_amount) {
+						const auto& CipAmount = CipAmountProp->ContainerPtrToValuePtr<float>(CipContract);
+						if (CipAmount) {
+							amount_match = (std::abs(*CipAmount - contract_amount) < 0.01f);
+						}
+					}
+
+					const auto CipCompletionPaymentProp = static_cast<FStructProperty*>(CipContractStruct->GetPropertyByNameInChain(STR("CompletionPayment")));
+					if (CipCompletionPaymentProp && has_payment) {
+						const auto& CipCompletionPayment = CipCompletionPaymentProp->ContainerPtrToValuePtr<void>(CipContract);
+						const auto& CipCompletionPaymentStruct = CipCompletionPaymentProp->GetStruct();
+						if (CipCompletionPayment && CipCompletionPaymentStruct) {
+							const auto CipBaseValueProp = CipCompletionPaymentStruct->GetPropertyByNameInChain(STR("BaseValue"));
+							if (CipBaseValueProp) {
+								const auto& CipBaseValue = CipBaseValueProp->ContainerPtrToValuePtr<int64>(CipCompletionPayment);
+								if (CipBaseValue) {
+									payment_match = (*CipBaseValue == contract_payment_base);
+								}
+							}
+						}
+					}
+
+					if (!item_match || !amount_match || !payment_match) continue;
 
 					const auto GuidProp = CipStruct->GetPropertyByNameInChain(STR("Guid"));
 					if (!GuidProp) continue;
@@ -634,12 +690,13 @@ auto MotorTownMods::on_unreal_init() -> void
 						Guid->D
 					);
 					event_data["ContractGuid"] = guid_str;
-					Output::send<LogLevel::Verbose>(STR("ServerSignContract: ContractGuid = {}\n"), to_wstring(guid_str));
+					Output::send<LogLevel::Verbose>(STR("ServerSignContract: ContractGuid = {} (matched by contract data)\n"), to_wstring(guid_str));
 					return true;
 				}
 			}
 
-			// No ContractGuid found, still emit with contract data
+			Output::send<LogLevel::Verbose>(STR("ServerSignContract: no matching CIP found for Item={} Amount={} Payment={}\n"),
+				to_wstring(contract_item), contract_amount, contract_payment_base);
 			return true;
 		}
 	);

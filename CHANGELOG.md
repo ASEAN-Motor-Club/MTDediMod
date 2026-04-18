@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.36.1-rc1] — 2026-04-19
+
+#### Fixed
+- ServerSignContract: switched from pre-hook to post-hook so the new ContractInProgress is in the Companies array when traversed
+- ServerSignContract: match CIP by contract data (Item, Amount, CompletionPayment) instead of picking the last element by position — eliminates wrong-GUID duplicates
+- Removed Lua isPostHook hardcode for ServerSignContract (C++ post-hook handles GUID resolution)
+
 ### [server/v0.36.0-rc1] — 2026-04-12
 
 #### Changed

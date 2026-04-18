@@ -196,9 +196,6 @@ local function isEventEnabled(event)
     if webhookEvents[1] == "none" then return false end
     for index, value in ipairs(webhookEvents) do
         if events[event] and (value == "all" or event == value) then
-            if event == "ServerSignContract" then
-              isPostHook = true
-            end
             return true, isPostHook, events[event]
         end
     end
