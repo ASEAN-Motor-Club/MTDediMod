@@ -1,0 +1,89 @@
+# UE4SS Widget Manipulation
+
+## How to block/hide/remove a game UI widget
+
+### Preferred approach: NotifyOnNewObject + RemoveFromParent
+
+The most reliable way to intercept a game widget is `NotifyOnNewObject` with the full UE asset path, then call `RemoveFromParent` in the game thread.
+
+```lua
+local WIDGET_FULL_PATH = "/Game/UI/InGame/Vehicle/W_RoadSideService.W_RoadSideService_C"
+
+NotifyOnNewObject(WIDGET_FULL_PATH, function(widget)
+    ExecuteInGameThread(function()
+        if widget:IsValid() then
+            widget:RemoveFromParent()
+        end
+    end)
+end)
+```
+
+Optionally also catch already-existing instances with `FindFirstOf`:
+
+```lua
+local existing = FindFirstOf("W_RoadSideService_C")
+if existing and existing:IsValid() then
+    existing:RemoveFromParent()
+end
+```
+
+### Key learnings
+
+1. **`NotifyOnNewObject` requires the full UE asset path**, not the short class name.
+   - Correct: `"/Game/UI/InGame/Vehicle/W_RoadSideService.W_RoadSideService_C"`
+   - Wrong: `"W_RoadSideService_C"`
+   - The function is `NotifyOnNewObject`, **not** `RegisterNotifyOnNewObject`.
+
+2. **`FindFirstOf` requires only the short class name** (without path).
+   - Correct: `"W_RoadSideService_C"`
+   - Wrong: `"/Game/UI/InGame/Vehicle/W_RoadSideService.W_RoadSideService_C"`
+
+3. **`RegisterHook` on `AddToViewport` does NOT fire for HUD-managed widgets.**
+   - Motor Town pushes widgets via `AMTHUD:PushFullScreenMenuWidget`, which adds them to the HUD's internal widget tree rather than calling `AddToViewport` directly.
+   - Even hooking `PushFullScreenMenuWidget` directly didn't fire — the game may use a Blueprint-level path that bypasses the native UFunction.
+
+4. **`StaticFindObject` may fail to find WidgetBlueprintGeneratedClass objects.**
+   - Using `widget:GetClass():GetName()` for class comparison works, but `StaticFindObject` with the full path can return nil for BP widget classes.
+   - `IsA(string)` with a full class name works as an alternative: `widget:IsA("/Script/MotorTown.RoadsideServiceWidget")`
+
+5. **Always wrap removal in `ExecuteInGameThread`.**
+   - Widget operations must happen on the game thread. `NotifyOnNewObject` callbacks may not run on the game thread.
+
+6. **Always check `IsValid()` before operating on a widget.**
+   - Between the callback firing and `ExecuteInGameThread` executing, the widget may be garbage-collected or destroyed.
+
+## Finding widget class info
+
+Widget type definitions are in `client-types/`. The base C++ class is defined in `client-types/MotorTown.lua`, and the BP-generated subclass in a separate file (e.g., `client-types/W_RoadSideService.lua`).
+
+For `URoadsideServiceWidget` (MotorTown.lua:12192):
+- `RefuelingButton` — UMTButtonWidget
+- `TowToRoadButton` — UMTButtonWidget
+- `TowToGarageButton` — UMTButtonWidget
+- `ButtonsBox` — UWidget (parent panel for all buttons)
+- `TowLocationButtonsBox` — UVerticalBox
+
+To selectively hide individual buttons instead of removing the entire widget:
+
+```lua
+NotifyOnNewObject(WIDGET_FULL_PATH, function(widget)
+    ExecuteInGameThread(function()
+        if widget:IsValid() then
+            widget.TowToGarageButton:SetVisibility(1) -- VIS_COLLAPSED
+            widget.TowToRoadButton:SetVisibility(1)
+        end
+    end)
+end)
+```
+
+UE visibility values: `0=Visible`, `1=Collapsed`, `2=Hidden`, `3=HitTestInvisible`, `4=SelfHitTestInvisible`.
+
+## UE4SS API reference
+
+- Docs: https://docs.ue4ss.com/dev/lua-api.html
+- `NotifyOnNewObject(string FullUClassName, function Callback)` — fires when any instance of the class (or subclass) is constructed
+- `FindFirstOf(string ShortClassName)` — finds first live instance
+- `FindAllOf(string ShortClassName)` — finds all live instances
+- `RegisterHook(string UFunctionName, function Callback)` — hooks a UFunction; callback params are `(Context, Params...)`
+- `ExecuteInGameThread(function)` — queues execution on the game thread
+- `LoopAsync(integer DelayMs, function Callback)` — polls until callback returns `true`

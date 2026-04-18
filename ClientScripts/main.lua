@@ -18,6 +18,7 @@ local shortcuts = require("Shortcuts")
 local satnav = require("SatNav")
 local integrityChecker = require("IntegrityChecker")
 local modManager = require("ModManager")
+local roadsideServiceFilter = require("RoadsideServiceFilter")
 
 ExecuteConsoleCommand("r.ViewDistanceScale 100")
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)
