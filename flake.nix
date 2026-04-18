@@ -905,19 +905,24 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in {
         devShells.default = pkgs.mkShell {
-          packages = [
-            pkgs.nil
-            pkgs.alejandra
-            pkgs.nixos-rebuild
-            pkgs.google-cloud-sdk
-            pkgs.ffmpeg
-            pkgs.rustc
-            pkgs.cargo
-            pkgs.jq
-            pkgs.rsync
-            pkgs.gh
-            (import ./nix/deploy.nix {inherit pkgs;})
-          ];
+          packages =
+            [
+              pkgs.nil
+              pkgs.alejandra
+              pkgs.nixos-rebuild
+              pkgs.google-cloud-sdk
+              pkgs.ffmpeg
+              pkgs.rustc
+              pkgs.cargo
+              pkgs.jq
+              pkgs.rsync
+              pkgs.gh
+            ]
+            ++ (import ./nix/scripts.nix {
+              lib = nixpkgs.lib;
+              inherit pkgs;
+              argc = pkgs.argc;
+            });
           buildInputs = [
             (ragenix.packages.${system}.default)
           ];
