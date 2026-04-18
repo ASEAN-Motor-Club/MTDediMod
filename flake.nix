@@ -191,18 +191,19 @@
                 systemd.services.syslog.serviceConfig.TimeoutStopSec = "5s";
               };
               motortown-server = {
-                enable = false;
+                enable = true;
                 enableMods = true;
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "beta";
-                modVersion = "server-v0.36.0-rc1";
+                modVersion = "server-v0.36.1-rc1";
                 enableExternalMods = {
                   CarPartsImport_P = false;
                   MoneyRun_P = true;
                   qxZap_CranyUnlocked_P = false;
-                  "MajasDetailWorksV3-7.18_P" = true;
-                  "MajasMnTrailerworksV6-7.18_P" = true;
+                  "MajasDetailWorksV3-7.18_P" = false;
+                  "MajasMnTrailerworksV6-7.18_P" = false;
+                  "Schedule_I_v0.3.0_0.7.18+1_P" = true;
                 };
                 engineIni = ''
                   mh.maxCombinedVehicleLength=4000
@@ -522,11 +523,13 @@
               nixpkgs.overlays = [
                 (final: prev: {
                   opencode = (opencode.packages.${prev.system}.default).overrideAttrs (old: {
-                    postPatch = (old.postPatch or "") + ''
-                      substituteInPlace packages/opencode/script/build.ts \
-                        --replace-fail 'external: ["node-gyp"]' \
-                          'external: ["node-gyp", "prettier", "prettier/plugins/babel", "prettier/plugins/estree"]'
-                    '';
+                    postPatch =
+                      (old.postPatch or "")
+                      + ''
+                        substituteInPlace packages/opencode/script/build.ts \
+                          --replace-fail 'external: ["node-gyp"]' \
+                            'external: ["node-gyp", "prettier", "prettier/plugins/babel", "prettier/plugins/estree"]'
+                      '';
                   });
                 })
               ];
@@ -727,7 +730,7 @@
               # --- NAT for private-network container port forwarding ---
               networking.nat = {
                 enable = true;
-                externalInterface = "enp13s0";
+                externalInterface = "enp11s0";
                 internalInterfaces = ["ve-+"];
               };
 
@@ -843,11 +846,13 @@
               nixpkgs.overlays = [
                 (final: prev: {
                   opencode = (opencode.packages.${prev.system}.default).overrideAttrs (old: {
-                    postPatch = (old.postPatch or "") + ''
-                      substituteInPlace packages/opencode/script/build.ts \
-                        --replace-fail 'external: ["node-gyp"]' \
-                          'external: ["node-gyp", "prettier", "prettier/plugins/babel", "prettier/plugins/estree"]'
-                    '';
+                    postPatch =
+                      (old.postPatch or "")
+                      + ''
+                        substituteInPlace packages/opencode/script/build.ts \
+                          --replace-fail 'external: ["node-gyp"]' \
+                            'external: ["node-gyp", "prettier", "prettier/plugins/babel", "prettier/plugins/estree"]'
+                      '';
                   });
                 })
               ];
