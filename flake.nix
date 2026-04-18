@@ -515,11 +515,19 @@
             ./machines/asean-mt-server/configuration.nix
             ragenix.nixosModules.default
 
-            # Use opencode from the official flake — nixpkgs versions are too old
+            # Use opencode from the official flake — nixpkgs versions are too old.
+            # Mark prettier as external so bun's bundler skips resolving it.
+            # Only the dev-only `generate` command imports prettier; `serve` doesn't.
             ({pkgs, ...}: {
               nixpkgs.overlays = [
                 (final: prev: {
-                  opencode = opencode.packages.${prev.system}.default;
+                  opencode = (opencode.packages.${prev.system}.default).overrideAttrs (old: {
+                    postPatch = (old.postPatch or "") + ''
+                      substituteInPlace packages/opencode/script/build.ts \
+                        --replace-fail 'external: ["node-gyp"]' \
+                          'external: ["node-gyp", "prettier", "prettier/plugins/babel", "prettier/plugins/estree"]'
+                    '';
+                  });
                 })
               ];
             })
@@ -828,11 +836,19 @@
             # Make mt-pak-extract flake available to modules
             {_module.args.mt-pak-extract = mt-pak-extract;}
 
-            # Use opencode from the official flake — nixpkgs versions are too old
+            # Use opencode from the official flake — nixpkgs versions are too old.
+            # Mark prettier as external so bun's bundler skips resolving it.
+            # Only the dev-only `generate` command imports prettier; `serve` doesn't.
             ({pkgs, ...}: {
               nixpkgs.overlays = [
                 (final: prev: {
-                  opencode = opencode.packages.${prev.system}.default;
+                  opencode = (opencode.packages.${prev.system}.default).overrideAttrs (old: {
+                    postPatch = (old.postPatch or "") + ''
+                      substituteInPlace packages/opencode/script/build.ts \
+                        --replace-fail 'external: ["node-gyp"]' \
+                          'external: ["node-gyp", "prettier", "prettier/plugins/babel", "prettier/plugins/estree"]'
+                    '';
+                  });
                 })
               ];
             })
