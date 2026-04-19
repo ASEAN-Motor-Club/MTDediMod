@@ -117,155 +117,6 @@
             '';
           };
           services.motortown-server-containers = {
-            test = {
-              privateNetwork = true;
-              hostAddress = "10.250.0.1";
-              localAddress = "10.250.0.2";
-              extraForwardPorts = [
-                {
-                  containerPort = 9001;
-                  hostPort = 9001;
-                  protocol = "tcp";
-                }
-                {
-                  containerPort = 8081;
-                  hostPort = 8081;
-                  protocol = "tcp";
-                }
-                {
-                  containerPort = 5001;
-                  hostPort = 5001;
-                  protocol = "tcp";
-                }
-              ];
-              imports = [
-                self.nixosModules.gameSyslog
-                amc-backend.nixosModules.backend
-                amc-backend.nixosModules.log-listener
-              ];
-              config = {
-                # Forward game server logs to the staging RELP listener
-                # (runs inside this same container)
-                services.gameSyslog.relpPort = 2515;
-
-                # GeoDjango native library paths (needed inside container)
-                environment.variables = {
-                  GEOS_LIBRARY_PATH = "${pkgs.geos}/lib/libgeos_c.so";
-                  GDAL_LIBRARY_PATH = "${pkgs.gdal}/lib/libgdal.so";
-                };
-
-                # Allow unfree for timescaledb
-                nixpkgs.config.allowUnfree = true;
-
-                # Private network: standard ports, no conflicts with host
-                # Trust the veth interface so the host can reach forwarded services
-                networking.firewall.trustedInterfaces = ["eth0"];
-
-                # --- Staging backend ---
-                services.amc-backend = {
-                  enable = true;
-                  port = 9001;
-                  allowedHosts = [
-                    "test.aseanmotorclub.com"
-                    "localhost"
-                    "127.0.0.1"
-                  ];
-                  environmentFile = "/run/secrets/backend-staging";
-                  environment = {
-                    GAME_SERVER_API_URL = "http://localhost:8081";
-                    MOD_SERVER_API_URL = "http://localhost:5001";
-                    WEBHOOK_SERVER_API_URL = "http://localhost:5000";
-                    PARTY_BONUS_ENABLED = "1";
-                    WEBHOOK_SSE_ENABLED = "1";
-                    CACHE_KEY_PREFIX = "test_";
-                  };
-                };
-
-                # --- Staging log listener (RELP on port 2515) ---
-                services.amc-log-listener = {
-                  enable = true;
-                  relpPort = 2515;
-                };
-
-                # Ensure syslog shuts down quickly (default 90s blocks container stop)
-                systemd.services.syslog.serviceConfig.TimeoutStopSec = "5s";
-              };
-              motortown-server = {
-                enable = true;
-                enableMods = true;
-                maxFps = 30;
-                restartSchedule = "3000-01-01 00:00:00";
-                betaBranch = "beta";
-                modVersion = "server-v0.36.1-rc1";
-                enableExternalMods = {
-                  CarPartsImport_P = false;
-                  MoneyRun_P = true;
-                  qxZap_CranyUnlocked_P = false;
-                  "MajasDetailWorksV3-7.18_P" = false;
-                  "MajasMnTrailerworksV6-7.18_P" = false;
-                  "Schedule_I_v0.3.0_0.7.18+1_P" = true;
-                };
-                engineIni = ''
-                  mh.maxCombinedVehicleLength=4000
-                  mh.cargoStackMaxVehicleHeight=420
-                  mh.eventRacingMoneyPerKm=300
-                  mh.fuelPriceByInventoryMax=5
-                  mh.housingValidateHousingArea=0
-                  mh.invalidPartsDisableLeaderboard=0
-                  mh.cargoPaymentMultiplier=10
-                  mh.refuelEVMinPercentPerSeconds=0.002000000026077032
-                  mh.refuelkWPerSeconds=0.5
-                  mh.trafficSpawnVehicleMaxDistance=20000.0
-                  mh.trafficSpawnVehicleMinDistance=10000.0
-                  mh.fuelPriceByInventoryMax=10.0
-                  mh.fuelPriceByInventoryMin=10.0
-                  mh.aiVehicleMaxDistance=50000.0
-                  mh.trafficAgentMaxTickDeltaSeconds=5.0
-                  mh.trafficTickPerFrame=20.0
-                  mh.companyVehicleSlotCostBase=1
-                  mh.companyEditorAsDediForCorporation=1
-                '';
-                enableLogStreaming = true;
-                logsTag = "amc-test";
-                openFirewall = true;
-                port = 27778;
-                queryPort = 27016;
-                user = "steam";
-                relpServerHost = "localhost";
-                relpServerPort = 2515;
-                environment = {
-                  MOD_SERVER_PORT = "5001";
-                  MOD_MANAGEMENT_PORT = "5000";
-                  MOD_WEBHOOK_ENABLE_EVENTS = "none";
-                };
-                credentialsFile = config.age.secrets.steam.path;
-                dedicatedServerConfig = {
-                  ServerName = "※ ASEAN Test Server ※";
-                  ServerMessage = ''                    THIS IS A TEST SERVER.
-                    Please join ASEAN Motor Club instead'';
-                  Password = "";
-                  MaxPlayers = 50;
-                  MaxVehiclePerPlayer = 10;
-                  bAllowPlayerToJoinWithCompanyVehicles = true;
-                  bAllowCompanyAIDriver = true;
-                  MaxHousingPlotRentalPerPlayer = 20;
-                  MaxHousingPlotRentalDays = 180;
-                  HousingPlotRentalPriceRatio = 0.0001;
-                  bAllowModdedVehicle = true;
-                  NPCVehicleDensity = 0.0;
-                  NPCPoliceDensity = 0.0;
-                  bEnableHostWebAPIServer = true;
-                  HostWebAPIServerPassword = "";
-                  HostWebAPIServerPort = 8081;
-                  Admins = [
-                    {
-                      UniqueNetId = "76561198378447512";
-                      Nickname = "freeman";
-                    }
-                  ];
-                };
-              };
-            };
             event = {
               imports = [
                 self.nixosModules.gameSyslog
@@ -411,12 +262,13 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "server-v0.36.0-rc1";
+            modVersion = "server-v0.37.0";
             enableExternalMods = {
               "MajasDetailWorksV3-7.18_P" = true;
               "MajasMnTrailerworksV6-7.18_P" = true;
               qxZap_CranyUnlocked_P = true;
-              MoneyRun_P = false;
+              "Schedule_I_v0.3.0_0.7.18+1_P" = true;
+              qxZap_satigt3_MoreAttachments_P = true;
             };
             engineIni = ''
               mh.maxCombinedVehicleLength=10000
@@ -504,10 +356,6 @@
           networking.firewall.interfaces."tailscale0".allowedTCPPorts = lib.mkIf config.services.tailscale.enable [
             config.services.motortown-server.dedicatedServerConfig.HostWebAPIServerPort
             (lib.strings.toInt config.services.motortown-server.environment.MOD_SERVER_PORT)
-            # Test container ports are forwarded via privateNetwork forwardPorts
-            9001 # Staging backend API (forwarded from container)
-            8081 # Test game API (forwarded from container)
-            5001 # Test mod server (forwarded from container)
           ];
         };
 
@@ -574,10 +422,6 @@
               };
               age.secrets.backend = {
                 file = ./secrets/backend.age;
-                mode = "400";
-              };
-              age.secrets.backend-staging = {
-                file = ./secrets/backend-staging.age;
                 mode = "400";
               };
             })
@@ -692,64 +536,6 @@
                     recommendedProxySettings = true;
                   };
                 };
-              };
-
-              # --- nginx vhost for test.aseanmotorclub.com (staging backend) ---
-              services.nginx.virtualHosts."test.aseanmotorclub.com" = {
-                enableACME = true;
-                forceSSL = true;
-                locations = {
-                  "/" = {
-                    proxyPass = "http://10.250.0.2:9001/api/";
-                    recommendedProxySettings = true;
-                    extraConfig = ''
-                      add_header 'Access-Control-Allow-Origin' '*' always;
-                      add_header 'Access-Control-Allow-Methods' 'POST, PUT, DELETE, GET, PATCH, OPTIONS' always;
-                    '';
-                  };
-                  "/api" = {
-                    proxyPass = "http://10.250.0.2:9001";
-                    recommendedProxySettings = true;
-                    extraConfig = ''
-                      add_header 'Access-Control-Allow-Origin' '*' always;
-                      add_header 'Access-Control-Allow-Methods' 'POST, PUT, DELETE, GET, PATCH, OPTIONS' always;
-                    '';
-                  };
-                  "/admin" = {
-                    proxyPass = "http://10.250.0.2:9001";
-                    recommendedProxySettings = true;
-                  };
-                  "/static/" = let
-                    inherit (amc-backend.packages.${pkgs.system}) staticRoot;
-                  in {
-                    alias = "${staticRoot}/";
-                  };
-                };
-              };
-
-              # --- NAT for private-network container port forwarding ---
-              networking.nat = {
-                enable = true;
-                externalInterface = "enp11s0";
-                internalInterfaces = ["ve-+"];
-              };
-
-              # --- Test container: bind-mount staging secret ---
-              containers.motortown-server-test = {
-                bindMounts."/run/secrets/backend-staging" = {
-                  hostPath = config.age.secrets.backend-staging.path;
-                  isReadOnly = true;
-                };
-              };
-
-              # Prevent nspawn restart race (stale machine registration)
-              systemd.services."container@motortown-server-test".serviceConfig = {
-                RestartSec = "5s";
-                TimeoutStopSec = "30s";
-                TimeoutStartSec = lib.mkForce "30m";
-                ExecStopPost = [
-                  "-${pkgs.coreutils}/bin/rm -rf /run/systemd/nspawn/unix-export/motortown-server-test"
-                ];
               };
 
               # Expose RELP + PostgreSQL on tailscale interface
@@ -928,6 +714,194 @@
                 extraPackages = with pkgs; [nix git openssh nixos-rebuild];
                 serviceOverrides = {
                   ProtectHome = "none";
+                };
+              };
+            })
+
+            # === Staging test server (migrated from asean-mt-server container) ===
+            motortown-server.nixosModules.default
+            self.nixosModules.gameSyslog
+
+            ({
+              config,
+              pkgs,
+              lib,
+              ...
+            }: {
+              imports = [
+                amc-backend.nixosModules.backend
+                amc-backend.nixosModules.log-listener
+              ];
+
+              age.secrets.backend-staging = {
+                file = ./secrets/backend-staging.age;
+                mode = "400";
+              };
+              age.secrets.steam-game = {
+                file = ./secrets/steam.age;
+                mode = "400";
+                owner = "steam";
+              };
+
+              environment.variables = {
+                GEOS_LIBRARY_PATH = "${pkgs.geos}/lib/libgeos_c.so";
+                GDAL_LIBRARY_PATH = "${pkgs.gdal}/lib/libgdal.so";
+              };
+
+              nixpkgs.config.allowUnfree = true;
+
+              users.users.steam = {
+                isNormalUser = true;
+                home = "/home/steam";
+                createHome = true;
+                shell = pkgs.bash;
+                extraGroups = ["modders"];
+              };
+
+              services.gameSyslog.relpPort = 2515;
+
+              services.amc-backend = {
+                enable = true;
+                port = 9001;
+                allowedHosts = [
+                  "test.aseanmotorclub.com"
+                  "localhost"
+                  "127.0.0.1"
+                ];
+                environmentFile = config.age.secrets.backend-staging.path;
+                environment = {
+                  GAME_SERVER_API_URL = "http://localhost:8081";
+                  MOD_SERVER_API_URL = "http://localhost:5001";
+                  WEBHOOK_SERVER_API_URL = "http://localhost:5000";
+                  PARTY_BONUS_ENABLED = "1";
+                  WEBHOOK_SSE_ENABLED = "1";
+                  CACHE_KEY_PREFIX = "test_";
+                };
+              };
+
+              services.amc-log-listener = {
+                enable = true;
+                relpPort = 2515;
+              };
+
+              systemd.services.syslog.serviceConfig.TimeoutStopSec = "5s";
+
+              services.motortown-server = {
+                enable = true;
+                enableMods = true;
+                maxFps = 30;
+                restartSchedule = "3000-01-01 00:00:00";
+                betaBranch = "beta";
+                modVersion = "server-v0.37.0";
+                enableExternalMods = {
+                  CarPartsImport_P = false;
+                  MoneyRun_P = false;
+                  qxZap_CranyUnlocked_P = false;
+                  "MajasDetailWorksV3-7.18_P" = false;
+                  "MajasMnTrailerworksV6-7.18_P" = false;
+                  "Schedule_I_v0.3.0_0.7.18+1_P" = true;
+                  qxZap_satigt3_MoreAttachments_P = true;
+                };
+                engineIni = ''
+                  mh.maxCombinedVehicleLength=4000
+                  mh.cargoStackMaxVehicleHeight=420
+                  mh.eventRacingMoneyPerKm=300
+                  mh.fuelPriceByInventoryMax=5
+                  mh.housingValidateHousingArea=0
+                  mh.invalidPartsDisableLeaderboard=0
+                  mh.cargoPaymentMultiplier=10
+                  mh.refuelEVMinPercentPerSeconds=0.002000000026077032
+                  mh.refuelkWPerSeconds=0.5
+                  mh.trafficSpawnVehicleMaxDistance=20000.0
+                  mh.trafficSpawnVehicleMinDistance=10000.0
+                  mh.fuelPriceByInventoryMax=10.0
+                  mh.fuelPriceByInventoryMin=10.0
+                  mh.aiVehicleMaxDistance=50000.0
+                  mh.trafficAgentMaxTickDeltaSeconds=5.0
+                  mh.trafficTickPerFrame=20.0
+                  mh.companyVehicleSlotCostBase=1
+                  mh.companyEditorAsDediForCorporation=1
+                '';
+                enableLogStreaming = true;
+                logsTag = "amc-test";
+                openFirewall = true;
+                port = 27778;
+                queryPort = 27016;
+                user = "steam";
+                relpServerHost = "localhost";
+                relpServerPort = 2515;
+                environment = {
+                  MOD_SERVER_PORT = "5001";
+                  MOD_MANAGEMENT_PORT = "5000";
+                  MOD_WEBHOOK_ENABLE_EVENTS = "none";
+                };
+                credentialsFile = config.age.secrets.steam-game.path;
+                dedicatedServerConfig = {
+                  ServerName = "ASEAN Test 2";
+                  ServerMessage = ''                    THIS IS A TEST SERVER.
+                    Please join ASEAN Motor Club instead'';
+                  Password = "";
+                  MaxPlayers = 50;
+                  MaxVehiclePerPlayer = 10;
+                  bAllowPlayerToJoinWithCompanyVehicles = true;
+                  bAllowCompanyAIDriver = true;
+                  MaxHousingPlotRentalPerPlayer = 20;
+                  MaxHousingPlotRentalDays = 180;
+                  HousingPlotRentalPriceRatio = 0.0001;
+                  bAllowModdedVehicle = true;
+                  NPCVehicleDensity = 0.0;
+                  NPCPoliceDensity = 0.0;
+                  bEnableHostWebAPIServer = true;
+                  HostWebAPIServerPassword = "";
+                  HostWebAPIServerPort = 8081;
+                  Admins = [
+                    {
+                      UniqueNetId = "76561198378447512";
+                      Nickname = "freeman";
+                    }
+                  ];
+                };
+              };
+
+              systemd.services.motortown-server.serviceConfig = {
+                CPUAffinity = lib.mkForce "";
+              };
+
+              networking.firewall.allowedTCPPorts = [
+                9001
+                8081
+                5001
+              ];
+
+              services.nginx.virtualHosts."test.aseanmotorclub.com" = {
+                enableACME = true;
+                forceSSL = true;
+                locations = {
+                  "/" = {
+                    proxyPass = "http://127.0.0.1:9001/api/";
+                    recommendedProxySettings = true;
+                    extraConfig = ''
+                      add_header 'Access-Control-Allow-Origin' '*' always;
+                      add_header 'Access-Control-Allow-Methods' 'POST, PUT, DELETE, GET, PATCH, OPTIONS' always;
+                    '';
+                  };
+                  "/api" = {
+                    proxyPass = "http://127.0.0.1:9001";
+                    recommendedProxySettings = true;
+                    extraConfig = ''
+                      add_header 'Access-Control-Allow-Origin' '*' always;
+                      add_header 'Access-Control-Allow-Methods' 'POST, PUT, DELETE, GET, PATCH, OPTIONS' always;
+                    '';
+                  };
+                  "/admin" = {
+                    proxyPass = "http://127.0.0.1:9001";
+                    recommendedProxySettings = true;
+                  };
+                  "/static/" = let
+                    inherit (amc-backend.packages.${pkgs.system}) staticRoot;
+                  in {
+                    alias = "${staticRoot}/";
+                  };
                 };
               };
             })
