@@ -43,6 +43,7 @@ local function HouseToTable(house)
   data.AreaSize = VectorToTable(house.AreaSize)
   data.FenceStep = house.FenceStep
   data.HousegKey = house.HousegKey:ToString()
+  data.HouseGuid = GuidToString(house.HouseGuid)
   data.Net_OwnerUniqueNetId = house.Net_OwnerUniqueNetId:ToString()
   data.Net_OwnerCharacterGuid = GuidToString(house.Net_OwnerCharacterGuid)
   data.Net_OwnerName = house.Net_OwnerName:ToString()
@@ -138,88 +139,6 @@ local function HandleSpawnHouse(session)
   return nil, nil, 400
 end
 
-local function HandleTransferHouseTerminateRent(session)
-  local houseGuid = session.pathComponents[2]
-  if not houseGuid then
-    return json.stringify { error = "Missing house GUID" }, nil, 400
-  end
-
-  local data = json.parse(session.content)
-  if not data or not data.NewOwnerCharacterGuid then
-    return json.stringify { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
-  end
-
-  local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local ok, err = pcall(function()
-      local house = FindHouseByGuid(houseGuid)
-      if not house then resultMsg = "house_not_found"; return end
-
-      if house.Net_OwnerUniqueNetId:ToString() == "" then
-        resultMsg = "no_current_owner"; return
-      end
-
-      local currentOwnerPC = FindOnlinePCByCharacterGuid(GuidToString(house.Net_OwnerCharacterGuid))
-      local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
-
-      if not currentOwnerPC or not currentOwnerPC:IsValid() then
-        resultMsg = "current_owner_offline"; return
-      end
-      if not newOwnerPC or not newOwnerPC:IsValid() then
-        resultMsg = "new_owner_offline"; return
-      end
-
-      currentOwnerPC:ServerTerminateHouseOwnership(house)
-      newOwnerPC:ServerRentHouse(house)
-      resultMsg = "success"
-    end)
-    if not ok then resultMsg = "error: " .. tostring(err) end
-  end, "HandleTransferHouseTerminateRent")
-
-  return json.stringify { status = resultMsg }, nil, 200
-end
-
-local function HandleTransferHouseTerminateBuy(session)
-  local houseGuid = session.pathComponents[2]
-  if not houseGuid then
-    return json.stringify { error = "Missing house GUID" }, nil, 400
-  end
-
-  local data = json.parse(session.content)
-  if not data or not data.NewOwnerCharacterGuid then
-    return json.stringify { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
-  end
-
-  local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local ok, err = pcall(function()
-      local house = FindHouseByGuid(houseGuid)
-      if not house then resultMsg = "house_not_found"; return end
-
-      if house.Net_OwnerUniqueNetId:ToString() == "" then
-        resultMsg = "no_current_owner"; return
-      end
-
-      local currentOwnerPC = FindOnlinePCByCharacterGuid(GuidToString(house.Net_OwnerCharacterGuid))
-      local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
-
-      if not currentOwnerPC or not currentOwnerPC:IsValid() then
-        resultMsg = "current_owner_offline"; return
-      end
-      if not newOwnerPC or not newOwnerPC:IsValid() then
-        resultMsg = "new_owner_offline"; return
-      end
-
-      currentOwnerPC:ServerTerminateHouseOwnership(house)
-      newOwnerPC:ServerBuyHouse(house)
-      resultMsg = "success"
-    end)
-    if not ok then resultMsg = "error: " .. tostring(err) end
-  end, "HandleTransferHouseTerminateBuy")
-
-  return json.stringify { status = resultMsg }, nil, 200
-end
-
 local function HandleTransferHouseDirect(session)
   local houseGuid = session.pathComponents[2]
   if not houseGuid then
@@ -252,10 +171,9 @@ local function HandleTransferHouseDirect(session)
       local newName = newOwnerPS:GetPlayerName():ToString()
       local newCharGuid = newOwnerPS.CharacterGuid
 
-      house.Net_OwnerUniqueNetId = FString(newUniqueId)
+      house.Net_OwnerUniqueNetId = newUniqueId
       house.Net_OwnerCharacterGuid = newCharGuid
-      house.Net_OwnerName = FName(newName)
-      house:OnRep_HousingOwner()
+      house.Net_OwnerName = newName
 
       resultMsg = "success"
     end)
@@ -299,10 +217,9 @@ local function HandleTransferHouseDirectExtend(session)
       local newName = newOwnerPS:GetPlayerName():ToString()
       local newCharGuid = newOwnerPS.CharacterGuid
 
-      house.Net_OwnerUniqueNetId = FString(newUniqueId)
+      house.Net_OwnerUniqueNetId = newUniqueId
       house.Net_OwnerCharacterGuid = newCharGuid
-      house.Net_OwnerName = FName(newName)
-      house:OnRep_HousingOwner()
+      house.Net_OwnerName = newName
 
       if rentLeft > 0 then
         newOwnerPC:ServerRentExtendHouse(house, 0, rentLeft)
@@ -316,11 +233,36 @@ local function HandleTransferHouseDirectExtend(session)
   return json.stringify { status = resultMsg }, nil, 200
 end
 
+local function HandleExtendHouseRent(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then
+    return json.stringify { error = "Missing house GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if not data or not data.Seconds then
+    return json.stringify { error = "Missing Seconds in payload" }, nil, 400
+  end
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local ok, err = pcall(function()
+      local house = FindHouseByGuid(houseGuid)
+      if not house then resultMsg = "house_not_found"; return end
+
+      house.Net_RentLeftTimeSeconds = house.Net_RentLeftTimeSeconds + data.Seconds
+      resultMsg = "success"
+    end)
+    if not ok then resultMsg = "error: " .. tostring(err) end
+  end, "HandleExtendHouseRent")
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
 return {
   HandleGetHouses = HandleGetHouses,
   HandleSpawnHouse = HandleSpawnHouse,
-  HandleTransferHouseTerminateRent = HandleTransferHouseTerminateRent,
-  HandleTransferHouseTerminateBuy = HandleTransferHouseTerminateBuy,
   HandleTransferHouseDirect = HandleTransferHouseDirect,
-  HandleTransferHouseDirectExtend = HandleTransferHouseDirectExtend
+  HandleTransferHouseDirectExtend = HandleTransferHouseDirectExtend,
+  HandleExtendHouseRent = HandleExtendHouseRent
 }

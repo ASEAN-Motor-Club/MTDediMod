@@ -9,8 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 ### [server/v0.36.1-rc2] — 2026-04-19
 
 #### Added
-- House transfer endpoints: `POST /houses/{guid}/transfer/terminate_rent`, `terminate_buy`, `direct`, `direct_extend`
+- House transfer endpoints: `POST /houses/{guid}/transfer/direct`, `direct_extend`
+- House rent extend endpoint: `POST /houses/{guid}/rent/extend` (no player controller needed)
 - `FindHouseByGuid` and `FindOnlinePCByCharacterGuid` helpers in PropertyManager
+- `HouseGuid` field in `/houses` response
+
+#### Changed
+- Webserver wildcard pattern changed from `.*` (greedy) to `[^/]*` (single segment) — fixes multi-segment wildcard route matching
 
 ### [server/v0.36.1-rc1] — 2026-04-19
 

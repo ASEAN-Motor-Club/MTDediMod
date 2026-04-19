@@ -146,9 +146,7 @@ end
 ---@return RequestPathHandlerTable|nil
 local function findHandler(path, method)
     for i, h in ipairs(handlers) do
-        LogOutput("DEBUG", "Checking %s %s", h.path, h.method)
-
-        local base = string.gsub(h.path, "%*", ".*") -- Turn asterisks into Lua wild patterns
+        local base = string.gsub(h.path, "%*", "[^/]*") -- Turn asterisks into Lua wild patterns (single segment)
         local pat = string.format("^%s$", base)      -- Add anchors to pattern
         if string.find(path, pat) == 1 then
             --if path == h.path then
