@@ -3,6 +3,38 @@ local json = require("JsonParser")
 local socket = require("socket")
 local assetManager = require("AssetManager")
 
+---@param houseGuid string
+---@return AMTHouse?
+local function FindHouseByGuid(houseGuid)
+  local gameState = GetMotorTownGameState()
+  if not gameState:IsValid() then return nil end
+
+  for i = 1, #gameState.Houses do
+    local house = gameState.Houses[i]
+    if house:IsValid() and GuidToString(house.HouseGuid) == houseGuid:upper() then
+      return house
+    end
+  end
+  return nil
+end
+
+---@param characterGuid string
+---@return AMotorTownPlayerController?
+local function FindOnlinePCByCharacterGuid(characterGuid)
+  local gameState = GetMotorTownGameState()
+  if not gameState:IsValid() then return nil end
+
+  for i = 1, #gameState.PlayerArray do
+    local ps = gameState.PlayerArray[i]
+    ---@cast ps AMotorTownPlayerState
+    if ps:IsValid() and GuidToString(ps.CharacterGuid) == characterGuid then
+      local pc = ps:GetPlayerController()
+      if pc:IsValid() then return pc end
+    end
+  end
+  return nil
+end
+
 ---Convert house to JSON serializable table
 ---@param house AMTHouse
 local function HouseToTable(house)
@@ -106,7 +138,189 @@ local function HandleSpawnHouse(session)
   return nil, nil, 400
 end
 
+local function HandleTransferHouseTerminateRent(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then
+    return json.stringify { error = "Missing house GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if not data or not data.NewOwnerCharacterGuid then
+    return json.stringify { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
+  end
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local ok, err = pcall(function()
+      local house = FindHouseByGuid(houseGuid)
+      if not house then resultMsg = "house_not_found"; return end
+
+      if house.Net_OwnerUniqueNetId:ToString() == "" then
+        resultMsg = "no_current_owner"; return
+      end
+
+      local currentOwnerPC = FindOnlinePCByCharacterGuid(GuidToString(house.Net_OwnerCharacterGuid))
+      local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
+
+      if not currentOwnerPC or not currentOwnerPC:IsValid() then
+        resultMsg = "current_owner_offline"; return
+      end
+      if not newOwnerPC or not newOwnerPC:IsValid() then
+        resultMsg = "new_owner_offline"; return
+      end
+
+      currentOwnerPC:ServerTerminateHouseOwnership(house)
+      newOwnerPC:ServerRentHouse(house)
+      resultMsg = "success"
+    end)
+    if not ok then resultMsg = "error: " .. tostring(err) end
+  end, "HandleTransferHouseTerminateRent")
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
+local function HandleTransferHouseTerminateBuy(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then
+    return json.stringify { error = "Missing house GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if not data or not data.NewOwnerCharacterGuid then
+    return json.stringify { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
+  end
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local ok, err = pcall(function()
+      local house = FindHouseByGuid(houseGuid)
+      if not house then resultMsg = "house_not_found"; return end
+
+      if house.Net_OwnerUniqueNetId:ToString() == "" then
+        resultMsg = "no_current_owner"; return
+      end
+
+      local currentOwnerPC = FindOnlinePCByCharacterGuid(GuidToString(house.Net_OwnerCharacterGuid))
+      local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
+
+      if not currentOwnerPC or not currentOwnerPC:IsValid() then
+        resultMsg = "current_owner_offline"; return
+      end
+      if not newOwnerPC or not newOwnerPC:IsValid() then
+        resultMsg = "new_owner_offline"; return
+      end
+
+      currentOwnerPC:ServerTerminateHouseOwnership(house)
+      newOwnerPC:ServerBuyHouse(house)
+      resultMsg = "success"
+    end)
+    if not ok then resultMsg = "error: " .. tostring(err) end
+  end, "HandleTransferHouseTerminateBuy")
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
+local function HandleTransferHouseDirect(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then
+    return json.stringify { error = "Missing house GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if not data or not data.NewOwnerCharacterGuid then
+    return json.stringify { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
+  end
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local ok, err = pcall(function()
+      local house = FindHouseByGuid(houseGuid)
+      if not house then resultMsg = "house_not_found"; return end
+
+      local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
+      if not newOwnerPC or not newOwnerPC:IsValid() then
+        resultMsg = "new_owner_offline"; return
+      end
+
+      local newOwnerPS = newOwnerPC.PlayerState
+      ---@cast newOwnerPS AMotorTownPlayerState
+      if not newOwnerPS:IsValid() then
+        resultMsg = "new_owner_ps_invalid"; return
+      end
+
+      local newUniqueId = GetUniqueNetIdAsString(newOwnerPS) or ""
+      local newName = newOwnerPS:GetPlayerName():ToString()
+      local newCharGuid = newOwnerPS.CharacterGuid
+
+      house.Net_OwnerUniqueNetId = FString(newUniqueId)
+      house.Net_OwnerCharacterGuid = newCharGuid
+      house.Net_OwnerName = FName(newName)
+      house:OnRep_HousingOwner()
+
+      resultMsg = "success"
+    end)
+    if not ok then resultMsg = "error: " .. tostring(err) end
+  end, "HandleTransferHouseDirect")
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
+local function HandleTransferHouseDirectExtend(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then
+    return json.stringify { error = "Missing house GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if not data or not data.NewOwnerCharacterGuid then
+    return json.stringify { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
+  end
+
+  local resultMsg = "not_executed"
+  ExecuteInGameThreadSync(function()
+    local ok, err = pcall(function()
+      local house = FindHouseByGuid(houseGuid)
+      if not house then resultMsg = "house_not_found"; return end
+
+      local rentLeft = house.Net_RentLeftTimeSeconds
+
+      local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
+      if not newOwnerPC or not newOwnerPC:IsValid() then
+        resultMsg = "new_owner_offline"; return
+      end
+
+      local newOwnerPS = newOwnerPC.PlayerState
+      ---@cast newOwnerPS AMotorTownPlayerState
+      if not newOwnerPS:IsValid() then
+        resultMsg = "new_owner_ps_invalid"; return
+      end
+
+      local newUniqueId = GetUniqueNetIdAsString(newOwnerPS) or ""
+      local newName = newOwnerPS:GetPlayerName():ToString()
+      local newCharGuid = newOwnerPS.CharacterGuid
+
+      house.Net_OwnerUniqueNetId = FString(newUniqueId)
+      house.Net_OwnerCharacterGuid = newCharGuid
+      house.Net_OwnerName = FName(newName)
+      house:OnRep_HousingOwner()
+
+      if rentLeft > 0 then
+        newOwnerPC:ServerRentExtendHouse(house, 0, rentLeft)
+      end
+
+      resultMsg = "success"
+    end)
+    if not ok then resultMsg = "error: " .. tostring(err) end
+  end, "HandleTransferHouseDirectExtend")
+
+  return json.stringify { status = resultMsg }, nil, 200
+end
+
 return {
   HandleGetHouses = HandleGetHouses,
-  HandleSpawnHouse = HandleSpawnHouse
+  HandleSpawnHouse = HandleSpawnHouse,
+  HandleTransferHouseTerminateRent = HandleTransferHouseTerminateRent,
+  HandleTransferHouseTerminateBuy = HandleTransferHouseTerminateBuy,
+  HandleTransferHouseDirect = HandleTransferHouseDirect,
+  HandleTransferHouseDirectExtend = HandleTransferHouseDirectExtend
 }
