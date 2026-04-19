@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.36.2-rc1] — 2026-04-19
+
+#### Added
+- ServerSelectPolicePullOverPenaltyResponse hook now extracts SuspectCharacter data: Net_ResidentKey, CharacterGuid, AccountNickname, Net_CharacterFlags
+
 ### [server/v0.36.1-rc2] — 2026-04-19
 
 #### Added

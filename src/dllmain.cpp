@@ -957,6 +957,46 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			Output::send<LogLevel::Verbose>(STR("ServerSelectPolicePullOverPenaltyResponse: bWarningOnly={}\n"), *bWarningOnly ? 1 : 0);
 			event_data["bWarningOnly"] = *bWarningOnly;
+
+			// --- Extract SuspectCharacter (AMTCharacter) ---
+			auto SuspectCharacterProp = static_cast<FObjectProperty*>(
+				FunctionBeingExecuted->GetPropertyByName(STR("SuspectCharacter")));
+			if (SuspectCharacterProp) {
+				const auto& SuspectCharPtr = SuspectCharacterProp->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
+				if (SuspectCharPtr && *SuspectCharPtr) {
+					auto SuspectChar = *SuspectCharPtr;
+					json::object suspect_obj;
+
+					auto ResidentKey = SuspectChar->GetValuePtrByPropertyNameInChain<FName>(STR("Net_ResidentKey"));
+					if (ResidentKey) {
+						suspect_obj["Net_ResidentKey"] = json::string(to_string(ResidentKey->ToString()));
+					}
+
+					auto PlayerStateProp = static_cast<FObjectProperty*>(
+						SuspectChar->GetPropertyByNameInChain(STR("Net_MTPlayerState")));
+					if (PlayerStateProp) {
+						const auto& PlayerStatePtr = PlayerStateProp->ContainerPtrToValuePtr<UObject*>(SuspectChar);
+						if (PlayerStatePtr && *PlayerStatePtr) {
+							auto CharGuid = (*PlayerStatePtr)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
+							if (CharGuid) {
+								suspect_obj["CharacterGuid"] = json::string(FormatGuid(CharGuid));
+							}
+							auto PlayerName = (*PlayerStatePtr)->GetValuePtrByPropertyNameInChain<FString>(STR("Net_AccountNickname"));
+							if (PlayerName && PlayerName->GetCharArray().GetData()) {
+								suspect_obj["AccountNickname"] = json::string(to_string(PlayerName->GetCharArray().GetData()));
+							}
+						}
+					}
+
+					auto CharFlags = SuspectChar->GetValuePtrByPropertyNameInChain<uint32>(STR("Net_CharacterFlags"));
+					if (CharFlags) {
+						suspect_obj["Net_CharacterFlags"] = *CharFlags;
+					}
+
+					event_data["SuspectCharacter"] = suspect_obj;
+				}
+			}
+
 			return true;
 		}
 	);
