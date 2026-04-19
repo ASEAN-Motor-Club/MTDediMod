@@ -6,7 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
-### [server/v0.36.3-rc1] — 2026-04-19
+### [server/v0.37.0] — 2026-04-19
+
+#### Added
+- Register `/vehicles/spawn` POST route (was missing, caused 404s from backend)
+- Register `/world_vehicles/*/decal` POST route (was missing, caused 404s from backend)
+- Re-enable vehicle parts setting on spawn via `ExecuteWithDelay(500ms)` with pcall error handling and validity checks, restoring display vehicle functionality
+
+### [server/v0.36.3] — 2026-04-19
+
+#### Added
+- ServerRentHouse hook: extracts House data (HousegKey, HouseGuid, owner info, RentLeftTimeSeconds)
+- ServerRentExtendHouse hook: extracts House data, Money (FMTShadowedInt64), and Seconds
 
 #### Fixed
 - CargoManager: adapt for new game version — `TimeSinceLastProduction` and `ProductionFlags` moved from `FMTProductionConfig` to new `FMTProductionStatus` struct
