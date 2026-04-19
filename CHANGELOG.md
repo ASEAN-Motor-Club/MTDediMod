@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.36.3-rc1] — 2026-04-19
+
+#### Fixed
+- CargoManager: adapt for new game version — `TimeSinceLastProduction` and `ProductionFlags` moved from `FMTProductionConfig` to new `FMTProductionStatus` struct
+- CargoManager: add `Net_ProductionStatuses` serialization (Progress, ProductionSpeedMultiplier, ProductionFlags)
+- CargoManager: guard `Net_Deliveries` access with validity check (field removed in new game version)
+
 ### [server/v0.36.2-rc1] — 2026-04-19
 
 #### Added

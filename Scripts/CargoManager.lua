@@ -68,10 +68,17 @@ local function ProductionConfigToTable(config)
   data.ProductionSpeedMultiplier = config.ProductionSpeedMultiplier
   data.LocalFoodSupply = config.LocalFoodSupply
   data.bHidden = config.bHidden
-  data.TimeSinceLastProduction = config.TimeSinceLastProduction
-  data.ProductionFlags = config.ProductionFlags
 
   return data
+end
+
+---@param status FMTProductionStatus
+local function ProductionStatusToTable(status)
+  return {
+    Progress = status.Progress,
+    ProductionSpeedMultiplier = status.ProductionSpeedMultiplier,
+    ProductionFlags = status.ProductionFlags,
+  }
 end
 
 ---Convert FMTDeliveryPassiveSupply to JSON serializable table
@@ -248,6 +255,13 @@ local function DeliveryPointToTable(point)
     table.insert(data.ProductionConfigs, ProductionConfigToTable(element:get()))
   end)
 
+  data.Net_ProductionStatuses = {}
+  if point.Net_ProductionStatuses:IsValid() then
+    point.Net_ProductionStatuses:ForEach(function(index, element)
+      table.insert(data.Net_ProductionStatuses, ProductionStatusToTable(element:get()))
+    end)
+  end
+
   data.PassiveSupplies = {}
   point.PassiveSupplies:ForEach(function(index, element)
     table.insert(data.PassiveSupplies, DeliveryPassiveSuplyToTable(element:get()))
@@ -296,9 +310,11 @@ local function DeliveryPointToTable(point)
   -- data.ZoneVolume = point.ZoneVolume
 
   data.Net_Deliveries = {}
-  point.Net_Deliveries:ForEach(function(index, element)
-    table.insert(data.Net_Deliveries, DeliveryToTable(element:get()))
-  end)
+  if point.Net_Deliveries and point.Net_Deliveries:IsValid() then
+    point.Net_Deliveries:ForEach(function(index, element)
+      table.insert(data.Net_Deliveries, DeliveryToTable(element:get()))
+    end)
+  end
 
   -- data.Server_DeliveryGoods = point.Server_DeliveryGoods
   -- data.SenderMarker = point.SenderMarker
