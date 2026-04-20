@@ -262,7 +262,7 @@
             enable = true;
             enableMods = true;
             enableLogStreaming = true;
-            modVersion = "server-v0.37.4";
+            modVersion = "server-v0.37.5";
             enableExternalMods = {
               "MajasDetailWorksV3-7.18_P" = true;
               "MajasMnTrailerworksV6-7.18_P" = true;
@@ -777,6 +777,7 @@
                   WEBHOOK_SSE_ENABLED = "1";
                   CHAT_VIA_WEBHOOK = "1";
                   CACHE_KEY_PREFIX = "test_";
+                  IS_TEST_SERVER = "1";
                 };
               };
 
@@ -793,7 +794,7 @@
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "beta";
-                modVersion = "server-v0.37.4";
+                modVersion = "server-v0.37.5";
                 enableExternalMods = {
                   CarPartsImport_P = false;
                   MoneyRun_P = false;
