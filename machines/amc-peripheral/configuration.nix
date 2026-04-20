@@ -579,7 +579,7 @@ in {
     # Ensure data volume subdirs exist before bind mounts activate
     "d /var/lib/data/radio 0755 root root -"
     "d /var/lib/data/opencode 0755 opencode opencode -"
-    "d /var/lib/data/mod-releases 0755 root root -"
+    "d /var/lib/data/mod-releases 0775 steam modders -"
     # OpenCode workspace directories (created on the volume via bind mount)
     "d /var/lib/opencode 0755 opencode opencode -"
     "d /var/lib/opencode/workspace 0755 opencode opencode -"

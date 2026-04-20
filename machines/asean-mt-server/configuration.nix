@@ -278,7 +278,7 @@
   # Ensure workspace directory exists
   systemd.tmpfiles.rules = [
     "d /var/lib/opencode/workspace 0755 opencode opencode -"
-    "d /var/lib/mod-releases 0755 root root -"
+    "d /var/lib/mod-releases 0775 steam modders -"
     # Transparent Huge Pages: reduces TLB misses for game server's 7.6 GB working set.
     # Wine/Proton won't call madvise(), so 'always' is needed.
     # defer+madvise defrag avoids stalling the allocating process.
