@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.37.5] — 2026-04-20
+
+#### Changed
+- Removed 500ms delay when setting vehicle parts on spawn — parts are now set synchronously
+
 ### [server/v0.37.4] — 2026-04-20
 
 #### Added
