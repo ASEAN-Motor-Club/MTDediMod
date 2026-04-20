@@ -231,6 +231,68 @@ end
 
 local mutedPlayers = {}
 
+local function IsPlayerMuted(uniqueId)
+  local muteUntil = mutedPlayers[uniqueId]
+  if muteUntil == nil then return false end
+  if muteUntil == true or muteUntil == "permanent" then return true end
+  if type(muteUntil) == "number" then
+    if muteUntil <= 0 then return true end
+    if os.time() >= muteUntil then
+      mutedPlayers[uniqueId] = nil
+      return false
+    end
+    return true
+  end
+  return false
+end
+
+local function MutePlayer(uniqueId, muteUntil)
+  mutedPlayers[uniqueId] = muteUntil
+  LogOutput("INFO", "Player %s muted until %s", uniqueId, tostring(muteUntil))
+end
+
+local function UnmutePlayer(uniqueId)
+  mutedPlayers[uniqueId] = nil
+  LogOutput("INFO", "Player %s unmuted", uniqueId)
+end
+
+local function GetMutedPlayers()
+  local result = {}
+  local now = os.time()
+  for uniqueId, muteUntil in pairs(mutedPlayers) do
+    local expired = false
+    if type(muteUntil) == "number" and muteUntil > 0 and now >= muteUntil then
+      mutedPlayers[uniqueId] = nil
+      expired = true
+    end
+    if not expired then
+      table.insert(result, {
+        UniqueID = uniqueId,
+        MuteUntil = muteUntil,
+      })
+    end
+  end
+  return result
+end
+
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", function(PC, Message, Category)
+  local playerController = PC:get()
+  if not playerController:IsValid() then return end
+  local playerState = playerController.PlayerState
+  if not playerState:IsValid() then return end
+
+  local uniqueId = GetUniqueNetIdAsString(playerState)
+  if not uniqueId then return end
+
+  if IsPlayerMuted(uniqueId) then
+    local cat = Category:get()
+    if cat == 0 then
+      Category:set(7)
+      LogOutput("DEBUG", "Muted player %s: redirected chat from Normal to Company", uniqueId)
+    end
+  end
+end)
+
 local function HandleMutePlayer(session)
   local playerId = session.pathComponents[2]
   if not playerId then
@@ -238,11 +300,31 @@ local function HandleMutePlayer(session)
   end
 
   local data = json.parse(session.content)
-  if data and data.MuteUntil then
-    mutedPlayers[playerId] = data.MuteUntil
-    return nil, nil, 204
+  if data then
+    local muteUntil = data.MuteUntil
+    if muteUntil == nil or muteUntil == false then
+      UnmutePlayer(playerId)
+      return json.stringify { status = "unmuted" }, nil, 200
+    end
+    MutePlayer(playerId, muteUntil)
+    return json.stringify { status = "muted", MuteUntil = muteUntil }, nil, 200
   end
   return json.stringify { error = "Invalid payload" }, nil, 400
+end
+
+local function HandleUnmutePlayer(session)
+  local playerId = session.pathComponents[2]
+  if not playerId then
+    return json.stringify { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+  end
+
+  UnmutePlayer(playerId)
+  return json.stringify { status = "unmuted" }, nil, 200
+end
+
+local function HandleGetMutedPlayers(session)
+  local result = GetMutedPlayers()
+  return json.stringify { data = result }, nil, 200
 end
 
 
@@ -604,6 +686,8 @@ return {
   HandleSetPlayerName = HandleSetPlayerName,
   HandlePlayerSendChat = HandlePlayerSendChat,
   HandleMutePlayer = HandleMutePlayer,
+  HandleUnmutePlayer = HandleUnmutePlayer,
+  HandleGetMutedPlayers = HandleGetMutedPlayers,
   HandleGetParties = HandleGetParties,
   HandleMakePlayerSuspect = HandleMakePlayerSuspect,
   HandleGetPoliceState = HandleGetPoliceState,

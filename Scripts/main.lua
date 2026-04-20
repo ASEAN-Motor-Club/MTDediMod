@@ -60,6 +60,8 @@ local function LoadWebserver()
     server.registerHandler("/players/*/money", "POST", playerManager.HandleTransferMoneyToPlayer)
     server.registerHandler("/players/*/chat", "POST", playerManager.HandlePlayerSendChat)
     server.registerHandler("/players/*/mute", "POST", playerManager.HandleMutePlayer)
+    server.registerHandler("/players/*/mute", "DELETE", playerManager.HandleUnmutePlayer)
+    server.registerHandler("/players/muted", "GET", playerManager.HandleGetMutedPlayers)
     server.registerHandler("/players/*/name", "PUT", playerManager.HandleSetPlayerName)
     server.registerHandler("/players/*/suspect", "POST", playerManager.HandleMakePlayerSuspect)
     
