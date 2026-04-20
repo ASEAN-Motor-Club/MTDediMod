@@ -2286,8 +2286,12 @@ local function PlayerVehicleToTable(vehicle, complete)
     if vehicle.Customization:IsValid() then
       vehicleInfo["customization"] = VehicleCustomizationToTable(vehicle.Customization)
     end
-    -- SAFETY: Net_Parts TArray concurrent access crash — skip on async thread.
-    vehicleInfo["parts"] = {}
+    if vehicle.Net_Parts:IsValid() then
+      vehicleInfo["parts"] = {}
+      vehicle.Net_Parts:ForEach(function(index, element)
+        table.insert(vehicleInfo["parts"], VehiclePartToTable(element:get()))
+      end)
+    end
   end
   return vehicleInfo
 end

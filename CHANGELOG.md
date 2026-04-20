@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.37.1] — 2026-04-20
+
+#### Changed
+- Restore `Net_Parts` reading in `PlayerVehicleToTable` — vehicle parts are now returned in `/player_vehicles/*/list?complete=true` responses again
+
 ### [server/v0.37.0] — 2026-04-19
 
 #### Added
