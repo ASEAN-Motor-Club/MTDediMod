@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.37.3] — 2026-04-20
+
+#### Added
+- Player mute system: hook `ServerSendChat` to redirect muted players' chat from Normal (0) to Company (7)
+- `DELETE /players/*/mute` endpoint to unmute a player
+- `GET /players/muted` endpoint to list currently muted players
+- `IsPlayerMuted`, `MutePlayer`, `UnmutePlayer`, `GetMutedPlayers` helpers with expiry support
+
+#### Changed
+- `HandleMutePlayer` now returns JSON status and supports unmute via `MuteUntil: false/null`
+
 ### [server/v0.37.1] — 2026-04-20
 
 #### Changed
