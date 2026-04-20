@@ -1,5 +1,4 @@
 local json = require("JsonParser")
-local webhook = require("Webclient")
 
 ---Convert player state to JSON serializable table
 ---@param playerState AMotorTownPlayerState
@@ -284,11 +283,21 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", funct
   local uniqueId = GetUniqueNetIdAsString(playerState)
   if not uniqueId then return end
 
+  local characterGuid = GuidToString(playerState.CharacterGuid)
+  local messageStr = Message:get():ToString()
+  local categoryVal = Category:get()
+
+  local ok = EnqueueWebhookEvent("ServerSendChat", json.stringify({
+    Message = messageStr,
+    Category = categoryVal,
+    CharacterGuid = characterGuid,
+    UniqueID = uniqueId,
+  }))
+
   if IsPlayerMuted(uniqueId) then
-    local cat = Category:get()
-    if cat == 0 then
+    if categoryVal == 0 then
       Category:set(7)
-      LogOutput("DEBUG", "Muted player %s: redirected chat from Normal to Company", uniqueId)
+      LogOutput("DEBUG", "Muted player %s: redirected chat from Normal to SmallArea", uniqueId)
     end
   end
 end)

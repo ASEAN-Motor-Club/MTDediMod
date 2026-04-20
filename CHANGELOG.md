@@ -6,6 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.37.4] — 2026-04-20
+
+#### Added
+- `EnqueueWebhookEvent` C++ function exposed to Lua — emits events directly to the C++ EventManager/SSE pipeline, bypassing the Lua webhook HTTP pipeline
+- `ServerSendChat` hook now emits original (pre-mute) chat events via `EnqueueWebhookEvent` so the backend receives unmodified category and message
+- `amc-backend` `ServerSendChat` webhook handler that processes chat messages (Discord forwarding, command execution, SSE bot events, chat log) with original category from the event payload
+- Chat dedup between webhook and log pipelines: webhook-processed messages are skipped in the log handler via cache-based dedup
+
+#### Changed
+- Muted players' chat is now redirected from Normal (0) to SmallArea (7) instead of Company (2)
+- Removed `ChatManager.lua` `RegisterEventHook("ServerSendChat", ...)` — event emission is now handled by the Lua `ServerSendChat` hook directly via `EnqueueWebhookEvent`
+
 ### [server/v0.37.3] — 2026-04-20
 
 #### Added

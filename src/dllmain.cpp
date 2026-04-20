@@ -1639,8 +1639,43 @@ auto MotorTownMods::on_lua_start(
 		return 1;
 		});
 
-	// AddPoliceSuspect(policeObject, characterObject) -> bool
-	// Natively pushes a suspect entry into AMTPolice::Net_Suspects TArray
+	// EnqueueWebhookEvent(event_name, json_str) -> bool
+	// Emits a Lua-constructed event directly into the C++ EventManager SSE/webhook pipeline.
+	lua.register_function("EnqueueWebhookEvent", [](const LuaMadeSimple::Lua& lua_net) -> int {
+		if (lua_net.get_stack_size() < 2) {
+			lua_net.throw_error("EnqueueWebhookEvent requires 2 arguments: event_name, json_str");
+		}
+
+		std::string event_name = std::string(lua_net.get_string());
+		std::string json_str = std::string(lua_net.get_string());
+
+		try {
+			json::value parsed = json::parse(json_str);
+			if (!parsed.is_object()) {
+				Output::send<LogLevel::Warning>(STR("EnqueueWebhookEvent: json_str must be a JSON object\n"));
+				lua_net.set_bool(false);
+				return 1;
+			}
+
+			json::object event_data = parsed.as_object();
+
+			json::object event_payload;
+			event_payload["hook"] = json::string(event_name);
+			event_payload["timestamp"] = static_cast<int64_t>(std::time(nullptr));
+			event_payload["data"] = std::move(event_data);
+
+			EventManager::Get().AddEvent(std::move(event_payload));
+
+			Output::send<LogLevel::Verbose>(STR("EnqueueWebhookEvent: queued event '{}'\n"), to_wstring(event_name));
+			lua_net.set_bool(true);
+			return 1;
+		} catch (const std::exception& e) {
+			Output::send<LogLevel::Warning>(STR("EnqueueWebhookEvent: JSON parse error: {}\n"), to_wstring(e.what()));
+			lua_net.set_bool(false);
+			return 1;
+		}
+	});
+
 	lua.register_function("AddPoliceSuspect", [](const LuaMadeSimple::Lua& lua_net) -> int {
 		Output::send<LogLevel::Verbose>(STR("AddPoliceSuspect: entered\n"));
 

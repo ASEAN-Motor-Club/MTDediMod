@@ -1,5 +1,4 @@
 local json = require("JsonParser")
-local webhook = require("Webclient")
 
 ---Announce a message to the whole server
 ---@param message string
@@ -72,27 +71,6 @@ local function HandleAnnounceMessage(session)
   end
   return json.stringify { message = "Invalid request content" }, nil, 400
 end
-
--- Register webhook
-
-webhook.RegisterEventHook(
-  "ServerSendChat",
-  function(context, message, category)
-    local PC = context:get() ---@cast PC APlayerController
-
-    if not PC:IsValid() then return end
-
-    local PS = PC.PlayerState ---@cast PS AMotorTownPlayerState
-
-    if not PS:IsValid() then return end
-
-    return {
-      Sender = GetPlayerUniqueId(PC),
-      Message = message:get():ToString(),
-      Category = category:get()
-    }
-  end
-)
 
 return {
   HandleAnnounceMessage = HandleAnnounceMessage
