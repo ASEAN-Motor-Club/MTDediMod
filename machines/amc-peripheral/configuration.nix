@@ -1141,8 +1141,9 @@ in {
     forceSSL = true;
 
     # Discord Activity wrapper (code-web static build)
+    # Uses stable symlink to avoid nginx reload on package rebuild
     locations."/" = {
-      root = "${config.services.amc-peripheral.codeWeb.package}";
+      root = "/var/www/nix-static/code-web";
       tryFiles = "$uri $uri/index.html /index.html";
       extraConfig = ''
         add_header Cache-Control "public, max-age=3600";
