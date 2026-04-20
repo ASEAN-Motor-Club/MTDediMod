@@ -14,8 +14,8 @@ amc-server/                  # NixOS flake monorepo
 ├── necesse-server/          # Necesse game server (submodule)
 ├── eco-server/              # Eco game server (submodule)
 ├── machines/                # Machine-specific NixOS configurations
-│   ├── asean-mt-server/     # Main server (game + backend)
-│   └── amc-peripheral/      # Peripheral server (radio, sharry)
+│   ├── asean-mt-server/     # Main server (game + backend + event container)
+│   └── amc-peripheral/      # Peripheral server (radio, sharry, staging test server)
 ├── secrets/                 # Encrypted secrets (ragenix)
 ├── nix/                     # Shared Nix utilities
 └── flake.nix                # Root flake wiring everything together
@@ -25,20 +25,25 @@ amc-server/                  # NixOS flake monorepo
 
 | Hostname            | SSH Access                   | Role                                       |
 |---------------------|------------------------------|---------------------------------------------|
-| `asean-mt-server`   | `ssh root@asean-mt-server`   | Motor Town game server + amc-backend        |
-| `amc-peripheral`    | `ssh root@amc-peripheral`    | Radio station, Sharry, peripheral Discord bots |
+| `asean-mt-server`   | `ssh root@asean-mt-server`   | Motor Town game server + amc-backend (production) + event container |
+| `amc-peripheral`    | `ssh root@amc-peripheral`    | Radio station, Sharry, peripheral Discord bots, staging test server |
 
 Both servers are accessed via **Tailscale** SSH.
 
 ## Key Subsystems
 
-### amc-backend (inside NixOS container on `asean-mt-server`)
+### amc-backend (production, on `asean-mt-server`)
 
-The backend runs inside a **NixOS container** called `amc-backend`. See [`.agents/skills/server-access/SKILL.md`](.agents/skills/server-access/SKILL.md) for access patterns.
-
-Key services inside the container:
-- `amc-backend` — Django API via uvicorn
+The production backend runs directly on `asean-mt-server` (host, not container). Key services:
+- `amc-backend` — Django API via uvicorn (port 9000)
 - `amc-worker` — arq worker + Discord bot (runs together in one process)
+
+### Staging test server (on `amc-peripheral`)
+
+The staging test server runs directly on `amc-peripheral` (no container). It includes:
+- Motor Town game server (port 27778)
+- Staging amc-backend (port 9001)
+- Staging amc-log-listener (RELP port 2515)
 
 ### amc-peripheral (on `amc-peripheral` server)
 

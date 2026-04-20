@@ -6,7 +6,7 @@ in {
   "steam.age".publicKeys = [owner asean-mt-server peripheral];
   "tailscale.age".publicKeys = [owner asean-mt-server];
   "backend.age".publicKeys = [owner peripheral asean-mt-server];
-  "backend-staging.age".publicKeys = [owner asean-mt-server];
+  "backend-staging.age".publicKeys = [owner asean-mt-server peripheral];
   "cookies.age".publicKeys = [owner peripheral asean-mt-server];
   "ecoUserToken.age".publicKeys = [owner peripheral asean-mt-server];
   "github-pat.age".publicKeys = [owner peripheral];

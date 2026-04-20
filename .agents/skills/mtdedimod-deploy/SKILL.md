@@ -150,10 +150,10 @@ This automatically:
 ### 5. Upload to the release server
 
 ```bash
-scp MotorTownMods-package.zip root@asean-mt-server:/var/lib/mod-releases/MotorTownMods_server-v0.34.0-rc5.zip
+scp MotorTownMods-package.zip root@amc-peripheral:/var/lib/mod-releases/MotorTownMods_server-v0.34.0-rc5.zip
 ```
 
-Mod zips are served locally from `/var/lib/mod-releases/` on `asean-mt-server`. Containers access this via a read-only bind mount; the main server service accesses it directly.
+Mod zips are served from `/var/lib/mod-releases/` on `amc-peripheral` (via nginx at `aseanmotorclub.com/releases/`). Both the main server and test server download mods at startup via `curl` from this URL.
 
 ### 6. Set the version in Nix config
 
@@ -173,30 +173,31 @@ modVersion = "server-v0.33.0-rc7";
 
 ```bash
 # From amc-server root (inside nix develop or with direnv)
-deploy root@asean-mt-server
+deploy root@amc-peripheral    # Test server
+deploy root@asean-mt-server   # Main server (when promoting)
 ```
 
-Then purge the old cache and restart the container:
+Then purge the old cache and restart:
 
 ```bash
 # 1. Remove cached zip AND extracted directory for the OLD version
-ssh root@asean-mt-server "\
-  rm -f  /var/lib/motortown-server-test/.mod-cache/MotorTownMods_server-v0.34.0-rc4.zip && \
-  rm -rf /var/lib/motortown-server-test/.mod-cache/extracted-server-v0.34.0-rc4"
+ssh root@amc-peripheral "\
+  rm -f  /var/lib/motortown-server/.mod-cache/MotorTownMods_server-v0.34.0-rc4.zip && \
+  rm -rf /var/lib/motortown-server/.mod-cache/extracted-server-v0.34.0-rc4"
 
 # 2. Fix version.dll ownership if it was previously written by root
-#    (the container's steam user can't overwrite a root-owned file)
-ssh root@asean-mt-server "\
-  chown steam:nscd /var/lib/motortown-server-test/MotorTown/Binaries/Win64/version.dll 2>/dev/null || true"
+#    (the steam user can't overwrite a root-owned file)
+ssh root@amc-peripheral "\
+  chown steam:modders /var/lib/motortown-server/MotorTown/Binaries/Win64/version.dll 2>/dev/null || true"
 
-# 3. Restart the container (this triggers preStart → download → extract → launch)
-ssh root@asean-mt-server "systemctl restart container@motortown-server-test.service"
+# 3. Restart the service (this triggers preStart → download → extract → launch)
+ssh root@amc-peripheral "systemctl restart motortown-server"
 
 # 4. Wait ~20s for the game server to boot, then check UE4SS logs
-ssh root@asean-mt-server "tail -n 50 /var/lib/motortown-server-test/MotorTown/Binaries/Win64/ue4ss/UE4SS.log | grep MotorTownMods"
+ssh root@amc-peripheral "tail -n 50 /var/lib/motortown-server/MotorTown/Binaries/Win64/ue4ss/UE4SS.log | grep MotorTownMods"
 ```
 
-> **Common pitfall:** If you manually `unzip` a mod package into the game directory as root (e.g. during debugging), the `version.dll` file ends up owned by `root:root`. The container's `steam` user cannot overwrite it during `preStart`, causing repeated `Permission denied` failures. Always fix ownership with step 2 above, or avoid manual extraction.
+> **Common pitfall:** If you manually `unzip` a mod package into the game directory as root (e.g. during debugging), the `version.dll` file ends up owned by `root:root`. The `steam` user cannot overwrite it during `preStart`, causing repeated `Permission denied` failures. Always fix ownership with step 2 above, or avoid manual extraction.
 
 **Success indicators:**
 - `INFO: Webserver listening to host 0.0.0.0 on port XXXXX`
@@ -218,7 +219,13 @@ When a test RC is validated and ready for the main server:
 
 1. Update `modVersion` in the main server section of `flake.nix` to match the tested RC version
 2. `deploy root@asean-mt-server`
-3. Purge the old main server cache and restart (same steps as above but with `/var/lib/motortown-server/` paths)
+3. Purge the old main server cache and restart:
+   ```bash
+   ssh root@asean-mt-server "\
+     rm -f  /var/lib/motortown-server/.mod-cache/MotorTownMods_server-v0.34.0-rc4.zip && \
+     rm -rf /var/lib/motortown-server/.mod-cache/extracted-server-v0.34.0-rc4"
+   ssh root@asean-mt-server "systemctl restart motortown-server"
+   ```
 4. No new tag needed — the RC tag already tracks the code
 
 ---
@@ -305,15 +312,18 @@ When a commit touches both server and client code (e.g. changes in `shared/`):
 For Lua-only changes (no C++ DLL rebuild), skip the full deploy cycle. SCP scripts directly to the installed directory and hit the reload endpoint:
 
 ```bash
-# 1. SCP changed scripts (replace test with main server path as needed)
+# 1. SCP changed scripts (test server on amc-peripheral)
 scp MTDediMod/Scripts/*.lua \
-  root@asean-mt-server:/var/lib/motortown-server-test/MotorTown/Binaries/Win64/ue4ss/Mods/MotorTownMods/Scripts/
+  root@amc-peripheral:/var/lib/motortown-server/MotorTown/Binaries/Win64/ue4ss/Mods/MotorTownMods/Scripts/
 
 # 2. Hot-reload (connection resets — that's expected, mod restarts in ~5s)
-curl -s -X POST http://asean-mt-server:5001/mods/reload || true
+ssh root@amc-peripheral "curl -s -X POST http://localhost:5001/mods/reload"
 ```
 
-Players stay connected. The mod webserver restarts and re-registers all handlers. No container restart, no cache purge, no NixOS deploy needed.
+> [!WARNING]
+> For the **main server** on `asean-mt-server`, use `root@asean-mt-server` and `/var/lib/motortown-server/` paths. Never call the main server's mod port directly from your local machine — always SSH to the host first.
+
+Players stay connected. The mod webserver restarts and re-registers all handlers. No service restart, no cache purge, no NixOS deploy needed.
 
 ### Client-side hot reload
 
@@ -355,47 +365,44 @@ Currently, CI only builds the **server** mod. A separate job or conditional matr
 
 ## File Locations on Server
 
+| Server | Host | State Directory |
+|--------|------|-----------------|
+| Test server | `amc-peripheral` | `/var/lib/motortown-server/` |
+| Main server | `asean-mt-server` | `/var/lib/motortown-server/` |
+
+Common subdirectories (under state directory):
+
 | Path | Description |
 |------|-------------|
-| `/var/lib/motortown-server-test/` | Test server state directory |
-| `/var/lib/motortown-server/` | Main server state directory |
-| `…/MotorTown/Binaries/Win64/ue4ss/` | Installed UE4SS + mod files |
-| `…/MotorTown/Binaries/Win64/ue4ss/UE4SS.log` | UE4SS log file |
-| `…/.mod-cache/` | Cached mod downloads |
+| `MotorTown/Binaries/Win64/ue4ss/` | Installed UE4SS + mod files |
+| `MotorTown/Binaries/Win64/ue4ss/UE4SS.log` | UE4SS log file |
+| `.mod-cache/` | Cached mod downloads |
 
-## Test Server Networking
+## Test Server Access
 
-The test server runs inside a NixOS container (`motortown-server-test`) on a **private network** (`10.250.0.x`). The container's IP can be found via:
-
-```bash
-ssh root@asean-mt-server "machinectl list"
-# → motortown-server-test  container systemd-nspawn nixos 25.05  10.250.0.2…
-```
+The test server runs directly on `amc-peripheral` (bare-metal, no container).
 
 ### Port Access
 
 | Port | Service | Access Pattern |
 |------|---------|---------------|
-| 5000 | C++ management server (events) | Container-internal only: `curl http://10.250.0.2:5000/events` from host |
-| 5001 | Lua webserver (HTTP endpoints) | Container-internal only: `curl http://10.250.0.2:5001/...` from host |
-
-> [!CAUTION]
-> The C++ management port (`MOD_MANAGEMENT_PORT`) is set to `5010` in `flake.nix` for the test server container, but the server actually binds to **port 5000** inside the private container network. The `5010` value is the environment variable — check the actual binding in `UE4SS.log`. Always query from the host via the container's private IP (`10.250.0.2:5000`), **not** via `asean-mt-server:5010` (which is unreachable from Tailscale).
+| 5000 | C++ management server (events) | `ssh root@amc-peripheral "curl -s http://localhost:5000/events"` |
+| 5001 | Lua webserver (HTTP endpoints) | `ssh root@amc-peripheral "curl -s http://localhost:5001/..."` |
 
 ### Checking events from the test server
 
 ```bash
-# From your local machine (SSH to host, curl from there):
-ssh root@asean-mt-server "curl -s http://10.250.0.2:5000/events" | jq '.events[]'
+# From your local machine (SSH to host):
+ssh root@amc-peripheral "curl -s http://localhost:5000/events" | jq '.events[]'
 
 # For the Lua webserver:
-ssh root@asean-mt-server "curl -s http://10.250.0.2:5001/players"
+ssh root@amc-peripheral "curl -s http://localhost:5001/players"
 ```
 
 ### Checking UE4SS logs
 
 ```bash
-ssh root@asean-mt-server "grep 'MotorTownMods' /var/lib/motortown-server-test/MotorTown/Binaries/Win64/ue4ss/UE4SS.log | tail -20"
+ssh root@amc-peripheral "grep 'MotorTownMods' /var/lib/motortown-server/MotorTown/Binaries/Win64/ue4ss/UE4SS.log | tail -20"
 ```
 
 ## External Mod Paks
@@ -426,11 +433,88 @@ enableExternalMods = {
 The server caches downloaded paks in `$STATE_DIRECTORY/.mod-cache/paks/`. When replacing a pak file on the hosting server, purge the cache and restart:
 
 ```bash
-ssh root@asean-mt-server "\
-  rm -rf /var/lib/motortown-server/.mod-cache/paks/ && \
-  rm -rf /var/lib/motortown-server-test/.mod-cache/paks/"
-# Then restart the relevant server/container
+ssh root@amc-peripheral "rm -rf /var/lib/motortown-server/.mod-cache/paks/"
+ssh root@asean-mt-server "rm -rf /var/lib/motortown-server/.mod-cache/paks/"
+# Then restart the relevant server
 ```
+
+## Game Server API Reference
+
+The Motor Town game server exposes a native HTTP API (port 8081, password configured via `HostWebAPIServerPassword` in `DedicatedServerConfig`). All endpoints accept a `password` query parameter.
+
+### Checking delivery points and storage (recipes)
+
+Use `/delivery/sites` to inspect delivery point inventory, production, and cargo types. This is useful for verifying new recipes, mod pak changes, or storage configs.
+
+```bash
+# All delivery sites (verbose)
+ssh root@amc-peripheral 'curl -s "http://localhost:8081/delivery/sites?password=" | python3 -m json.tool'
+
+# Find a specific site by name
+ssh root@amc-peripheral 'curl -s "http://localhost:8081/delivery/sites?password=" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for site in data.get(\"data\", {}).values():
+    name = site.get(\"name\", \"\")
+    if \"copper\" in name.lower():
+        print(f\"=== {name} ===\")
+        print(json.dumps(site, indent=2))
+"'
+
+# Check output inventory (production) at a site
+ssh root@amc-peripheral 'curl -s "http://localhost:8081/delivery/sites?password=" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for site in data.get(\"data\", {}).values():
+    output = site.get(\"OutputInventory\", {})
+    if output:
+        name = site.get(\"name\", \"\")
+        for slot in output.values():
+            cargo = slot.get(\"cargo\", {})
+            print(f\"{name}: {slot.get(\\\"amount\\\", 0)}x {cargo.get(\\\"name\\\", \\\"?\\\")} ({cargo.get(\\\"cargo_key\\\", \\\"?\\\")})\")
+"'
+
+# Check input inventory (requirements) at a site
+ssh root@amc-peripheral 'curl -s "http://localhost:8081/delivery/sites?password=" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for site in data.get(\"data\", {}).values():
+    inp = site.get(\"InputInventory\", {})
+    if inp:
+        name = site.get(\"name\", \"\")
+        for slot in inp.values():
+            cargo = slot.get(\"cargo\", {})
+            print(f\"{name}: needs {slot.get(\\\"amount\\\", 0)}x {cargo.get(\\\"name\\\", \\\"?\\\")} ({cargo.get(\\\"cargo_key\\\", \\\"?\\\")})\")
+"'
+```
+
+Key fields in `/delivery/sites` response:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Delivery point display name (e.g. "Copper Mine -G") |
+| `guid` | Unique identifier for the site |
+| `Deliveries` | Active delivery missions from this site |
+| `InputInventory` | Items the site consumes (production inputs) |
+| `OutputInventory` | Items the site produces (with current `amount` and `capacity`) |
+| `OutputInventory[].cargo.cargo_key` | Internal cargo key (e.g. `"Moonshine"`, `"CopperOre"`) |
+| `OutputInventory[].amount` | Current stock of that cargo type |
+| `OutputInventory[].cargo.spawn_probability` | Likely a production chance (0–10 scale) |
+
+### Other useful endpoints
+
+```bash
+# Player list (native API)
+ssh root@amc-peripheral 'curl -s "http://localhost:8081/player/list?password=" | python3 -m json.tool'
+
+# Mod API (port 5001) - delivery points with more detail
+ssh root@amc-peripheral 'curl -s "http://localhost:5001/delivery/points" | python3 -m json.tool'
+
+# Player vehicles and cargo
+ssh root@amc-peripheral 'curl -s "http://localhost:5001/players" | python3 -m json.tool'
+```
+
+For the **main server** on `asean-mt-server`, replace `localhost:8081` with `localhost:8080` and `localhost:5001` with `localhost:5001` (same ports, different host).
 
 ## Version History
 
