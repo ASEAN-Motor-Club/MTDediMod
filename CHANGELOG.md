@@ -15,7 +15,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 - Chat dedup between webhook and log pipelines: webhook-processed messages are skipped in the log handler via cache-based dedup
 
 #### Changed
-- Muted players' chat is now redirected from Normal (0) to SmallArea (7) instead of Company (2)
+- Muted players' chat is now redirected based on mute type: soft mute → SmallArea (7), hard mute → Company (2)
+- `MuteFor` parameter replaces `MuteUntil` in the mute endpoint payload (input is a duration, not a timestamp)
+- `Hard` boolean parameter added to mute endpoint — defaults to false (soft mute)
 - Removed `ChatManager.lua` `RegisterEventHook("ServerSendChat", ...)` — event emission is now handled by the Lua `ServerSendChat` hook directly via `EnqueueWebhookEvent`
 
 ### [server/v0.37.3] — 2026-04-20

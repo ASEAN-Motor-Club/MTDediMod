@@ -57,23 +57,25 @@ local function GetPlayerStates(uniqueId)
 
   local playerStates = gameState.PlayerArray
 
-  LogOutput("DEBUG", "%i player state(s) found", #playerStates)
-
-  for i = 1, #gameState.PlayerArray, 1 do
-    local playerState = gameState.PlayerArray[i]
-    if playerState:IsValid() then
-      ---@cast playerState AMotorTownPlayerState
-
-      local data = PlayerStateToTable(playerState)
-
-      -- Filter by uniqueId if provided
-      if uniqueId and uniqueId ~= data.UniqueID then goto continue end
-
-      table.insert(arr, data)
-
-      ::continue::
+  if uniqueId then
+    for i = 1, #playerStates, 1 do
+      local playerState = playerStates[i]
+      if playerState:IsValid() then
+        if GetUniqueNetIdAsString(playerState) == uniqueId then
+          table.insert(arr, PlayerStateToTable(playerState))
+          break
+        end
+      end
+    end
+  else
+    for i = 1, #playerStates, 1 do
+      local playerState = playerStates[i]
+      if playerState:IsValid() then
+        table.insert(arr, PlayerStateToTable(playerState))
+      end
     end
   end
+
   return arr
 end
 
@@ -230,24 +232,32 @@ end
 
 local mutedPlayers = {}
 
-local function IsPlayerMuted(uniqueId)
-  local muteUntil = mutedPlayers[uniqueId]
-  if muteUntil == nil then return false end
-  if muteUntil == true or muteUntil == "permanent" then return true end
+local MUTE_CATEGORY_SOFT = 7
+local MUTE_CATEGORY_HARD = 2
+
+local function GetMuteInfo(uniqueId)
+  local entry = mutedPlayers[uniqueId]
+  if entry == nil then return nil end
+  local muteUntil = entry.expiry
+  if muteUntil == true or muteUntil == "permanent" then return entry end
   if type(muteUntil) == "number" then
-    if muteUntil <= 0 then return true end
+    if muteUntil <= 0 then return entry end
     if os.time() >= muteUntil then
       mutedPlayers[uniqueId] = nil
-      return false
+      return nil
     end
-    return true
+    return entry
   end
-  return false
+  return nil
 end
 
-local function MutePlayer(uniqueId, muteUntil)
-  mutedPlayers[uniqueId] = muteUntil
-  LogOutput("INFO", "Player %s muted until %s", uniqueId, tostring(muteUntil))
+local function IsPlayerMuted(uniqueId)
+  return GetMuteInfo(uniqueId) ~= nil
+end
+
+local function MutePlayer(uniqueId, muteUntil, hard)
+  mutedPlayers[uniqueId] = { expiry = muteUntil, hard = hard }
+  LogOutput("INFO", "Player %s muted until %s (hard=%s)", uniqueId, tostring(muteUntil), tostring(hard))
 end
 
 local function UnmutePlayer(uniqueId)
@@ -258,7 +268,8 @@ end
 local function GetMutedPlayers()
   local result = {}
   local now = os.time()
-  for uniqueId, muteUntil in pairs(mutedPlayers) do
+  for uniqueId, entry in pairs(mutedPlayers) do
+    local muteUntil = entry.expiry
     local expired = false
     if type(muteUntil) == "number" and muteUntil > 0 and now >= muteUntil then
       mutedPlayers[uniqueId] = nil
@@ -268,6 +279,7 @@ local function GetMutedPlayers()
       table.insert(result, {
         UniqueID = uniqueId,
         MuteUntil = muteUntil,
+        Hard = entry.hard,
       })
     end
   end
@@ -275,17 +287,31 @@ local function GetMutedPlayers()
 end
 
 RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", function(PC, Message, Category)
+  LogOutput("INFO", "ServerSendChat hook CALLBACK INVOKED")
+  LogOutput("INFO", "ServerSendChat hook CALLBACK INVOKED PC type=%s", type(PC))
+
   local playerController = PC:get()
-  if not playerController:IsValid() then return end
+  if not playerController:IsValid() then
+    LogOutput("WARN", "ServerSendChat: playerController invalid")
+    return
+  end
   local playerState = playerController.PlayerState
-  if not playerState:IsValid() then return end
+  if not playerState:IsValid() then
+    LogOutput("WARN", "ServerSendChat: playerState invalid")
+    return
+  end
 
   local uniqueId = GetUniqueNetIdAsString(playerState)
-  if not uniqueId then return end
+  if not uniqueId then
+    LogOutput("WARN", "ServerSendChat: uniqueId nil")
+    return
+  end
 
   local characterGuid = GuidToString(playerState.CharacterGuid)
   local messageStr = Message:get():ToString()
   local categoryVal = Category:get()
+
+  LogOutput("INFO", "ServerSendChat: player=%s msg=%s cat=%d guid=%s", uniqueId, messageStr, categoryVal, characterGuid)
 
   local ok = EnqueueWebhookEvent("ServerSendChat", json.stringify({
     Message = messageStr,
@@ -293,12 +319,14 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", funct
     CharacterGuid = characterGuid,
     UniqueID = uniqueId,
   }))
+  LogOutput("INFO", "EnqueueWebhookEvent result: %s", tostring(ok))
 
-  if IsPlayerMuted(uniqueId) then
-    if categoryVal == 0 then
-      Category:set(7)
-      LogOutput("DEBUG", "Muted player %s: redirected chat from Normal to SmallArea", uniqueId)
-    end
+  local muteInfo = GetMuteInfo(uniqueId)
+  LogOutput("INFO", "GetMuteInfo(%s) = %s", uniqueId, tostring(muteInfo ~= nil))
+  if muteInfo and categoryVal == 0 then
+    local redirectCategory = muteInfo.hard and MUTE_CATEGORY_HARD or MUTE_CATEGORY_SOFT
+    Category:set(redirectCategory)
+    LogOutput("INFO", "Muted player %s: redirected chat from Normal to %s", uniqueId, muteInfo.hard and "Company" or "SmallArea")
   end
 end)
 
@@ -310,13 +338,18 @@ local function HandleMutePlayer(session)
 
   local data = json.parse(session.content)
   if data then
-    local muteUntil = data.MuteUntil
-    if muteUntil == nil or muteUntil == false then
+    local muteFor = data.MuteFor
+    if muteFor == nil or muteFor == false then
       UnmutePlayer(playerId)
       return json.stringify { status = "unmuted" }, nil, 200
     end
-    MutePlayer(playerId, muteUntil)
-    return json.stringify { status = "muted", MuteUntil = muteUntil }, nil, 200
+    local muteUntil = muteFor
+    if type(muteUntil) == "number" and muteUntil > 0 and muteUntil < 1000000000 then
+      muteUntil = os.time() + muteUntil
+    end
+    local hard = data.Hard == true
+    MutePlayer(playerId, muteUntil, hard)
+    return json.stringify { status = "muted", MuteUntil = muteUntil, Hard = hard }, nil, 200
   end
   return json.stringify { error = "Invalid payload" }, nil, 400
 end
