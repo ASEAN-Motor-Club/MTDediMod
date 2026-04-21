@@ -574,7 +574,7 @@ end
 
 ---Depth counter for re-entrant ExecuteInGameThreadSync calls.
 ---When > 0 we are already inside a game-thread dispatch and can call inline.
-local _gameThreadDepth = 0
+_G._gameThreadDepth = 0
 
 ---Execute the given function on the game thread and block until it completes.
 ---
@@ -588,7 +588,7 @@ local _gameThreadDepth = 0
 ---@param maxMs number? Upper bound in ms for the async wait (default 1000)
 ---@return boolean completed true if the function completed within maxMs
 function ExecuteInGameThreadSync(exec, label, maxMs)
-  if _gameThreadDepth > 0 then
+  if _G._gameThreadDepth > 0 then
     -- Already on the game thread (nested call inside a dispatched handler)
     exec()
     return true
@@ -600,9 +600,9 @@ function ExecuteInGameThreadSync(exec, label, maxMs)
   local execOk, execErr = true, nil
 
   ExecuteInGameThread(function()
-    _gameThreadDepth = _gameThreadDepth + 1
+    _G._gameThreadDepth = _G._gameThreadDepth + 1
     execOk, execErr = pcall(exec)
-    _gameThreadDepth = _gameThreadDepth - 1
+    _G._gameThreadDepth = _G._gameThreadDepth - 1
     isProcessing = false
     if not execOk then
       LogOutput("ERROR", "ExecuteInGameThreadSync error: %s", execErr)

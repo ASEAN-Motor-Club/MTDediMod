@@ -6,7 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
-### [server/v0.38.0-rc1] — 2026-04-21
+### [server/v0.38.0-rc2] — 2026-04-21
+
+#### Fixed
+- Deadlock when handlers internally call `ExecuteInGameThreadSync` after central game-thread dispatch — `_gameThreadDepth` is now incremented in the webserver's `ExecuteInGameThread` callback so nested calls execute inline
 
 #### Changed
 - Restored real `ExecuteInGameThreadSync` with `_gameThreadDepth` re-entrancy detection to prevent deadlocks in nested dispatch
