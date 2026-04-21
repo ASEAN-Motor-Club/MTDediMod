@@ -1639,41 +1639,129 @@ auto MotorTownMods::on_lua_start(
 		return 1;
 		});
 
-	// EnqueueWebhookEvent(event_name, json_str) -> bool
+	// Forward declarations for Lua-table-to-JSON conversion
+	static json::value lua_value_to_json(lua_State* L, int idx);
+	static json::value lua_table_to_json_value(lua_State* L, int table_idx);
+
+	static json::value lua_table_to_json_value(lua_State* L, int table_idx)
+	{
+		int abs_idx = lua_absindex(L, table_idx);
+
+		// First pass: determine if this is an array (consecutive integer keys starting from 1)
+		bool is_array = true;
+		lua_Integer expected_key = 1;
+		lua_Integer array_len = 0;
+
+		lua_pushnil(L);
+		while (lua_next(L, abs_idx) != 0) {
+			if (lua_type(L, -2) != LUA_TNUMBER || !lua_isinteger(L, -2) || lua_tointeger(L, -2) != expected_key) {
+				is_array = false;
+				lua_pop(L, 2); // pop value and key
+				break;
+			}
+			expected_key++;
+			array_len++;
+			lua_pop(L, 1); // pop value, keep key for lua_next
+		}
+
+		if (is_array && array_len > 0) {
+			json::array arr;
+
+			lua_pushnil(L);
+			while (lua_next(L, abs_idx) != 0) {
+				arr.push_back(lua_value_to_json(L, -1));
+				lua_pop(L, 1); // pop value
+			}
+
+			return arr;
+		} else {
+			json::object obj;
+
+			lua_pushnil(L);
+			while (lua_next(L, abs_idx) != 0) {
+				std::string key;
+				int key_type = lua_type(L, -2);
+				if (key_type == LUA_TSTRING) {
+					key = lua_tostring(L, -2);
+				} else if (key_type == LUA_TNUMBER && lua_isinteger(L, -2)) {
+					key = std::to_string(lua_tointeger(L, -2));
+				} else {
+					lua_pop(L, 1);
+					continue;
+				}
+
+				obj[key] = lua_value_to_json(L, -1);
+				lua_pop(L, 1); // pop value
+			}
+
+			return obj;
+		}
+	}
+
+	static json::value lua_value_to_json(lua_State* L, int idx)
+	{
+		int abs_idx = lua_absindex(L, idx);
+		int type = lua_type(L, abs_idx);
+
+		switch (type) {
+		case LUA_TNIL:
+			return json::value();
+		case LUA_TBOOLEAN:
+			return json::value(static_cast<bool>(lua_toboolean(L, abs_idx)));
+		case LUA_TNUMBER:
+			if (lua_isinteger(L, abs_idx)) {
+				return json::value(lua_tointeger(L, abs_idx));
+			}
+			return json::value(lua_tonumber(L, abs_idx));
+		case LUA_TSTRING: {
+			const char* str = lua_tostring(L, abs_idx);
+			return json::string(str ? str : "");
+		}
+		case LUA_TTABLE:
+			return lua_table_to_json_value(L, abs_idx);
+		default:
+			return json::value();
+		}
+	}
+
+	// EnqueueWebhookEvent(event_name, data_table) -> bool
 	// Emits a Lua-constructed event directly into the C++ EventManager SSE/webhook pipeline.
+	// Accepts a Lua table instead of a JSON string, avoiding the serialize/parse roundtrip.
 	lua.register_function("EnqueueWebhookEvent", [](const LuaMadeSimple::Lua& lua_net) -> int {
 		if (lua_net.get_stack_size() < 2) {
-			lua_net.throw_error("EnqueueWebhookEvent requires 2 arguments: event_name, json_str");
+			lua_net.throw_error("EnqueueWebhookEvent requires 2 arguments: event_name, data_table");
 		}
 
 		std::string event_name = std::string(lua_net.get_string());
-		std::string json_str = std::string(lua_net.get_string());
 
-		try {
-			json::value parsed = json::parse(json_str);
-			if (!parsed.is_object()) {
-				Output::send<LogLevel::Warning>(STR("EnqueueWebhookEvent: json_str must be a JSON object\n"));
-				lua_net.set_bool(false);
-				return 1;
-			}
+		lua_State* L = lua_net.get_lua_state();
 
-			json::object event_data = parsed.as_object();
-
-			json::object event_payload;
-			event_payload["hook"] = json::string(event_name);
-			event_payload["timestamp"] = static_cast<int64_t>(std::time(nullptr));
-			event_payload["data"] = std::move(event_data);
-
-			EventManager::Get().AddEvent(std::move(event_payload));
-
-			Output::send<LogLevel::Verbose>(STR("EnqueueWebhookEvent: queued event '{}'\n"), to_wstring(event_name));
-			lua_net.set_bool(true);
-			return 1;
-		} catch (const std::exception& e) {
-			Output::send<LogLevel::Warning>(STR("EnqueueWebhookEvent: JSON parse error: {}\n"), to_wstring(e.what()));
+		if (!lua_istable(L, 1)) {
+			Output::send<LogLevel::Warning>(STR("EnqueueWebhookEvent: second argument must be a table\n"));
+			lua_pop(L, 1); // pop the non-table argument
 			lua_net.set_bool(false);
 			return 1;
 		}
+
+		json::value data = lua_table_to_json_value(L, 1);
+		lua_pop(L, 1); // pop table
+
+		if (!data.is_object()) {
+			Output::send<LogLevel::Warning>(STR("EnqueueWebhookEvent: data must be a JSON object\n"));
+			lua_net.set_bool(false);
+			return 1;
+		}
+
+		json::object event_payload;
+		event_payload["hook"] = json::string(event_name);
+		event_payload["timestamp"] = static_cast<int64_t>(std::time(nullptr));
+		event_payload["data"] = std::move(data.as_object());
+
+		EventManager::Get().AddEvent(std::move(event_payload));
+
+		Output::send<LogLevel::Verbose>(STR("EnqueueWebhookEvent: queued event '{}'\n"), to_wstring(event_name));
+		lua_net.set_bool(true);
+		return 1;
 	});
 
 	lua.register_function("AddPoliceSuspect", [](const LuaMadeSimple::Lua& lua_net) -> int {

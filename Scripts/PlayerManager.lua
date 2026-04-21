@@ -313,12 +313,12 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", funct
 
   LogOutput("INFO", "ServerSendChat: player=%s msg=%s cat=%d guid=%s", uniqueId, messageStr, categoryVal, characterGuid)
 
-  local ok = EnqueueWebhookEvent("ServerSendChat", json.stringify({
+  local ok = EnqueueWebhookEvent("ServerSendChat", {
     Message = messageStr,
     Category = categoryVal,
     CharacterGuid = characterGuid,
     UniqueID = uniqueId,
-  }))
+  })
   LogOutput("INFO", "EnqueueWebhookEvent result: %s", tostring(ok))
 
   local muteInfo = GetMuteInfo(uniqueId)

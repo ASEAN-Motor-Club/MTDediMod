@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0] — 2026-04-21
+
+#### Changed
+- `EnqueueWebhookEvent` now accepts a Lua table directly instead of a JSON string, eliminating the Lua→C++ serialize/parse roundtrip that previously blocked the game thread
+
 ### [server/v0.37.5] — 2026-04-20
 
 #### Changed
