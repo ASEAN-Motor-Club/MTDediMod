@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc5] — 2026-04-21
+
+#### Changed
+- Unified async dispatch for all HTTP methods (GET/HEAD/POST/PUT/PATCH/DELETE) — all requests now use fire-and-forget `ExecuteInGameThread` with `pendingResponse` polled by the async thread
+- Global request throttle (`maxInFlight`/`inFlight`) replaces the previous GET-only throttle, applying to all methods equally
+
+#### Removed
+- `ExecuteInGameThreadSync2` blocking spin-wait path for mutating HTTP methods — no longer needed since all dispatch is now async
+
 ### [server/v0.38.0-rc4] — 2026-04-21
 
 #### Fixed
