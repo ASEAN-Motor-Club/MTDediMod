@@ -794,7 +794,7 @@
                 maxFps = 30;
                 restartSchedule = "3000-01-01 00:00:00";
                 betaBranch = "beta";
-                modVersion = "server-v0.38.0-rc2";
+                modVersion = "server-v0.38.0-rc3";
                 enableExternalMods = {
                   CarPartsImport_P = false;
                   MoneyRun_P = false;

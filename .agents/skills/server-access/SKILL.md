@@ -118,3 +118,38 @@ The `amc-worker` process runs `arq` which:
 1. Check worker status and recent logs
 2. Look for Python exceptions in journal
 3. Restart if needed
+
+---
+
+## Local Development — Running Tests
+
+> [!NOTE]
+> The pre-push git hook only runs **ruff** (fast linting). Pytest must be run manually before pushing.
+
+### amc-backend
+
+Tests require a local PostgreSQL instance. The `.envrc` in `amc-backend/` starts one automatically via `layout_postgres`.
+
+```bash
+cd amc-server/amc-backend
+direnv exec . python -m pytest <path-to-test-file> -x -q
+```
+
+**Key points:**
+- Always use `direnv exec .` — it loads `PGHOST`, `PGDATA`, and `DJANGO_SETTINGS_MODULE` from `.envrc` + the Nix dev shell. Running pytest directly (without direnv) will fail with "settings not configured" or "cannot connect to database".
+- Do **not** use `--ds=amc_backend.settings` manually; `DJANGO_SETTINGS_MODULE` is already set by `.envrc`.
+- The local DB is a throw-away PostgreSQL socket at `.direnv/postgres/`. Tests create and tear down their own schema.
+
+Example:
+```bash
+direnv exec . python -m pytest src/amc/test_auction_api.py src/amc/test_auction_escrow.py -x -q
+```
+
+### amc-peripheral
+
+Tests use SQLite in-memory — no database required:
+
+```bash
+cd amc-server/amc-peripheral
+direnv exec . pytest tests/ -q
+```

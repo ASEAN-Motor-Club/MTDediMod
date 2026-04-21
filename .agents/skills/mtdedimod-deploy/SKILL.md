@@ -40,6 +40,34 @@ client/v0.1.0         # client mod releases
 | Shared Lua change (`shared/`) | bump both | bump both |
 | Config-only tweak | bump RC on affected side | — |
 
+### Experimental tags
+
+Exploratory builds that live on `exp/*` branches and are **never promoted to production**. The pattern is:
+
+```
+server/v<version>-exp.<topic>.<N>
+```
+
+- **`<version>`** — the target base version (what it would become if merged to `main`)
+- **`<topic>`** — short slug identifying the experiment branch (e.g. `cargo-rewrite`, `live-fuel`)
+- **`<N>`** — sequential build number within that experiment
+
+Examples:
+
+```
+server/v0.35.0-exp.cargo-rewrite.1     # branch: exp/cargo-rewrite
+server/v0.35.0-exp.live-fuel.1         # branch: exp/live-fuel
+server/v0.35.0-exp.live-fuel.2         # second iteration of same experiment
+```
+
+Rules:
+- Experimental tags live on `exp/*` branches, **not** `main`
+- They are never promoted to production — when the experiment is ready, squash/cherry-pick onto `main` and tag as `-rc1` (fresh sequence)
+- Different branches never collide — the topic slug is unique per experiment
+- If two experiments both make it to `main`, the second one bumps to `0.36.0-rc1`
+- Experimental tags can be deleted later (`git tag -d` + `git push origin :refs/tags/...`)
+- Changelog entries for experimental builds are optional but if used, go under an `### Experimental` subsection
+
 ### Listing existing tags
 
 ```bash
@@ -227,6 +255,80 @@ When a test RC is validated and ready for the main server:
    ssh root@asean-mt-server "systemctl restart motortown-server"
    ```
 4. No new tag needed — the RC tag already tracks the code
+
+---
+
+## Experimental Server Release Workflow
+
+For exploratory builds on `exp/*` branches that are **not** destined for production.
+
+### 1. Create an experiment branch
+
+```bash
+cd MTDediMod
+git checkout -b exp/cargo-rewrite
+```
+
+### 2. Commit changes and tag
+
+```bash
+git add -A && git commit
+git tag server/v0.35.0-exp.cargo-rewrite.1
+```
+
+### 3. Build and package (same as normal server release)
+
+```bash
+nix run .#configure   # If not already configured
+nix run .#build
+nix run .#package
+```
+
+### 4. Upload to the release server
+
+```bash
+scp MotorTownMods-package.zip root@amc-peripheral:/var/lib/mod-releases/MotorTownMods_server-v0.35.0-exp.cargo-rewrite.1.zip
+```
+
+### 5. Set the version in Nix config (test server only)
+
+```nix
+modVersion = "server-v0.35.0-exp.cargo-rewrite.1";
+```
+
+### 6. Deploy and restart (test server only)
+
+```bash
+deploy root@amc-peripheral
+# Then purge cache and restart as usual (see Server Mod Release Workflow step 7)
+```
+
+### 7. Push the branch and tag
+
+```bash
+git push -u origin exp/cargo-rewrite
+git push origin server/v0.35.0-exp.cargo-rewrite.1
+```
+
+### Iterating on the same experiment
+
+Subsequent builds increment the sequence number:
+
+```bash
+git tag server/v0.35.0-exp.cargo-rewrite.2
+nix run .#build && nix run .#package
+scp MotorTownMods-package.zip root@amc-peripheral:/var/lib/mod-releases/MotorTownMods_server-v0.35.0-exp.cargo-rewrite.2.zip
+# Update modVersion in flake.nix, deploy, restart
+```
+
+### Promoting an experiment to production
+
+When the experiment is ready:
+
+1. Squash or cherry-pick onto `main`
+2. Tag as `-rc1` on `main`: `git tag server/v0.35.0-rc1`
+3. Build, package, and follow the normal Server Mod Release Workflow
+4. Delete the experimental branch and tags if desired
 
 ---
 
@@ -526,3 +628,4 @@ For the **main server** on `asean-mt-server`, replace `localhost:8081` with `loc
 | `v0.31.0+` | v5 | Hosted on aseanmotorclub.com (legacy `v*` tags) |
 | `server/v0.34.0-rc5` | v5 | First tag under new `server/` prefix scheme |
 | `client/v0.1.0` | v5 | First tag under new `client/` prefix scheme |
+| `server/v0.35.0-exp.cargo-rewrite.1` | v5 | First experimental tag (example) |
