@@ -441,9 +441,7 @@ local function dispatchSession(s)
     if s.method == "GET" or s.method == "HEAD" then
         -- Fire-and-forget: queue handler to game thread, async thread will poll pendingResponse
         ExecuteInGameThread(function()
-            _G._gameThreadDepth = _G._gameThreadDepth + 1
             local ok, content, mime, code = pcall(processSession, s)
-            _G._gameThreadDepth = _G._gameThreadDepth - 1
             if ok then
                 s.pendingResponse = { content = content, mime = mime, code = code }
             else
