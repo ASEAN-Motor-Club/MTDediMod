@@ -2523,40 +2523,13 @@ local function HandleSpawnVehicle(session)
         end
       end
 
-      if content.parts ~= nil then
-        local ok, err = pcall(function()
-          if not vehicle:IsValid() then
-            LogOutput("WARN", "Vehicle no longer valid when setting parts")
-            return
-          end
-          if not vehicle.Net_Parts:IsValid() then
-            LogOutput("WARN", "Vehicle Net_Parts not valid when setting parts")
-            return
-          end
-          LogOutput("INFO", "Setting parts")
-          vehicle.Net_Parts:Empty()
-          for i, part in ipairs(content.parts) do
-            vehicle.Net_Parts[i] = TableToVehiclePart(part)
-            if part.StringValues ~= nil then
-              vehicle.Net_Parts[i].StringValues = part.StringValues
-            end
-            if part.FloatValues ~= nil then
-              vehicle.Net_Parts[i].FloatValues = part.FloatValues
-            end
-            if part.Int64Values ~= nil then
-              vehicle.Net_Parts[i].Int64Values = part.Int64Values
-            end
-            if part.VectorValues ~= nil then
-              vehicle.Net_Parts[i].VectorValues = part.VectorValues
-            end
-          end
-          vehicle:ServerSetParts(vehicle.Net_Parts)
-          LogOutput("INFO", "Parts set successfully")
-        end)
-        if not ok then
-          LogOutput("ERROR", "Failed to set parts: %s", tostring(err))
-        end
-      end
+      -- DISABLED: ExecuteInGameThreadWithDelay block for setting vehicle parts
+      -- is not working reliably. Parts setting is skipped for now.
+      -- if content.parts ~= nil then
+      --   ExecuteInGameThreadWithDelay(2000, function()
+      --     ...
+      --   end)
+      -- end
 
       return { data = { tag }, actor = vehicle:GetFullName() }
     else
