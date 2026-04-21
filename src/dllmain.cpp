@@ -1603,6 +1603,91 @@ auto MotorTownMods::on_unreal_init() -> void
 	);
 }
 
+// Forward declarations for Lua-table-to-JSON conversion
+static json::value lua_value_to_json(lua_State* L, int idx);
+static json::value lua_table_to_json_value(lua_State* L, int table_idx);
+
+static json::value lua_table_to_json_value(lua_State* L, int table_idx)
+{
+	int abs_idx = lua_absindex(L, table_idx);
+
+	// First pass: determine if this is an array (consecutive integer keys starting from 1)
+	bool is_array = true;
+	lua_Integer expected_key = 1;
+	lua_Integer array_len = 0;
+
+	lua_pushnil(L);
+	while (lua_next(L, abs_idx) != 0) {
+		if (lua_type(L, -2) != LUA_TNUMBER || !lua_isinteger(L, -2) || lua_tointeger(L, -2) != expected_key) {
+			is_array = false;
+			lua_pop(L, 2); // pop value and key
+			break;
+		}
+		expected_key++;
+		array_len++;
+		lua_pop(L, 1); // pop value, keep key for lua_next
+	}
+
+	if (is_array && array_len > 0) {
+		json::array arr;
+
+		lua_pushnil(L);
+		while (lua_next(L, abs_idx) != 0) {
+			arr.push_back(lua_value_to_json(L, -1));
+			lua_pop(L, 1); // pop value
+		}
+
+		return arr;
+	} else {
+		json::object obj;
+
+		lua_pushnil(L);
+		while (lua_next(L, abs_idx) != 0) {
+			std::string key;
+			int key_type = lua_type(L, -2);
+			if (key_type == LUA_TSTRING) {
+				key = lua_tostring(L, -2);
+			} else if (key_type == LUA_TNUMBER && lua_isinteger(L, -2)) {
+				key = std::to_string(lua_tointeger(L, -2));
+			} else {
+				lua_pop(L, 1);
+				continue;
+			}
+
+			obj[key] = lua_value_to_json(L, -1);
+			lua_pop(L, 1); // pop value
+		}
+
+		return obj;
+	}
+}
+
+static json::value lua_value_to_json(lua_State* L, int idx)
+{
+	int abs_idx = lua_absindex(L, idx);
+	int type = lua_type(L, abs_idx);
+
+	switch (type) {
+	case LUA_TNIL:
+		return json::value();
+	case LUA_TBOOLEAN:
+		return json::value(static_cast<bool>(lua_toboolean(L, abs_idx)));
+	case LUA_TNUMBER:
+		if (lua_isinteger(L, abs_idx)) {
+			return json::value(lua_tointeger(L, abs_idx));
+		}
+		return json::value(lua_tonumber(L, abs_idx));
+	case LUA_TSTRING: {
+		const char* str = lua_tostring(L, abs_idx);
+		return json::string(str ? str : "");
+	}
+	case LUA_TTABLE:
+		return lua_table_to_json_value(L, abs_idx);
+	default:
+		return json::value();
+	}
+}
+
 auto MotorTownMods::on_lua_start(
 	LuaMadeSimple::Lua& lua,
 	LuaMadeSimple::Lua& main_lua,
@@ -1638,91 +1723,6 @@ auto MotorTownMods::on_lua_start(
 
 		return 1;
 		});
-
-	// Forward declarations for Lua-table-to-JSON conversion
-	static json::value lua_value_to_json(lua_State* L, int idx);
-	static json::value lua_table_to_json_value(lua_State* L, int table_idx);
-
-	static json::value lua_table_to_json_value(lua_State* L, int table_idx)
-	{
-		int abs_idx = lua_absindex(L, table_idx);
-
-		// First pass: determine if this is an array (consecutive integer keys starting from 1)
-		bool is_array = true;
-		lua_Integer expected_key = 1;
-		lua_Integer array_len = 0;
-
-		lua_pushnil(L);
-		while (lua_next(L, abs_idx) != 0) {
-			if (lua_type(L, -2) != LUA_TNUMBER || !lua_isinteger(L, -2) || lua_tointeger(L, -2) != expected_key) {
-				is_array = false;
-				lua_pop(L, 2); // pop value and key
-				break;
-			}
-			expected_key++;
-			array_len++;
-			lua_pop(L, 1); // pop value, keep key for lua_next
-		}
-
-		if (is_array && array_len > 0) {
-			json::array arr;
-
-			lua_pushnil(L);
-			while (lua_next(L, abs_idx) != 0) {
-				arr.push_back(lua_value_to_json(L, -1));
-				lua_pop(L, 1); // pop value
-			}
-
-			return arr;
-		} else {
-			json::object obj;
-
-			lua_pushnil(L);
-			while (lua_next(L, abs_idx) != 0) {
-				std::string key;
-				int key_type = lua_type(L, -2);
-				if (key_type == LUA_TSTRING) {
-					key = lua_tostring(L, -2);
-				} else if (key_type == LUA_TNUMBER && lua_isinteger(L, -2)) {
-					key = std::to_string(lua_tointeger(L, -2));
-				} else {
-					lua_pop(L, 1);
-					continue;
-				}
-
-				obj[key] = lua_value_to_json(L, -1);
-				lua_pop(L, 1); // pop value
-			}
-
-			return obj;
-		}
-	}
-
-	static json::value lua_value_to_json(lua_State* L, int idx)
-	{
-		int abs_idx = lua_absindex(L, idx);
-		int type = lua_type(L, abs_idx);
-
-		switch (type) {
-		case LUA_TNIL:
-			return json::value();
-		case LUA_TBOOLEAN:
-			return json::value(static_cast<bool>(lua_toboolean(L, abs_idx)));
-		case LUA_TNUMBER:
-			if (lua_isinteger(L, abs_idx)) {
-				return json::value(lua_tointeger(L, abs_idx));
-			}
-			return json::value(lua_tonumber(L, abs_idx));
-		case LUA_TSTRING: {
-			const char* str = lua_tostring(L, abs_idx);
-			return json::string(str ? str : "");
-		}
-		case LUA_TTABLE:
-			return lua_table_to_json_value(L, abs_idx);
-		default:
-			return json::value();
-		}
-	}
 
 	// EnqueueWebhookEvent(event_name, data_table) -> bool
 	// Emits a Lua-constructed event directly into the C++ EventManager SSE/webhook pipeline.
