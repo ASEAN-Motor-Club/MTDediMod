@@ -153,11 +153,15 @@ git tag -l 'server/*' --sort=-v:refname | head -5
 git tag server/v0.34.0-rc5
 ```
 
-### 3. Build the mod
+### 3. Build the mod (C++ changes only)
+
+From the `MTDediMod` directory, check if C++ sources changed since the previous server tag. Only run the build if they did — Lua-only changes skip this step.
 
 ```bash
-nix run .#configure   # First time only — downloads MSVC headers via xwin
-nix run .#build       # Cross-compiles the C++ mod DLL
+cd MTDediMod
+
+PREV_TAG=$(git tag -l 'server/*' --sort=-v:refname | sed -n '2p')
+git diff --name-only "$PREV_TAG" HEAD | grep -q '^src/' && nix run .#build || echo "No C++ changes, skipping build"
 ```
 
 > [!WARNING]
@@ -166,6 +170,7 @@ nix run .#build       # Cross-compiles the C++ mod DLL
 ### 4. Package the zip
 
 ```bash
+cd MTDediMod
 nix run .#package
 # Output: MotorTownMods-package.zip
 ```
@@ -279,8 +284,11 @@ git tag server/v0.35.0-exp.cargo-rewrite.1
 ### 3. Build and package (same as normal server release)
 
 ```bash
-nix run .#configure   # If not already configured
-nix run .#build
+cd MTDediMod
+
+PREV_TAG=$(git tag -l 'server/*' --sort=-v:refname | sed -n '2p')
+git diff --name-only "$PREV_TAG" HEAD | grep -q '^src/' && nix run .#build || echo "No C++ changes, skipping build"
+
 nix run .#package
 ```
 
@@ -315,8 +323,14 @@ git push origin server/v0.35.0-exp.cargo-rewrite.1
 Subsequent builds increment the sequence number:
 
 ```bash
+cd MTDediMod
+
 git tag server/v0.35.0-exp.cargo-rewrite.2
-nix run .#build && nix run .#package
+
+PREV_TAG=$(git tag -l 'server/*' --sort=-v:refname | sed -n '2p')
+git diff --name-only "$PREV_TAG" HEAD | grep -q '^src/' && nix run .#build || echo "No C++ changes, skipping build"
+nix run .#package
+
 scp MotorTownMods-package.zip root@amc-peripheral:/var/lib/mod-releases/MotorTownMods_server-v0.35.0-exp.cargo-rewrite.2.zip
 # Update modVersion in flake.nix, deploy, restart
 ```
@@ -347,16 +361,21 @@ git tag -l 'client/*' --sort=-v:refname | head -5
 git tag client/v0.2.0
 ```
 
-### 3. Build the client mod
+### 3. Build the client mod (C++ changes only)
+
+From the `MTDediMod` directory, check if C++ sources changed since the previous client tag. Only run the build if they did.
 
 ```bash
-nix run .#configure-client   # First time only — cross-compiles UE4SS with dwmapi.dll proxy
-nix run .#build-client       # Cross-compiles the proxy DLL
+cd MTDediMod
+
+PREV_TAG=$(git tag -l 'client/*' --sort=-v:refname | sed -n '2p')
+git diff --name-only "$PREV_TAG" HEAD | grep -q '^src/' && nix run .#build-client || echo "No C++ changes, skipping build"
 ```
 
 ### 4. Package the client zip
 
 ```bash
+cd MTDediMod
 nix run .#package-client
 # Output: MotorTownClientMod-package.zip
 ```
@@ -394,10 +413,17 @@ When a commit touches both server and client code (e.g. changes in `shared/`):
 
 1. Commit and clean the tree
 2. Tag **both**: `git tag server/v0.35.0-rc1 && git tag client/v0.2.0`
-3. Build and package both:
+3. Build and package both from the `MTDediMod` directory:
    ```bash
-   nix run .#build && nix run .#package
-   nix run .#build-client && nix run .#package-client
+   cd MTDediMod
+
+   PREV_SERVER=$(git tag -l 'server/*' --sort=-v:refname | sed -n '2p')
+   git diff --name-only "$PREV_SERVER" HEAD | grep -q '^src/' && nix run .#build || echo "No C++ changes, skipping server build"
+   nix run .#package
+
+   PREV_CLIENT=$(git tag -l 'client/*' --sort=-v:refname | sed -n '2p')
+   git diff --name-only "$PREV_CLIENT" HEAD | grep -q '^src/' && nix run .#build-client || echo "No C++ changes, skipping client build"
+   nix run .#package-client
    ```
 4. Upload and deploy each artifact via its respective workflow above
 5. Push both tags: `git push origin server/v0.35.0-rc1 client/v0.2.0`
