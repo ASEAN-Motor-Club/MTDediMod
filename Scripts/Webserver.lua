@@ -453,7 +453,7 @@ local function dispatchSession(s)
     else
         -- Mutating method: block async thread until game thread completes
         local res = {}
-        local ok = ExecuteInGameThreadSync(function()
+        local ok = ExecuteInGameThreadSync2(function()
             res.content, res.mime, res.code = processSession(s)
         end, "Webserver.processSession", 5000)
         if not ok then

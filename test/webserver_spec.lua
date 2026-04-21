@@ -1,11 +1,11 @@
 -- Tests for Webserver.lua threading and dispatch logic
 --
 -- These tests verify:
---   1. ExecuteInGameThreadSync re-entrancy (inline passthrough when on game thread)
---   2. ExecuteInGameThreadSync async dispatch (spin-wait from async thread)
---   3. ExecuteInGameThreadSync timeout behavior
+--   1. ExecuteInGameThreadSync is a passthrough (executes inline)
+--   2. ExecuteInGameThreadSync2 async dispatch (spin-wait from async thread)
+--   3. ExecuteInGameThreadSync2 timeout behavior
 --   4. Webserver GET/HEAD dispatch uses fire-and-forget ExecuteInGameThread
---   5. Webserver POST/PUT/DELETE/PATCH dispatch uses blocking ExecuteInGameThreadSync
+--   5. Webserver POST/PUT/DELETE/PATCH dispatch uses blocking ExecuteInGameThreadSync2
 --   6. pendingResponse polling and JSON stringify on async thread
 
 -- ============================================================
@@ -59,24 +59,22 @@ require("Helpers")
 -- ============================================================
 
 describe("ExecuteInGameThreadSync", function()
-  it("executes inline when called from within a game-thread dispatch", function()
+  it("is a passthrough that executes inline", function()
     local executed = false
-    local nestedResult = nil
+    local result = nil
 
-    -- Simulate game thread dispatch: ExecuteInGameThread calls fn immediately
-    -- Inside that fn, _gameThreadDepth > 0, so ExecuteInGameThreadSync is inline
-    _G.ExecuteInGameThread(function()
-      local ok = _G.ExecuteInGameThreadSync(function()
-        executed = true
-        nestedResult = "nested_ok"
-      end, "nested_test", 1000)
+    local ok = _G.ExecuteInGameThreadSync(function()
+      executed = true
+      result = "inline_ok"
+    end, "passthrough_test", 1000)
 
-      assert.is_true(ok)
-      assert.is_true(executed)
-      assert.are.equal("nested_ok", nestedResult)
-    end)
+    assert.is_true(ok)
+    assert.is_true(executed)
+    assert.are.equal("inline_ok", result)
   end)
+end)
 
+describe("ExecuteInGameThreadSync2", function()
   it("uses ExecuteInGameThread + spin-wait when called from async thread", function()
     local executed = false
 
@@ -88,7 +86,7 @@ describe("ExecuteInGameThreadSync", function()
       fn()  -- simulate game thread executing immediately
     end
 
-    local ok = _G.ExecuteInGameThreadSync(function()
+    local ok = _G.ExecuteInGameThreadSync2(function()
       executed = true
     end, "async_test", 100)
 
@@ -107,7 +105,7 @@ describe("ExecuteInGameThreadSync", function()
       -- Intentionally do not call fn() — simulates stalled game thread
     end
 
-    local ok = _G.ExecuteInGameThreadSync(function()
+    local ok = _G.ExecuteInGameThreadSync2(function()
       error("should not execute")
     end, "timeout_test", 5)
 

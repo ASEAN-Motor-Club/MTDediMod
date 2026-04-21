@@ -572,40 +572,29 @@ function Sleep(ms)
   end
 end
 
----Depth counter for re-entrant ExecuteInGameThreadSync calls.
----When > 0 we are already inside a game-thread dispatch and can call inline.
-_G._gameThreadDepth = 0
-
 ---Execute the given function on the game thread and block until it completes.
 ---
----If called from the async thread, this queues the function via ExecuteInGameThread
----and spin-waits with socket.sleep until it finishes (or times out).
----If called from within a game-thread dispatch (e.g. a webserver handler that was
----centrally dispatched), it executes inline to avoid deadlock.
+---This is the "real" blocking implementation used by the webserver dispatch.
+---It queues the function via ExecuteInGameThread and spin-waits with socket.sleep
+---until it finishes (or times out).  It does NOT check _gameThreadDepth, so it
+---must never be called from inside a game-thread callback (use ExecuteInGameThreadSync
+---for that).
 ---
 ---@param exec fun() Function to execute
 ---@param label string? Label for timeout warnings
 ---@param maxMs number? Upper bound in ms for the async wait (default 1000)
 ---@return boolean completed true if the function completed within maxMs
-function ExecuteInGameThreadSync(exec, label, maxMs)
-  if _G._gameThreadDepth > 0 then
-    -- Already on the game thread (nested call inside a dispatched handler)
-    exec()
-    return true
-  end
-
+function ExecuteInGameThreadSync2(exec, label, maxMs)
   maxMs = maxMs or 1000
   local wait = 0
   local isProcessing = true
   local execOk, execErr = true, nil
 
   ExecuteInGameThread(function()
-    _G._gameThreadDepth = _G._gameThreadDepth + 1
     execOk, execErr = pcall(exec)
-    _G._gameThreadDepth = _G._gameThreadDepth - 1
     isProcessing = false
     if not execOk then
-      LogOutput("ERROR", "ExecuteInGameThreadSync error: %s", execErr)
+      LogOutput("ERROR", "ExecuteInGameThreadSync2 error: %s", execErr)
     end
   end)
 
@@ -615,8 +604,23 @@ function ExecuteInGameThreadSync(exec, label, maxMs)
   end
 
   if isProcessing then
-    LogOutput("WARN", "ExecuteInGameThreadSync timed out after %dms: %s", maxMs, label or "unknown")
+    LogOutput("WARN", "ExecuteInGameThreadSync2 timed out after %dms: %s", maxMs, label or "unknown")
     return false
   end
+  return true
+end
+
+---Execute the given function inline (passthrough).
+---
+---This is the safe version for use inside handler code that may already be
+---running on the game thread (e.g. inside a processSession callback).  It
+---never queues or blocks; it just calls exec() directly.
+---
+---@param exec fun() Function to execute
+---@param label string? Label for timeout warnings (ignored)
+---@param maxMs number? Upper bound in ms (ignored)
+---@return boolean completed always true
+function ExecuteInGameThreadSync(exec, label, maxMs)
+  exec()
   return true
 end
