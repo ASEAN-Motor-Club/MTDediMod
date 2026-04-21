@@ -600,9 +600,7 @@ local function process(timeout)
                 sendResponse(s, pr.content, pr.mime, pr.code)
             end
             s.pendingResponse = nil
-            if s.method == "GET" or s.method == "HEAD" then
-                getInFlight = math.max(0, getInFlight - 1)
-            end
+            getInFlight = math.max(0, getInFlight - 1)
         end
     end
 
@@ -620,9 +618,9 @@ local function process(timeout)
                 sessions[client_to_check] = nil
             elseif now - s.connTime > maxSessionAgeMs then
                 LogOutput("WARN", "Timing out client %i (age %d ms)", s.id, now - s.connTime)
-                -- If this was a throttled GET that never got a pendingResponse,
+                -- If this was a throttled request that never got a pendingResponse,
                 -- make sure we decrement the counter so the slot opens back up.
-                if s.pendingResponse == nil and (s.method == "GET" or s.method == "HEAD") then
+                if s.pendingResponse == nil then
                     getInFlight = math.max(0, getInFlight - 1)
                 end
                 client_to_check:close()

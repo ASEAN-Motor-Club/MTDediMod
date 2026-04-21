@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc6] — 2026-04-21
+
+#### Fixed
+- `getInFlight` counter leak in unified async dispatch: response loop and timeout cleanup now decrement the throttle counter for **all** HTTP methods, not just GET/HEAD — prevents `503 Server busy` after 10 mutating requests
+
 ### [server/v0.38.0-rc5] — 2026-04-21
 
 #### Changed
