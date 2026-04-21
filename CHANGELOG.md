@@ -6,6 +6,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc7] — 2026-04-22
+
+#### Added
+- `asyncSafe` handler flag — GET/HEAD endpoints can now opt in to run directly on the async thread instead of being queued to the game thread via `ExecuteInGameThread`
+- `HEAD` added to the HTTP method enum
+
+#### Changed
+- `registerHandler` signature simplified: removed the `authenticate` parameter (all handlers require auth by default; opt-out is done by setting `handler.authenticate = false` after registration)
+
+#### Fixed
+- `getInFlight` counter leak for sessions closed before game thread completion: cleanup now tracks `inFlightCounted` per session and decrements the throttle counter for **both** `state == "close"` and timeout removals — fixes permanent `503 Server busy` after client disconnects under load
+- `GetPlayerStates` now builds both a full list cache and a `byId` map cache, making `/players/{id}` O(1) instead of O(n) — eliminates full `PlayerArray` scan on every individual lookup
+- `PlayerStateToTable` is now fully wrapped in `pcall` with validity guards on every TArray access; pawn rotation read is additionally `pcall`-wrapped so a single bad UObject doesn't take down the server
+
 ### [server/v0.38.0-rc6] — 2026-04-21
 
 #### Fixed

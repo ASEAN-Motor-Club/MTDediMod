@@ -37,25 +37,25 @@ local function LoadWebserver()
 
     -- General server status
     server.registerHandler("/webhook", "GET", webclient.HandleGetWebhooks)
-    server.registerHandler("/status", "GET", serverManager.HandleGetServerStatus, false)
-    server.registerHandler("/version", "GET", serverManager.HandleGetModVersion, false)
-    server.registerHandler("/status/general", "GET", serverManager.HandleGetServerState)
-    server.registerHandler("/status/general/*", "GET", serverManager.HandleGetZoneState)
+    server.registerHandler("/status", "GET", serverManager.HandleGetServerStatus, true)
+    server.registerHandler("/version", "GET", serverManager.HandleGetModVersion, true)
+    server.registerHandler("/status/general", "GET", serverManager.HandleGetServerState, true)
+    server.registerHandler("/status/general/*", "GET", serverManager.HandleGetZoneState, true)
     server.registerHandler("/dump/lua_types", "POST", function(session)
         GenerateLuaTypes()
         return { status = "lua types generated" }, nil, 200
-    end)
+    end, true)
     server.registerHandler("/mods/reload", "POST", function(session)
         RestartCurrentMod()
         return { status = "received mods reload signal" }, nil, 202
-    end)
+    end, true)
     server.registerHandler("/status/traffic", "POST", serverManager.HandleUpdateNpcTraffic)
     server.registerHandler("/config", "POST", serverManager.HandleSetServerConfig)
     server.registerHandler("/police/patrol_areas", "GET", serverManager.HandleGetPolicePatrolAreas)
     server.registerHandler("/command", "POST", serverManager.HandleServerExecCommand)
 
     -- Player management
-    server.registerHandler("/players", "GET", playerManager.HandleGetPlayerStates)
+    server.registerHandler("/players", "GET", playerManager.HandleGetPlayerStates, true)
     server.registerHandler("/players/*/teleport", "POST", playerManager.HandleTeleportPlayer)
     server.registerHandler("/players/*/money", "POST", playerManager.HandleTransferMoneyToPlayer)
     server.registerHandler("/players/*/chat", "POST", playerManager.HandlePlayerSendChat)
@@ -74,7 +74,7 @@ local function LoadWebserver()
     server.registerHandler("/players/*/vehicle_cargos", "GET", cargoManager.HandleGetVehicleCargos)
     server.registerHandler("/players/*/vehicle_cargos", "DELETE", cargoManager.HandleClearVehicleCargos)
     server.registerHandler("/police", "GET", playerManager.HandleGetPoliceState)
-    server.registerHandler("/players/*", "GET", playerManager.HandleGetPlayerStates)
+    server.registerHandler("/players/*", "GET", playerManager.HandleGetPlayerStates, true)
     server.registerHandler("/parties", "GET", playerManager.HandleGetParties)
 
     -- Event management

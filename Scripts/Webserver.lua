@@ -22,8 +22,8 @@ end
 -- Hard limits to prevent the webserver from overwhelming the game thread or
 -- exceeding FD_SETSIZE (~1024) in socket.select.
 local maxClients = 64          -- max concurrent TCP connections
-local maxGetInFlight = 10      -- max GET/HEAD callbacks queued on game thread
-local getInFlight = 0          -- current GET/HEAD callbacks in flight
+local maxGetInFlight = 10      -- max concurrent requests queued on game thread
+local getInFlight = 0          -- current requests in flight (all methods)
 local maxSessionAgeMs = 15000  -- force-close connections older than this
 
 ---@enum (key) RequestMethod
@@ -33,6 +33,7 @@ local _method = {
     PUT = "PUT",
     DELETE = "DELETE",
     PATCH = "PATCH",
+    HEAD = "HEAD",
 }
 
 ---@enum (key) ConnectionState
@@ -65,6 +66,7 @@ local _mimeType = {
 ---@field state ConnectionState
 ---@field connTime number
 ---@field pendingResponse {content:string|table?,mime:MimeType?,code:integer?}? Response queued by game thread for async send (GET/HEAD only)
+---@field inFlightCounted boolean? True if this session was counted in getInFlight
 local ClientTable = {}
 ClientTable.__index = ClientTable
 
@@ -79,6 +81,7 @@ function ClientTable.new(newId, client)
     obj.state = "init"
     obj.connTime = time()
     obj.queryComponents = {}
+    obj.inFlightCounted = false
     return obj
 end
 
@@ -104,6 +107,7 @@ local _resCode = {
 ---@field method RequestMethod
 ---@field handler RequestPathHandler
 ---@field authenticate boolean
+---@field asyncSafe boolean
 local RequestPathHandlerTable = {}
 RequestPathHandlerTable.__index = RequestPathHandlerTable
 
@@ -111,18 +115,15 @@ RequestPathHandlerTable.__index = RequestPathHandlerTable
 ---@param path string
 ---@param method RequestMethod
 ---@param handler RequestPathHandler
----@param authenticate boolean?
+---@param asyncSafe boolean?
 ---@return RequestPathHandlerTable
-function RequestPathHandlerTable.new(path, method, handler, authenticate)
+function RequestPathHandlerTable.new(path, method, handler, asyncSafe)
     local obj = setmetatable({}, RequestPathHandlerTable)
     obj.path = path
     obj.method = method
     obj.handler = handler
-    if authenticate == nil then
-        obj.authenticate = true
-    else
-        obj.authenticate = authenticate
-    end
+    obj.authenticate = true
+    obj.asyncSafe = asyncSafe or false
     return obj
 end
 
@@ -387,7 +388,8 @@ local function dumpSession(client)
 end
 
 ---This is called when we have a complete request ready to be processed.
----Runs on the game thread (dispatched via ExecuteInGameThread or ExecuteInGameThreadSync2).
+---May run on the game thread (for writes and unsafe reads) or the async thread
+---(for asyncSafe GET/HEAD handlers).
 ---Returns response data so the async thread can handle sendResponse and JSON stringify.
 ---@param client ClientTable
 ---@return string|table? content Response body (string or table to be stringified on async thread)
@@ -447,18 +449,35 @@ local function decodeQuery(path)
     return cgi
 end
 
----Dispatch a complete request to the appropriate thread based on HTTP method.
----GET/HEAD use fire-and-forget ExecuteInGameThread (no async-thread spin-wait).
----All mutating methods use ExecuteInGameThreadSync2 to guarantee completion ordering.
+---Dispatch a complete request.
+---asyncSafe GET/HEAD handlers run directly on the async thread.
+---All other handlers are queued to the game thread via ExecuteInGameThread.
+---The async thread polls pendingResponse to send the response.
 ---@param s ClientTable
 local function dispatchSession(s)
-    -- Throttle: if too many GETs are already queued on the game thread,
+    local h = findHandler(s.urlComponents.path, s.method)
+    local isRead = s.method == "GET" or s.method == "HEAD"
+    local canRunAsync = h and h.asyncSafe and isRead
+
+    if canRunAsync then
+        -- Run directly on async thread; no game-thread queueing
+        local ok, content, mime, code = pcall(processSession, s)
+        if ok then
+            s.pendingResponse = { content = content, mime = mime, code = code }
+        else
+            s.pendingResponse = { content = '{"error":"Internal server error"}', code = 500 }
+        end
+        return
+    end
+
+    -- Throttle: if too many requests are already queued on the game thread,
     -- reject immediately so we don't flood ExecuteInGameThread.
     if getInFlight >= maxGetInFlight then
         sendResponse(s, '{"error":"Server busy"}', nil, 503)
         return
     end
     getInFlight = getInFlight + 1
+    s.inFlightCounted = true
     -- Fire-and-forget: queue handler to game thread, async thread will poll pendingResponse
     ExecuteInGameThread(function()
         local ok, content, mime, code = pcall(processSession, s)
@@ -584,7 +603,7 @@ local function process(timeout)
         end
     end
 
-    -- Send pending GET/HEAD responses (async thread handles stringify + socket I/O)
+    -- Send pending responses (async thread handles stringify + socket I/O)
     for _, client in ipairs(clients) do
         local s = sessions[client]
         if s and s.pendingResponse then
@@ -601,6 +620,7 @@ local function process(timeout)
             end
             s.pendingResponse = nil
             getInFlight = math.max(0, getInFlight - 1)
+            s.inFlightCounted = false
         end
     end
 
@@ -613,15 +633,23 @@ local function process(timeout)
         if s then
             if s.state == "close" then
                 LogOutput("DEBUG", "Cleaning up client %i", s.id)
+                -- If this session was counted in getInFlight but never completed
+                -- (e.g. client disconnected before game thread finished), decrement
+                -- so the throttle slot opens back up.
+                if s.inFlightCounted then
+                    getInFlight = math.max(0, getInFlight - 1)
+                    s.inFlightCounted = false
+                end
                 client_to_check:close()
                 table.remove(clients, i)
                 sessions[client_to_check] = nil
             elseif now - s.connTime > maxSessionAgeMs then
                 LogOutput("WARN", "Timing out client %i (age %d ms)", s.id, now - s.connTime)
-                -- If this was a throttled request that never got a pendingResponse,
-                -- make sure we decrement the counter so the slot opens back up.
-                if s.pendingResponse == nil then
+                -- If this session was counted in getInFlight but never completed,
+                -- decrement so the throttle slot opens back up.
+                if s.inFlightCounted then
                     getInFlight = math.max(0, getInFlight - 1)
+                    s.inFlightCounted = false
                 end
                 client_to_check:close()
                 table.remove(clients, i)
@@ -636,9 +664,9 @@ end
 ---@param path string pattern to match (e.g. `/api/status`)
 ---@param method RequestMethod request type (e.g. `GET`, `POST`)
 ---@param handler RequestPathHandler request handler function
----@param authenticate boolean? Should the handler be authenticated. Defaults to true
-local function registerHandler(path, method, handler, authenticate)
-    local h = RequestPathHandlerTable.new(path, method, handler, authenticate)
+---@param asyncSafe boolean? Should the handler run on the async thread (GET/HEAD only). Defaults to false
+local function registerHandler(path, method, handler, asyncSafe)
+    local h = RequestPathHandlerTable.new(path, method, handler, asyncSafe)
     -- Already registered?
     local i = findHandlerIndex(path, method)
     if i == nil then
