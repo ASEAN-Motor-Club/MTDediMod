@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc3] — 2026-04-21
+
+#### Fixed
+- C++ `EnqueueWebhookEvent` compile errors: `lua_value_to_json` and `lua_table_to_json_value` hoisted to file scope (nested function definitions are not valid C++)
+- Stale `_gameThreadDepth` reference in GET dispatch caused nil arithmetic error, preventing `pendingResponse` from being set and causing GET requests to hang
+
+#### Changed
+- `ExecuteInGameThreadSync` is now a pure passthrough (executes inline, always returns true) — safe to call from any game-thread callback
+- New `ExecuteInGameThreadSync2` performs the real async→game-thread blocking dispatch with spin-wait timeout; used only by the webserver dispatcher for mutating methods
+- Removed all `ExecuteInGameThreadSync` wrappers from handler files (VehicleManager, PlayerManager, ServerManager, PropertyManager, CargoManager, ViewportManager) — handlers run directly on the game thread since the webserver centrally dispatches them
+
 ### [server/v0.38.0-rc2] — 2026-04-21
 
 #### Fixed
