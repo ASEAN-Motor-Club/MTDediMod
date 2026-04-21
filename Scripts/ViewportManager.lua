@@ -128,15 +128,13 @@ local function ShowMessagePopup(message, uniqueId)
     end
   end
 
-  ExecuteInGameThreadSync(function()
-    for _, value in ipairs(playerControllers) do
-      if value:IsValid() then
-        ---@cast value AMotorTownPlayerController
+  for _, value in ipairs(playerControllers) do
+    if value:IsValid() then
+      ---@cast value AMotorTownPlayerController
 
-        value:ClientShowPopupMessage(FText(message))
-      end
+      value:ClientShowPopupMessage(FText(message))
     end
-  end, "ShowMessagePopup")
+  end
 end
 
 local function ShowMessagePopupToCharacter(message, characterGuid)
@@ -145,11 +143,9 @@ local function ShowMessagePopupToCharacter(message, characterGuid)
     return nil
   end
 
-  ExecuteInGameThreadSync(function()
-    if PC:IsValid() then
-      PC:ClientShowPopupMessage(FText(message))
-    end
-  end, "ShowMessagePopupToCharacter")
+  if PC:IsValid() then
+    PC:ClientShowPopupMessage(FText(message))
+  end
 end
 
 local function ShowSystemMessageToCharacter(message, characterGuid)
@@ -158,11 +154,9 @@ local function ShowSystemMessageToCharacter(message, characterGuid)
     return nil
   end
 
-  ExecuteInGameThreadSync(function()
-    if PC:IsValid() then
-      PC:ClientShowSystemMessage(FText(message))
-    end
-  end, "ShowSystemMessageToCharacter")
+  if PC:IsValid() then
+    PC:ClientShowSystemMessage(FText(message))
+  end
 end
 
 ---Set hot bar position

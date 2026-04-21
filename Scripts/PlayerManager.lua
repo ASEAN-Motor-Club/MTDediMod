@@ -89,12 +89,10 @@ local function TransferMoneyToPlayer(uniqueId, amount, message)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
   if PC == nil or not PC:IsValid() then return false end
   LogOutput("INFO", "TransferMoneyToPlayer")
-  ExecuteInGameThreadSync(function()
-    if PC:IsValid() then
-      ---@diagnostic disable-next-line: param-type-mismatch
-      PC:ClientAddMoney(amount, 'Context', FText(message), true, 'Context', 'Context')
-    end
-  end, "TransferMoneyToPlayer")
+  if PC:IsValid() then
+    ---@diagnostic disable-next-line: param-type-mismatch
+    PC:ClientAddMoney(amount, 'Context', FText(message), true, 'Context', 'Context')
+  end
   return true
 end
 
@@ -102,24 +100,20 @@ local function TransferMoneyToCharacter(characterGuid, amount, message)
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if PC == nil or not PC:IsValid() then return false end
   LogOutput("INFO", "TransferMoneyToPlayer")
-  ExecuteInGameThreadSync(function()
-    if PC:IsValid() then
-      ---@diagnostic disable-next-line: param-type-mismatch
-      PC:ClientAddMoney(amount, '', FText(message), true, '', '')
-    end
-  end, "TransferMoneyToCharacter")
+  if PC:IsValid() then
+    ---@diagnostic disable-next-line: param-type-mismatch
+    PC:ClientAddMoney(amount, '', FText(message), true, '', '')
+  end
   return true
 end
 
 
 local function PlayerSendChat(uniqueId, message)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
-  ExecuteInGameThreadSync(function()
-    LogOutput("INFO", "PlayerSendChat")
-    if PC:IsValid() then
-      PC:ServerSendChat(message, 0)
-    end
-  end, "PlayerSendChat")
+  LogOutput("INFO", "PlayerSendChat")
+  if PC:IsValid() then
+    PC:ServerSendChat(message, 0)
+  end
   return true
 end
 
@@ -161,9 +155,8 @@ end)
 local function HandleGetPlayerStates(session)
   local playerId = session.pathComponents[2]
   local res = {}
-  local ok = ExecuteInGameThreadSync(function()
-    res = GetPlayerStates(playerId)
-  end, "HandleGetPlayerStates", 200)
+  local ok = true
+  res = GetPlayerStates(playerId)
   if not ok then return { error = "Game thread timeout" }, nil, 503 end
   if playerId and #res == 0 then
     return { message = string.format("Player with unique ID %s not found", playerId) }, nil, 404
@@ -204,12 +197,10 @@ local function HandleSetPlayerName(session)
     if not PC:IsValid() or not PC.PlayerState:IsValid() then
       return { error = string.format("Invalid player controller %s", characterGuid) }, nil, 400
     end
-    ExecuteInGameThreadSync(function()
-      if PC:IsValid() and PC.PlayerState:IsValid() then
-        PC.PlayerState.PlayerNamePrivate = data.name
-        PC:SetName(data.name)
-      end
-    end, "HandleSetPlayerName")
+    if PC:IsValid() and PC.PlayerState:IsValid() then
+      PC.PlayerState.PlayerNamePrivate = data.name
+      PC:SetName(data.name)
+    end
 
     return nil, nil, 200
   end
@@ -399,40 +390,38 @@ local function HandleTeleportPlayer(session)
           local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
           ---@cast vehicleClass UClass
 
-          ExecuteInGameThreadSync(function()
-            if not pawn:IsValid() then
-              return
-            end
-            if pawn:IsA(charClass) then
-              if data.Force then
-                -- Bypass Motor Town's native suspect check which blocks
-                -- ServerTeleportCharacter for suspects with a popup.
-                -- K2_SetActorLocation moves the pawn server-side, then
-                -- ClientTeleportedCharacter notifies the owning client
-                -- (camera reset, loading screen, etc.) — mimicking what
-                -- ServerTeleportCharacter does internally sans suspect gate.
-                pawn:K2_SetActorLocation(location, false, {}, true)
-                PC:ClientTeleportedCharacter(location)
-              else
-                PC:ServerTeleportCharacter(location, false, false)
-              end
-            elseif pawn:IsA(vehicleClass) and data.NoVehicles then
-              return { error = string.format("Failed to teleport player %s: Player is inside a vehicle", playerId) }, nil, 400
-            elseif pawn:IsA(vehicleClass) then
-              ---@cast pawn AMTVehicle
-              local bResetTrailers = true
-              if data.bResetTrailers ~= nil then
-                bResetTrailers = data.bResetTrailers
-              end
-              local bResetCarriedVehicles = true
-              if data.bResetCarriedVehicles ~= nil then
-                bResetCarriedVehicles = data.bResetCarriedVehicles
-              end
-              PC:ClientResetVehicleAt(pawn, location, rotation, bResetTrailers, bResetCarriedVehicles)
+          if not pawn:IsValid() then
+            return
+          end
+          if pawn:IsA(charClass) then
+            if data.Force then
+              -- Bypass Motor Town's native suspect check which blocks
+              -- ServerTeleportCharacter for suspects with a popup.
+              -- K2_SetActorLocation moves the pawn server-side, then
+              -- ClientTeleportedCharacter notifies the owning client
+              -- (camera reset, loading screen, etc.) — mimicking what
+              -- ServerTeleportCharacter does internally sans suspect gate.
+              pawn:K2_SetActorLocation(location, false, {}, true)
+              PC:ClientTeleportedCharacter(location)
             else
-              error("Failed to teleport player")
+              PC:ServerTeleportCharacter(location, false, false)
             end
-          end, "HandleTeleportPlayer")
+          elseif pawn:IsA(vehicleClass) and data.NoVehicles then
+            return { error = string.format("Failed to teleport player %s: Player is inside a vehicle", playerId) }, nil, 400
+          elseif pawn:IsA(vehicleClass) then
+            ---@cast pawn AMTVehicle
+            local bResetTrailers = true
+            if data.bResetTrailers ~= nil then
+              bResetTrailers = data.bResetTrailers
+            end
+            local bResetCarriedVehicles = true
+            if data.bResetCarriedVehicles ~= nil then
+              bResetCarriedVehicles = data.bResetCarriedVehicles
+            end
+            PC:ClientResetVehicleAt(pawn, location, rotation, bResetTrailers, bResetCarriedVehicles)
+          else
+            error("Failed to teleport player")
+          end
 
           local msg = string.format("Teleported player %s to %s", playerId, json.stringify(location))
           return { status = msg }
@@ -476,9 +465,8 @@ end
 ---@type RequestPathHandler
 local function HandleGetParties(session)
   local data = {}
-  local ok = ExecuteInGameThreadSync(function()
-    data = GetParties()
-  end, "HandleGetParties", 100)
+  local ok = true
+  data = GetParties()
   if not ok then return { error = "Game thread timeout" }, nil, 503 end
   return { data = data }, nil, 200
 end
@@ -503,30 +491,28 @@ local function HandleMakePlayerSuspect(session)
   ---@cast charClass UClass
 
   local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local ok, err = pcall(function()
-      if not PC:IsValid() then resultMsg = "pc_invalid"; return end
+  local ok, err = pcall(function()
+    if not PC:IsValid() then resultMsg = "pc_invalid"; return end
 
-      -- Get the AMTCharacter
-      local character = PC.Net_MyDrivingCharacter
-      if not character or not character:IsValid() then
-        character = PC:K2_GetPawn()
-      end
-      if not character or not character:IsValid() then resultMsg = "char_not_found"; return end
+    -- Get the AMTCharacter
+    local character = PC.Net_MyDrivingCharacter
+    if not character or not character:IsValid() then
+      character = PC:K2_GetPawn()
+    end
+    if not character or not character:IsValid() then resultMsg = "char_not_found"; return end
 
-      -- Only test C++ AddPoliceSuspect (buff logic removed for debugging)
-      local gameState = GetMotorTownGameState()
-      if gameState:IsValid() and gameState.Net_Police:IsValid() then
-        local success = AddPoliceSuspect(gameState.Net_Police, character)
-        resultMsg = "suspects=" .. tostring(success)
-      else
-        resultMsg = "police_not_found"
-      end
-    end)
-    if not ok then
-      resultMsg = "error: " .. tostring(err)
+    -- Only test C++ AddPoliceSuspect (buff logic removed for debugging)
+    local gameState = GetMotorTownGameState()
+    if gameState:IsValid() and gameState.Net_Police:IsValid() then
+      local success = AddPoliceSuspect(gameState.Net_Police, character)
+      resultMsg = "suspects=" .. tostring(success)
+    else
+      resultMsg = "police_not_found"
     end
   end)
+  if not ok then
+    resultMsg = "error: " .. tostring(err)
+  end
 
   return { status = resultMsg }, nil, 200
 end
@@ -536,39 +522,37 @@ end
 local function HandleGetPoliceState()
   local result = { suspects = {}, police_valid = false }
 
-  ExecuteInGameThreadSync(function()
-    local ok, err = pcall(function()
-      local gameState = GetMotorTownGameState()
-      if not gameState:IsValid() then return end
+  local ok, err = pcall(function()
+    local gameState = GetMotorTownGameState()
+    if not gameState:IsValid() then return end
 
-      result.police_valid = gameState.Net_Police:IsValid()
-      if not result.police_valid then return end
+    result.police_valid = gameState.Net_Police:IsValid()
+    if not result.police_valid then return end
 
-      local police = gameState.Net_Police
-      police.Net_Suspects:ForEach(function(index, suspect)
-        local entry = {
-          index = index,
-          bOutOfSight = suspect.bOutOfSight,
-        }
-        if suspect.Character:IsValid() then
-          entry.character_class = suspect.Character:GetClass():GetFName():ToString()
-          local loc = suspect.LastSeenLocation
-          entry.location = { x = loc.X, y = loc.Y, z = loc.Z }
-        else
-          entry.character = "invalid"
-        end
-        -- Read ViolationTags
-        entry.tags = {}
-        suspect.ViolationTags.GameplayTags:ForEach(function(i, tag)
-          entry.tags[i] = tag.TagName:ToString()
-        end)
-        result.suspects[#result.suspects + 1] = entry
+    local police = gameState.Net_Police
+    police.Net_Suspects:ForEach(function(index, suspect)
+      local entry = {
+        index = index,
+        bOutOfSight = suspect.bOutOfSight,
+      }
+      if suspect.Character:IsValid() then
+        entry.character_class = suspect.Character:GetClass():GetFName():ToString()
+        local loc = suspect.LastSeenLocation
+        entry.location = { x = loc.X, y = loc.Y, z = loc.Z }
+      else
+        entry.character = "invalid"
+      end
+      -- Read ViolationTags
+      entry.tags = {}
+      suspect.ViolationTags.GameplayTags:ForEach(function(i, tag)
+        entry.tags[i] = tag.TagName:ToString()
       end)
+      result.suspects[#result.suspects + 1] = entry
     end)
-    if not ok then
-      result.error = tostring(err)
-    end
   end)
+  if not ok then
+    result.error = tostring(err)
+  end
 
   return (result), nil, 200
 end
@@ -588,21 +572,19 @@ local function HandleExperimentalHideActor(session)
   end
 
   local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local PC = GetPlayerControllerFromGuid(characterGuid)
-    if PC:IsValid() then
-      local pawn = PC:K2_GetPawn()
-      if pawn:IsValid() then
-        pawn:SetActorHiddenInGame(hide)
-        pawn:SetActorEnableCollision(not hide)
-        resultMsg = "success: hidden=" .. tostring(hide)
-      else
-        resultMsg = "pawn_invalid"
-      end
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if PC:IsValid() then
+    local pawn = PC:K2_GetPawn()
+    if pawn:IsValid() then
+      pawn:SetActorHiddenInGame(hide)
+      pawn:SetActorEnableCollision(not hide)
+      resultMsg = "success: hidden=" .. tostring(hide)
     else
-      resultMsg = "pc_invalid"
+      resultMsg = "pawn_invalid"
     end
-  end, "HandleExperimentalHideActor")
+  else
+    resultMsg = "pc_invalid"
+  end
 
   return { status = resultMsg }, nil, 200
 end
@@ -622,21 +604,19 @@ local function HandleExperimentalHideCostume(session)
   end
 
   local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local PC = GetPlayerControllerFromGuid(characterGuid)
-    if PC:IsValid() then
-      local character = PC:K2_GetPawn()
-      if character:IsValid() and character:IsA(StaticFindObject("/Script/MotorTown.MTCharacter")) then
-        ---@cast character AMTCharacter
-        character:ServerHideCostume(hide)
-        resultMsg = "success: hide_costume=" .. tostring(hide)
-      else
-        resultMsg = "char_invalid"
-      end
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if PC:IsValid() then
+    local character = PC:K2_GetPawn()
+    if character:IsValid() and character:IsA(StaticFindObject("/Script/MotorTown.MTCharacter")) then
+      ---@cast character AMTCharacter
+      character:ServerHideCostume(hide)
+      resultMsg = "success: hide_costume=" .. tostring(hide)
     else
-      resultMsg = "pc_invalid"
+      resultMsg = "char_invalid"
     end
-  end, "HandleExperimentalHideCostume")
+  else
+    resultMsg = "pc_invalid"
+  end
 
   return { status = resultMsg }, nil, 200
 end
@@ -656,28 +636,26 @@ local function HandleExperimentalGhostFlag(session)
   end
 
   local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local PC = GetPlayerControllerFromGuid(characterGuid)
-    if PC:IsValid() then
-      local character = PC:K2_GetPawn()
-      if character:IsValid() and character:IsA(StaticFindObject("/Script/MotorTown.MTCharacter")) then
-        ---@cast character AMTCharacter
-        local flags = character.Net_CharacterFlags
-        -- 4 is EMTCharacterFlags.Ghost
-        if ghost then
-          flags = flags | 4
-        else
-          flags = flags & ~4
-        end
-        character.Net_CharacterFlags = flags
-        resultMsg = "success: ghost=" .. tostring(ghost)
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if PC:IsValid() then
+    local character = PC:K2_GetPawn()
+    if character:IsValid() and character:IsA(StaticFindObject("/Script/MotorTown.MTCharacter")) then
+      ---@cast character AMTCharacter
+      local flags = character.Net_CharacterFlags
+      -- 4 is EMTCharacterFlags.Ghost
+      if ghost then
+        flags = flags | 4
       else
-        resultMsg = "char_invalid"
+        flags = flags & ~4
       end
+      character.Net_CharacterFlags = flags
+      resultMsg = "success: ghost=" .. tostring(ghost)
     else
-      resultMsg = "pc_invalid"
+      resultMsg = "char_invalid"
     end
-  end, "HandleExperimentalGhostFlag")
+  else
+    resultMsg = "pc_invalid"
+  end
 
   return { status = resultMsg }, nil, 200
 end
@@ -697,24 +675,22 @@ local function HandleExperimentalSpectate(session)
   local targetGuid = data.target_guid
 
   local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local PC = GetPlayerControllerFromGuid(callerGuid)
-    local targetPC = GetPlayerControllerFromGuid(targetGuid)
-    
-    if PC:IsValid() and targetPC:IsValid() then
-      local targetPS = targetPC.PlayerState
-      if targetPS:IsValid() and targetPS:IsA(StaticFindObject("/Script/MotorTown.MotorTownPlayerState")) then
-        ---@cast PC AMotorTownPlayerController
-        ---@cast targetPS AMotorTownPlayerState
-        PC:ServerStartSpectatingPlayer(targetPS)
-        resultMsg = "success: spectating " .. tostring(targetGuid)
-      else
-        resultMsg = "target_ps_invalid"
-      end
+  local PC = GetPlayerControllerFromGuid(callerGuid)
+  local targetPC = GetPlayerControllerFromGuid(targetGuid)
+  
+  if PC:IsValid() and targetPC:IsValid() then
+    local targetPS = targetPC.PlayerState
+    if targetPS:IsValid() and targetPS:IsA(StaticFindObject("/Script/MotorTown.MotorTownPlayerState")) then
+      ---@cast PC AMotorTownPlayerController
+      ---@cast targetPS AMotorTownPlayerState
+      PC:ServerStartSpectatingPlayer(targetPS)
+      resultMsg = "success: spectating " .. tostring(targetGuid)
     else
-      resultMsg = "pc_invalid"
+      resultMsg = "target_ps_invalid"
     end
-  end, "HandleExperimentalSpectate")
+  else
+    resultMsg = "pc_invalid"
+  end
 
   return { status = resultMsg }, nil, 200
 end

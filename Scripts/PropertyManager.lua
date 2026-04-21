@@ -151,34 +151,32 @@ local function HandleTransferHouseDirect(session)
   end
 
   local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local ok, err = pcall(function()
-      local house = FindHouseByGuid(houseGuid)
-      if not house then resultMsg = "house_not_found"; return end
+  local ok, err = pcall(function()
+    local house = FindHouseByGuid(houseGuid)
+    if not house then resultMsg = "house_not_found"; return end
 
-      local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
-      if not newOwnerPC or not newOwnerPC:IsValid() then
-        resultMsg = "new_owner_offline"; return
-      end
+    local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
+    if not newOwnerPC or not newOwnerPC:IsValid() then
+      resultMsg = "new_owner_offline"; return
+    end
 
-      local newOwnerPS = newOwnerPC.PlayerState
-      ---@cast newOwnerPS AMotorTownPlayerState
-      if not newOwnerPS:IsValid() then
-        resultMsg = "new_owner_ps_invalid"; return
-      end
+    local newOwnerPS = newOwnerPC.PlayerState
+    ---@cast newOwnerPS AMotorTownPlayerState
+    if not newOwnerPS:IsValid() then
+      resultMsg = "new_owner_ps_invalid"; return
+    end
 
-      local newUniqueId = GetUniqueNetIdAsString(newOwnerPS) or ""
-      local newName = newOwnerPS:GetPlayerName():ToString()
-      local newCharGuid = newOwnerPS.CharacterGuid
+    local newUniqueId = GetUniqueNetIdAsString(newOwnerPS) or ""
+    local newName = newOwnerPS:GetPlayerName():ToString()
+    local newCharGuid = newOwnerPS.CharacterGuid
 
-      house.Net_OwnerUniqueNetId = newUniqueId
-      house.Net_OwnerCharacterGuid = newCharGuid
-      house.Net_OwnerName = newName
+    house.Net_OwnerUniqueNetId = newUniqueId
+    house.Net_OwnerCharacterGuid = newCharGuid
+    house.Net_OwnerName = newName
 
-      resultMsg = "success"
-    end)
-    if not ok then resultMsg = "error: " .. tostring(err) end
-  end, "HandleTransferHouseDirect")
+    resultMsg = "success"
+  end)
+  if not ok then resultMsg = "error: " .. tostring(err) end
 
   return { status = resultMsg }, nil, 200
 end
@@ -195,40 +193,38 @@ local function HandleTransferHouseDirectExtend(session)
   end
 
   local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local ok, err = pcall(function()
-      local house = FindHouseByGuid(houseGuid)
-      if not house then resultMsg = "house_not_found"; return end
+  local ok, err = pcall(function()
+    local house = FindHouseByGuid(houseGuid)
+    if not house then resultMsg = "house_not_found"; return end
 
-      local rentLeft = house.Net_RentLeftTimeSeconds
+    local rentLeft = house.Net_RentLeftTimeSeconds
 
-      local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
-      if not newOwnerPC or not newOwnerPC:IsValid() then
-        resultMsg = "new_owner_offline"; return
-      end
+    local newOwnerPC = FindOnlinePCByCharacterGuid(data.NewOwnerCharacterGuid)
+    if not newOwnerPC or not newOwnerPC:IsValid() then
+      resultMsg = "new_owner_offline"; return
+    end
 
-      local newOwnerPS = newOwnerPC.PlayerState
-      ---@cast newOwnerPS AMotorTownPlayerState
-      if not newOwnerPS:IsValid() then
-        resultMsg = "new_owner_ps_invalid"; return
-      end
+    local newOwnerPS = newOwnerPC.PlayerState
+    ---@cast newOwnerPS AMotorTownPlayerState
+    if not newOwnerPS:IsValid() then
+      resultMsg = "new_owner_ps_invalid"; return
+    end
 
-      local newUniqueId = GetUniqueNetIdAsString(newOwnerPS) or ""
-      local newName = newOwnerPS:GetPlayerName():ToString()
-      local newCharGuid = newOwnerPS.CharacterGuid
+    local newUniqueId = GetUniqueNetIdAsString(newOwnerPS) or ""
+    local newName = newOwnerPS:GetPlayerName():ToString()
+    local newCharGuid = newOwnerPS.CharacterGuid
 
-      house.Net_OwnerUniqueNetId = newUniqueId
-      house.Net_OwnerCharacterGuid = newCharGuid
-      house.Net_OwnerName = newName
+    house.Net_OwnerUniqueNetId = newUniqueId
+    house.Net_OwnerCharacterGuid = newCharGuid
+    house.Net_OwnerName = newName
 
-      if rentLeft > 0 then
-        newOwnerPC:ServerRentExtendHouse(house, 0, rentLeft)
-      end
+    if rentLeft > 0 then
+      newOwnerPC:ServerRentExtendHouse(house, 0, rentLeft)
+    end
 
-      resultMsg = "success"
-    end)
-    if not ok then resultMsg = "error: " .. tostring(err) end
-  end, "HandleTransferHouseDirectExtend")
+    resultMsg = "success"
+  end)
+  if not ok then resultMsg = "error: " .. tostring(err) end
 
   return { status = resultMsg }, nil, 200
 end
@@ -245,16 +241,14 @@ local function HandleExtendHouseRent(session)
   end
 
   local resultMsg = "not_executed"
-  ExecuteInGameThreadSync(function()
-    local ok, err = pcall(function()
-      local house = FindHouseByGuid(houseGuid)
-      if not house then resultMsg = "house_not_found"; return end
+  local ok, err = pcall(function()
+    local house = FindHouseByGuid(houseGuid)
+    if not house then resultMsg = "house_not_found"; return end
 
-      house.Net_RentLeftTimeSeconds = house.Net_RentLeftTimeSeconds + data.Seconds
-      resultMsg = "success"
-    end)
-    if not ok then resultMsg = "error: " .. tostring(err) end
-  end, "HandleExtendHouseRent")
+    house.Net_RentLeftTimeSeconds = house.Net_RentLeftTimeSeconds + data.Seconds
+    resultMsg = "success"
+  end)
+  if not ok then resultMsg = "error: " .. tostring(err) end
 
   return { status = resultMsg }, nil, 200
 end

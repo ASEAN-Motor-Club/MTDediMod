@@ -373,7 +373,7 @@ local function dumpSession(client)
 end
 
 ---This is called when we have a complete request ready to be processed.
----Runs on the game thread (dispatched via ExecuteInGameThreadSync from the async thread).
+---Runs on the game thread (dispatched via ExecuteInGameThread or ExecuteInGameThreadSync2).
 ---Returns response data so the async thread can handle sendResponse and JSON stringify.
 ---@param client ClientTable
 ---@return string|table? content Response body (string or table to be stringified on async thread)
@@ -435,7 +435,7 @@ end
 
 ---Dispatch a complete request to the appropriate thread based on HTTP method.
 ---GET/HEAD use fire-and-forget ExecuteInGameThread (no async-thread spin-wait).
----All mutating methods use ExecuteInGameThreadSync to guarantee completion ordering.
+---All mutating methods use ExecuteInGameThreadSync2 to guarantee completion ordering.
 ---@param s ClientTable
 local function dispatchSession(s)
     if s.method == "GET" or s.method == "HEAD" then
@@ -674,7 +674,7 @@ local function run(bindHost, bindPort)
     -- Run the webserver loop off the game thread via LoopAsync so that socket I/O
     -- (accept, receive, select) never blocks EngineTick.  When a complete HTTP
     -- request is ready, processSession is dispatched to the game thread with
-    -- ExecuteInGameThreadSync; the response is then sent from the async thread.
+    -- ExecuteInGameThreadSync2; the response is then sent from the async thread.
     -- process() uses timeout=0 (non-blocking socket.select) so the async thread
     -- never sleeps longer than necessary.
     LoopAsync(1, function()

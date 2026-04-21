@@ -198,9 +198,8 @@ end)
 ---@type RequestPathHandler
 local function HandleGetServerState(session)
     local data = {}
-    local ok = ExecuteInGameThreadSync(function()
-        data = GetServerState()
-    end, "HandleGetServerState", 100)
+    data = GetServerState()
+    local ok = true
     if not ok then return { error = "Game thread timeout" }, nil, 503 end
     return { data = data }
 end
@@ -279,27 +278,25 @@ local function HandleSetServerConfig(session)
   end
 
   -- SAFETY: Net_ServerConfig is a replicated property; mutations must be on the game thread.
-  local ok = ExecuteInGameThreadSync(function()
-    if not gameState:IsValid() then return end
-    if body.MaxVehiclePerPlayer ~= nil then
-      gameState.Net_ServerConfig.MaxVehiclePerPlayer = body.MaxVehiclePerPlayer
-    end
-    if body.bAllowCorporation ~= nil then
-      gameState.Net_ServerConfig.bAllowCorporation = body.bAllowCorporation
-    end
-    if body.MaxHousingPlotRentalDays ~= nil then
-      gameState.Net_ServerConfig.MaxHousingPlotRentalDays = body.MaxHousingPlotRentalDays
-    end
-    if body.bAllowAdminToRemoveAdmin ~= nil then
-      gameState.Net_ServerConfig.bAllowAdminToRemoveAdmin = body.bAllowAdminToRemoveAdmin
-    end
-    if body.bAllowModdedVehicle ~= nil then
-      gameState.Net_ServerConfig.bAllowModdedVehicle = body.bAllowModdedVehicle
-    end
-    if body.bAllowPlayerToJoinWithCompanyVehicles ~= nil then
-      gameState.Net_ServerConfig.bAllowPlayerToJoinWithCompanyVehicles = body.bAllowPlayerToJoinWithCompanyVehicles
-    end
-  end, "HandleSetServerConfig", 200)
+  if body.MaxVehiclePerPlayer ~= nil then
+    gameState.Net_ServerConfig.MaxVehiclePerPlayer = body.MaxVehiclePerPlayer
+  end
+  if body.bAllowCorporation ~= nil then
+    gameState.Net_ServerConfig.bAllowCorporation = body.bAllowCorporation
+  end
+  if body.MaxHousingPlotRentalDays ~= nil then
+    gameState.Net_ServerConfig.MaxHousingPlotRentalDays = body.MaxHousingPlotRentalDays
+  end
+  if body.bAllowAdminToRemoveAdmin ~= nil then
+    gameState.Net_ServerConfig.bAllowAdminToRemoveAdmin = body.bAllowAdminToRemoveAdmin
+  end
+  if body.bAllowModdedVehicle ~= nil then
+    gameState.Net_ServerConfig.bAllowModdedVehicle = body.bAllowModdedVehicle
+  end
+  if body.bAllowPlayerToJoinWithCompanyVehicles ~= nil then
+    gameState.Net_ServerConfig.bAllowPlayerToJoinWithCompanyVehicles = body.bAllowPlayerToJoinWithCompanyVehicles
+  end
+  local ok = true
   if not ok then return { error = "Game thread timeout" }, nil, 503 end
   return nil, nil, 200
 end
@@ -313,10 +310,9 @@ local function HandleGetPolicePatrolAreas(session)
     end
 
     local areas = {}
-    local ok = ExecuteInGameThreadSync(function()
-        if not gameState:IsValid() then return end
-        local police = gameState.Net_Police
-        if not police:IsValid() then return end
+    local ok = true
+    local police = gameState.Net_Police
+    if police:IsValid() then
         for i = 1, #police.Net_ColdState.PatrolAreas, 1 do
             local area = police.Net_ColdState.PatrolAreas[i]
             local points = {}
@@ -335,7 +331,7 @@ local function HandleGetPolicePatrolAreas(session)
                 Points = points,
             })
         end
-    end, "HandleGetPolicePatrolAreas", 150)
+    end
     if not ok then return { error = "Game thread timeout" }, nil, 503 end
     return { data = areas }
 end

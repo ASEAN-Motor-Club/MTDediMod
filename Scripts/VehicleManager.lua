@@ -1757,9 +1757,7 @@ local function DespawnVehicleById(id, uniqueId)
 
       if PC:IsValid() and playerState.bIsAdmin then
         if playerState.bIsHost then
-          ExecuteInGameThreadSync(function()
-            PC:ServerDespawnVehicle(vehicle, 0)
-          end, "DespawnVehicleById")
+          PC:ServerDespawnVehicle(vehicle, 0)
           return true
         else
           return webhook.CreateServerRequest(
@@ -2106,23 +2104,22 @@ local function HandleDetachPlayerVehicle(session)
 
   -- SAFETY: Net_SpawnedVehicles and Net_Hooks are replicated TArrays.
   -- All traversal + ServerDetachTrailer must run on the game thread.
-  local ok = ExecuteInGameThreadSync(function()
-    if not PC:IsValid() then return end
-    PC.Net_SpawnedVehicles:ForEach(function(index, element)
-      local vehicle = element:get()
-      if vehicle:IsValid() then
-        vehicle.Net_Hooks:ForEach(function(i, val)
-          local hook = val:get()
-          if hook:IsValid() and hook.Trailer:IsValid() and hook.Trailer.Net_VehicleId == content.vehicleId then
-            PC:ServerDetachTrailer(hook.Tractor, hook.Trailer)
-            if content.message ~= nil then
-              PC:ClientShowSystemMessage(FText(content.message))
-            end
+  local ok = true
+  if not PC:IsValid() then return end
+  PC.Net_SpawnedVehicles:ForEach(function(index, element)
+    local vehicle = element:get()
+    if vehicle:IsValid() then
+      vehicle.Net_Hooks:ForEach(function(i, val)
+        local hook = val:get()
+        if hook:IsValid() and hook.Trailer:IsValid() and hook.Trailer.Net_VehicleId == content.vehicleId then
+          PC:ServerDetachTrailer(hook.Tractor, hook.Trailer)
+          if content.message ~= nil then
+            PC:ClientShowSystemMessage(FText(content.message))
           end
-        end)
-      end
-    end)
-  end, "HandleDetachPlayerVehicle", 200)
+        end
+      end)
+    end
+  end)
   if not ok then return { error = "Game thread timeout" }, nil, 503 end
 end
 
@@ -2132,18 +2129,24 @@ local function HandleGetPlayerVehicleDecal(session)
   local result = nil
   local errMsg = nil
   local errCode = 400
-  local ok = ExecuteInGameThreadSync(function()
-    local PC = GetPlayerControllerFromUniqueId(playerId)
-    if not PC:IsValid() then errMsg = "Invalid player controller"; return end
+  local ok = true
+  local PC = GetPlayerControllerFromUniqueId(playerId)
+  if not PC:IsValid() then
+    errMsg = "Invalid player controller"
+  else
     local vehicle = GetPlayerVehicle(PC)
-    if vehicle == nil then errMsg = "Player is not in a vehicle"; return end
-    if not vehicle:IsValid() then errMsg = "Invalid vehicle"; return end
-    result = {
-      decal = VehicleDecalToTable(vehicle.Net_Decal),
-      garageMode = vehicle:IsGarageMode(),
-      customization = VehicleCustomizationToTable(vehicle.Customization),
-    }
-  end, "HandleGetPlayerVehicleDecal", 200)
+    if vehicle == nil then
+      errMsg = "Player is not in a vehicle"
+    elseif not vehicle:IsValid() then
+      errMsg = "Invalid vehicle"
+    else
+      result = {
+        decal = VehicleDecalToTable(vehicle.Net_Decal),
+        garageMode = vehicle:IsGarageMode(),
+        customization = VehicleCustomizationToTable(vehicle.Customization),
+      }
+    end
+  end
 
   if not ok then return { error = "Game thread timeout" }, nil, 503 end
   if errMsg then return { error = errMsg }, nil, errCode end
@@ -2188,11 +2191,8 @@ local function HandleSetWorldVehicleDecal(session)
       end
 
       if content.parts ~= nil then
-        ExecuteInGameThreadSync(function()
-          LogOutput("INFO", "Setting parts")
-          if not vehicle:IsValid() or not vehicle.Net_Parts:IsValid() then
-            return
-          end
+        LogOutput("INFO", "Setting parts")
+        if vehicle:IsValid() and vehicle.Net_Parts:IsValid() then
           vehicle.Net_Parts:Empty()
           for i, part in ipairs(content.parts) do
             vehicle.Net_Parts[i] = TableToVehiclePart(part)
@@ -2210,7 +2210,7 @@ local function HandleSetWorldVehicleDecal(session)
             end
           end
           vehicle:ServerSetParts(vehicle.Net_Parts)
-        end, "HandleSetWorldVehicleDecal")
+        end
       end
     end
 
@@ -2359,9 +2359,7 @@ local function HandlePlayerExitVehicle(session)
   if not PC:IsValid() then
     return { error = "Invalid player controller" }, nil, 400
   end
-  ExecuteInGameThreadSync(function()
-    PC:ServerExitVehicle()
-  end, "HandlePlayerExitVehicle")
+  PC:ServerExitVehicle()
   return nil, nil, 200
 end
 
@@ -2381,18 +2379,16 @@ local function HandlePlayerEnterLastVehicle(session)
   local vehicle = PC.LastVehicle
   local loc = vehicle:K2_GetActorLocation()
 
-  ExecuteInGameThreadSync(function()
-    local pawn = PC:K2_GetPawn()
-    if pawn:IsValid() then
-      local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
-      ---@cast charClass UClass
-      if pawn:IsA(charClass) then
-        PC:ServerTeleportCharacter(loc, false, false)
-      end
+  local pawn = PC:K2_GetPawn()
+  if pawn:IsValid() then
+    local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+    ---@cast charClass UClass
+    if pawn:IsA(charClass) then
+      PC:ServerTeleportCharacter(loc, false, false)
     end
-    -- 1 is Driver seat, -1 means default index
-    PC:ServerEnterVehicle(vehicle, 1, -1, false)
-  end)
+  end
+  -- 1 is Driver seat, -1 means default index
+  PC:ServerEnterVehicle(vehicle, 1, -1, false)
 
   return { status = "success" }, nil, 200
 end
@@ -2406,9 +2402,7 @@ local function HandleDespawnPlayerVehicle(session)
     return { error = "Invalid player controller" }, nil, 400
   end
   local count = 0
-  ExecuteInGameThreadSync(function()
-    count = DespawnPlayerVehicle(PC)
-  end, "HandleDespawnPlayerVehicle")
+  count = DespawnPlayerVehicle(PC)
   if count > 0 then
     return { despawned = count }, nil, 200
   else
@@ -2503,11 +2497,7 @@ local function HandleSpawnVehicle(session)
         vehicle.bForSale = content.forSale
       end
 
-      ExecuteInGameThreadSync(function()
-        if not vehicle:IsValid() then
-          return
-        end
-
+      if vehicle:IsValid() then
         if content.decal ~= nil then
           LogOutput("INFO", "Setting decals")
           ---@diagnostic disable-next-line: undefined-field
@@ -2531,7 +2521,7 @@ local function HandleSpawnVehicle(session)
             PC:ServerEnterVehicle(vehicle, 1, -1, false)
           end
         end
-      end, "HandleSpawnVehicle")
+      end
 
       if content.parts ~= nil then
         local ok, err = pcall(function()
