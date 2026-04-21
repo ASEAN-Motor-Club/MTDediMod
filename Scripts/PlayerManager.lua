@@ -1,4 +1,5 @@
 local json = require("JsonParser")
+local socket = require("socket")
 
 ---Convert player state to JSON serializable table
 ---@param playerState AMotorTownPlayerState
@@ -46,6 +47,11 @@ local function PlayerStateToTable(playerState)
   return data
 end
 
+-- Cache for GetPlayerStates() to reduce game-thread load under high GET concurrency.
+local _playerStatesCache = nil
+local _playerStatesCacheTs = 0
+local _playerStatesCacheTtlMs = 1000
+
 ---Get all or selected player state(s)
 ---@param uniqueId string? Filter by player state unique net ID
 ---@return table[]
@@ -54,6 +60,12 @@ local function GetPlayerStates(uniqueId)
   local arr = {}
 
   if not gameState:IsValid() then return arr end
+
+  -- Use cached full list when available and not filtering by uniqueId.
+  local now = socket.gettime() * 1000
+  if not uniqueId and _playerStatesCache and (now - _playerStatesCacheTs) < _playerStatesCacheTtlMs then
+    return _playerStatesCache
+  end
 
   local playerStates = gameState.PlayerArray
 
@@ -74,6 +86,8 @@ local function GetPlayerStates(uniqueId)
         table.insert(arr, PlayerStateToTable(playerState))
       end
     end
+    _playerStatesCache = arr
+    _playerStatesCacheTs = now
   end
 
   return arr

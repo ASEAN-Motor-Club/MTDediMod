@@ -19,6 +19,13 @@ local time = function()
     return socket.gettime() * 1000
 end
 
+-- Hard limits to prevent the webserver from overwhelming the game thread or
+-- exceeding FD_SETSIZE (~1024) in socket.select.
+local maxClients = 64          -- max concurrent TCP connections
+local maxGetInFlight = 10      -- max GET/HEAD callbacks queued on game thread
+local getInFlight = 0          -- current GET/HEAD callbacks in flight
+local maxSessionAgeMs = 15000  -- force-close connections older than this
+
 ---@enum (key) RequestMethod
 local _method = {
     GET = "GET",
@@ -168,15 +175,22 @@ local function getNewClients()
         if err ~= "timeout" then
             LogOutput("ERROR", "Error from accept: %s", err)
         end
-    else
-        LogOutput("DEBUG", "Accepted connection from client")
-        client:settimeout(1)
-        table.insert(clients, client)
-
-        local s = ClientTable.new(nextSessionID, client)
-        nextSessionID = nextSessionID + 1
-        sessions[client] = s
+        return
     end
+
+    if #clients >= maxClients then
+        LogOutput("WARN", "Connection rejected: client limit reached (%d)", maxClients)
+        client:close()
+        return
+    end
+
+    LogOutput("DEBUG", "Accepted connection from client")
+    client:settimeout(1)
+    table.insert(clients, client)
+
+    local s = ClientTable.new(nextSessionID, client)
+    nextSessionID = nextSessionID + 1
+    sessions[client] = s
 end
 
 ---Build the headers for a normal response
@@ -439,6 +453,13 @@ end
 ---@param s ClientTable
 local function dispatchSession(s)
     if s.method == "GET" or s.method == "HEAD" then
+        -- Throttle: if too many GETs are already queued on the game thread,
+        -- reject immediately so we don't flood ExecuteInGameThread.
+        if getInFlight >= maxGetInFlight then
+            sendResponse(s, '{"error":"Server busy"}', nil, 503)
+            return
+        end
+        getInFlight = getInFlight + 1
         -- Fire-and-forget: queue handler to game thread, async thread will poll pendingResponse
         ExecuteInGameThread(function()
             local ok, content, mime, code = pcall(processSession, s)
@@ -601,19 +622,35 @@ local function process(timeout)
                 sendResponse(s, pr.content, pr.mime, pr.code)
             end
             s.pendingResponse = nil
+            if s.method == "GET" or s.method == "HEAD" then
+                getInFlight = math.max(0, getInFlight - 1)
+            end
         end
     end
 
-    -- Cleanup phase: remove closed sessions
+    -- Cleanup phase: remove closed sessions and time out stale connections
+    local now = time()
     local i = #clients
     while i >= 1 do
         local client_to_check = clients[i]
         local s = sessions[client_to_check]
-        if s and s.state == "close" then
-            LogOutput("DEBUG", "Cleaning up client %i", s.id)
-            client_to_check:close()
-            table.remove(clients, i)
-            sessions[client_to_check] = nil
+        if s then
+            if s.state == "close" then
+                LogOutput("DEBUG", "Cleaning up client %i", s.id)
+                client_to_check:close()
+                table.remove(clients, i)
+                sessions[client_to_check] = nil
+            elseif now - s.connTime > maxSessionAgeMs then
+                LogOutput("WARN", "Timing out client %i (age %d ms)", s.id, now - s.connTime)
+                -- If this was a throttled GET that never got a pendingResponse,
+                -- make sure we decrement the counter so the slot opens back up.
+                if s.pendingResponse == nil and (s.method == "GET" or s.method == "HEAD") then
+                    getInFlight = math.max(0, getInFlight - 1)
+                end
+                client_to_check:close()
+                table.remove(clients, i)
+                sessions[client_to_check] = nil
+            end
         end
         i = i - 1
     end

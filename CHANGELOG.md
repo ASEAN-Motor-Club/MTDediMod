@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc4] — 2026-04-21
+
+#### Fixed
+- Webserver stalls under GET load: added `maxClients` (64) connection cap, `maxGetInFlight` (10) GET throttle, and 15 s session age timeout to prevent `FD_SETSIZE` exhaustion and game-thread queue flooding
+- `GetPlayerStates()` now caches the full player list for 1 s, eliminating redundant UObject property access on every concurrent GET request
+
+#### Changed
+- `LoopAsync` poll interval restored to 1 ms for responsive request dispatch
+
 ### [server/v0.38.0-rc3] — 2026-04-21
 
 #### Fixed
