@@ -452,44 +452,22 @@ end
 ---All mutating methods use ExecuteInGameThreadSync2 to guarantee completion ordering.
 ---@param s ClientTable
 local function dispatchSession(s)
-    if s.method == "GET" or s.method == "HEAD" then
-        -- Throttle: if too many GETs are already queued on the game thread,
-        -- reject immediately so we don't flood ExecuteInGameThread.
-        if getInFlight >= maxGetInFlight then
-            sendResponse(s, '{"error":"Server busy"}', nil, 503)
-            return
-        end
-        getInFlight = getInFlight + 1
-        -- Fire-and-forget: queue handler to game thread, async thread will poll pendingResponse
-        ExecuteInGameThread(function()
-            local ok, content, mime, code = pcall(processSession, s)
-            if ok then
-                s.pendingResponse = { content = content, mime = mime, code = code }
-            else
-                s.pendingResponse = { content = '{"error":"Internal server error"}', code = 500 }
-            end
-        end)
-    else
-        -- Mutating method: block async thread until game thread completes
-        local res = {}
-        local ok = ExecuteInGameThreadSync2(function()
-            res.content, res.mime, res.code = processSession(s)
-        end, "Webserver.processSession", 5000)
-        if not ok then
-            sendResponse(s, '{"error":"Game thread timeout"}', nil, 503)
-        else
-            if type(res.content) == "table" then
-                local strOk, strErr = pcall(json.stringify, res.content)
-                if strOk then
-                    sendResponse(s, strErr, res.mime, res.code)
-                else
-                    sendResponse(s, '{"error":"JSON stringify failed"}', nil, 500)
-                end
-            else
-                sendResponse(s, res.content, res.mime, res.code)
-            end
-        end
+    -- Throttle: if too many GETs are already queued on the game thread,
+    -- reject immediately so we don't flood ExecuteInGameThread.
+    if getInFlight >= maxGetInFlight then
+        sendResponse(s, '{"error":"Server busy"}', nil, 503)
+        return
     end
+    getInFlight = getInFlight + 1
+    -- Fire-and-forget: queue handler to game thread, async thread will poll pendingResponse
+    ExecuteInGameThread(function()
+        local ok, content, mime, code = pcall(processSession, s)
+        if ok then
+            s.pendingResponse = { content = content, mime = mime, code = code }
+        else
+            s.pendingResponse = { content = '{"error":"Internal server error"}', code = 500 }
+        end
+    end)
 end
 
 ---Handle client request data
