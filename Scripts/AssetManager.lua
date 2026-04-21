@@ -19,8 +19,8 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
     ---@cast staticMeshClass UClass
     local actor = CreateInvalidObject() ---@cast actor AActor
     local object = StaticFindObject(assetPath)
-    -- Direct game-thread call — no spin-wait needed since SpawnActor handlers
-    -- run on the game thread via LoopInGameThreadWithDelay.
+    -- SpawnActor is called from HTTP handlers (centrally dispatched to game thread)
+    -- or console commands / keybinds (already on game thread), so UObject access is safe.
     local assetTag = tag
     pcall(function()
       LoadAsset(assetPath)
@@ -173,12 +173,12 @@ local function HandleSpawnActor(session)
           end
         end
       end
-      return json.stringify { data = assetTags }
+      return { data = assetTags }
     else
       if content and content.AssetPath and content.Location then
         local spawned, tag = SpawnActor(content.AssetPath, content.Location, content.Rotation, content.tag, content.scale)
         if spawned then
-          return json.stringify { data = { tag } }
+          return { data = { tag } }
         else
           error("Failed to spawn asset " .. content.AssetPath)
         end

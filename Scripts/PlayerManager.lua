@@ -164,12 +164,12 @@ local function HandleGetPlayerStates(session)
   local ok = ExecuteInGameThreadSync(function()
     res = GetPlayerStates(playerId)
   end, "HandleGetPlayerStates", 200)
-  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
+  if not ok then return { error = "Game thread timeout" }, nil, 503 end
   if playerId and #res == 0 then
-    return json.stringify { message = string.format("Player with unique ID %s not found", playerId) }, nil, 404
+    return { message = string.format("Player with unique ID %s not found", playerId) }, nil, 404
   end
 
-  return json.stringify { data = res }, nil, 200
+  return { data = res }, nil, 200
 end
 
 ---Handle request to teleport player
@@ -177,7 +177,7 @@ end
 local function HandleTransferMoneyToPlayer(session)
   local playerId = session.pathComponents[2]
   if not playerId then
-    return json.stringify { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+    return { error = string.format("Invalid player ID %s", playerId) }, nil, 400
   end
 
   local data = json.parse(session.content)
@@ -189,20 +189,20 @@ local function HandleTransferMoneyToPlayer(session)
     TransferMoneyToPlayer(playerId, data.Amount, data.Message)
     return nil, nil, 200
   end
-  return json.stringify { error = "Invalid payload" }, nil, 400
+  return { error = "Invalid payload" }, nil, 400
 end
 
 local function HandleSetPlayerName(session)
   local characterGuid = session.pathComponents[2]
   if not characterGuid then
-    return json.stringify { error = string.format("Invalid character guid %s", characterGuid) }, nil, 400
+    return { error = string.format("Invalid character guid %s", characterGuid) }, nil, 400
   end
 
   local data = json.parse(session.content)
   if data and data.name then
     local PC = GetPlayerControllerFromGuid(characterGuid)
     if not PC:IsValid() or not PC.PlayerState:IsValid() then
-      return json.stringify { error = string.format("Invalid player controller %s", characterGuid) }, nil, 400
+      return { error = string.format("Invalid player controller %s", characterGuid) }, nil, 400
     end
     ExecuteInGameThreadSync(function()
       if PC:IsValid() and PC.PlayerState:IsValid() then
@@ -213,13 +213,13 @@ local function HandleSetPlayerName(session)
 
     return nil, nil, 200
   end
-  return json.stringify { error = "Invalid payload" }, nil, 400
+  return { error = "Invalid payload" }, nil, 400
 end
 
 local function HandlePlayerSendChat(session)
   local playerId = session.pathComponents[2]
   if not playerId then
-    return json.stringify { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+    return { error = string.format("Invalid player ID %s", playerId) }, nil, 400
   end
 
   local data = json.parse(session.content)
@@ -227,7 +227,7 @@ local function HandlePlayerSendChat(session)
     PlayerSendChat(playerId, data.Message)
     return nil, nil, 204
   end
-  return json.stringify { error = "Invalid payload" }, nil, 400
+  return { error = "Invalid payload" }, nil, 400
 end
 
 local mutedPlayers = {}
@@ -333,7 +333,7 @@ end)
 local function HandleMutePlayer(session)
   local playerId = session.pathComponents[2]
   if not playerId then
-    return json.stringify { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+    return { error = string.format("Invalid player ID %s", playerId) }, nil, 400
   end
 
   local data = json.parse(session.content)
@@ -341,7 +341,7 @@ local function HandleMutePlayer(session)
     local muteFor = data.MuteFor
     if muteFor == nil or muteFor == false then
       UnmutePlayer(playerId)
-      return json.stringify { status = "unmuted" }, nil, 200
+      return { status = "unmuted" }, nil, 200
     end
     local muteUntil = muteFor
     if type(muteUntil) == "number" and muteUntil > 0 and muteUntil < 1000000000 then
@@ -349,24 +349,24 @@ local function HandleMutePlayer(session)
     end
     local hard = data.Hard == true
     MutePlayer(playerId, muteUntil, hard)
-    return json.stringify { status = "muted", MuteUntil = muteUntil, Hard = hard }, nil, 200
+    return { status = "muted", MuteUntil = muteUntil, Hard = hard }, nil, 200
   end
-  return json.stringify { error = "Invalid payload" }, nil, 400
+  return { error = "Invalid payload" }, nil, 400
 end
 
 local function HandleUnmutePlayer(session)
   local playerId = session.pathComponents[2]
   if not playerId then
-    return json.stringify { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+    return { error = string.format("Invalid player ID %s", playerId) }, nil, 400
   end
 
   UnmutePlayer(playerId)
-  return json.stringify { status = "unmuted" }, nil, 200
+  return { status = "unmuted" }, nil, 200
 end
 
 local function HandleGetMutedPlayers(session)
   local result = GetMutedPlayers()
-  return json.stringify { data = result }, nil, 200
+  return { data = result }, nil, 200
 end
 
 
@@ -417,7 +417,7 @@ local function HandleTeleportPlayer(session)
                 PC:ServerTeleportCharacter(location, false, false)
               end
             elseif pawn:IsA(vehicleClass) and data.NoVehicles then
-              return json.stringify { error = string.format("Failed to teleport player %s: Player is inside a vehicle", playerId) }, nil, 400
+              return { error = string.format("Failed to teleport player %s: Player is inside a vehicle", playerId) }, nil, 400
             elseif pawn:IsA(vehicleClass) then
               ---@cast pawn AMTVehicle
               local bResetTrailers = true
@@ -435,14 +435,14 @@ local function HandleTeleportPlayer(session)
           end, "HandleTeleportPlayer")
 
           local msg = string.format("Teleported player %s to %s", playerId, json.stringify(location))
-          return json.stringify { status = msg }
+          return { status = msg }
         end
       end
-      return json.stringify { error = string.format("Failed to teleport player %s", playerId) }, nil, 400
+      return { error = string.format("Failed to teleport player %s", playerId) }, nil, 400
     end
-    return json.stringify { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+    return { error = string.format("Invalid player ID %s", playerId) }, nil, 400
   end
-  return json.stringify { error = "Invalid payload" }, nil, 400
+  return { error = "Invalid payload" }, nil, 400
 end
 
 ---Get all current parties
@@ -479,8 +479,8 @@ local function HandleGetParties(session)
   local ok = ExecuteInGameThreadSync(function()
     data = GetParties()
   end, "HandleGetParties", 100)
-  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
-  return json.stringify { data = data }, nil, 200
+  if not ok then return { error = "Game thread timeout" }, nil, 503 end
+  return { data = data }, nil, 200
 end
 
 ---Handle request to make a player a suspect
@@ -488,7 +488,7 @@ end
 local function HandleMakePlayerSuspect(session)
   local characterGuid = session.pathComponents[2]
   if not characterGuid then
-    return json.stringify { error = "Missing character GUID" }, nil, 400
+    return { error = "Missing character GUID" }, nil, 400
   end
 
   local data = json.parse(session.content)
@@ -496,7 +496,7 @@ local function HandleMakePlayerSuspect(session)
 
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if not PC:IsValid() then
-    return json.stringify { error = string.format("Player %s not found", characterGuid) }, nil, 404
+    return { error = string.format("Player %s not found", characterGuid) }, nil, 404
   end
 
   local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
@@ -528,7 +528,7 @@ local function HandleMakePlayerSuspect(session)
     end
   end)
 
-  return json.stringify { status = resultMsg }, nil, 200
+  return { status = resultMsg }, nil, 200
 end
 
 ---Diagnostic: peek into Net_Suspects and police state
@@ -570,7 +570,7 @@ local function HandleGetPoliceState()
     end
   end)
 
-  return json.stringify(result), nil, 200
+  return (result), nil, 200
 end
 
 ---Experimental endpoint to hide actor and disable collision
@@ -578,7 +578,7 @@ end
 local function HandleExperimentalHideActor(session)
   local characterGuid = session.pathComponents[2]
   if not characterGuid then
-    return json.stringify { error = "Missing character GUID" }, nil, 400
+    return { error = "Missing character GUID" }, nil, 400
   end
 
   local data = json.parse(session.content)
@@ -604,7 +604,7 @@ local function HandleExperimentalHideActor(session)
     end
   end, "HandleExperimentalHideActor")
 
-  return json.stringify { status = resultMsg }, nil, 200
+  return { status = resultMsg }, nil, 200
 end
 
 ---Experimental endpoint to hide costume using MotorTown API
@@ -612,7 +612,7 @@ end
 local function HandleExperimentalHideCostume(session)
   local characterGuid = session.pathComponents[2]
   if not characterGuid then
-    return json.stringify { error = "Missing character GUID" }, nil, 400
+    return { error = "Missing character GUID" }, nil, 400
   end
 
   local data = json.parse(session.content)
@@ -638,7 +638,7 @@ local function HandleExperimentalHideCostume(session)
     end
   end, "HandleExperimentalHideCostume")
 
-  return json.stringify { status = resultMsg }, nil, 200
+  return { status = resultMsg }, nil, 200
 end
 
 ---Experimental endpoint to manipulate Ghost flag
@@ -646,7 +646,7 @@ end
 local function HandleExperimentalGhostFlag(session)
   local characterGuid = session.pathComponents[2]
   if not characterGuid then
-    return json.stringify { error = "Missing character GUID" }, nil, 400
+    return { error = "Missing character GUID" }, nil, 400
   end
 
   local data = json.parse(session.content)
@@ -679,7 +679,7 @@ local function HandleExperimentalGhostFlag(session)
     end
   end, "HandleExperimentalGhostFlag")
 
-  return json.stringify { status = resultMsg }, nil, 200
+  return { status = resultMsg }, nil, 200
 end
 
 ---Experimental endpoint to spectate target player
@@ -687,12 +687,12 @@ end
 local function HandleExperimentalSpectate(session)
   local callerGuid = session.pathComponents[2]
   if not callerGuid then
-    return json.stringify { error = "Missing caller character GUID" }, nil, 400
+    return { error = "Missing caller character GUID" }, nil, 400
   end
 
   local data = json.parse(session.content)
   if not data or not data.target_guid then
-     return json.stringify { error = "Missing target_guid in payload" }, nil, 400
+     return { error = "Missing target_guid in payload" }, nil, 400
   end
   local targetGuid = data.target_guid
 
@@ -716,7 +716,7 @@ local function HandleExperimentalSpectate(session)
     end
   end, "HandleExperimentalSpectate")
 
-  return json.stringify { status = resultMsg }, nil, 200
+  return { status = resultMsg }, nil, 200
 end
 
 return {

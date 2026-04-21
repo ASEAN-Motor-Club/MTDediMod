@@ -57,6 +57,7 @@ local _mimeType = {
 ---@field content string? Request body
 ---@field state ConnectionState
 ---@field connTime number
+---@field pendingResponse {content:string|table?,mime:MimeType?,code:integer?}? Response queued by game thread for async send (GET/HEAD only)
 local ClientTable = {}
 ClientTable.__index = ClientTable
 
@@ -372,33 +373,38 @@ local function dumpSession(client)
 end
 
 ---This is called when we have a complete request ready to be processed.
+---Runs on the game thread (dispatched via ExecuteInGameThreadSync from the async thread).
+---Returns response data so the async thread can handle sendResponse and JSON stringify.
 ---@param client ClientTable
+---@return string|table? content Response body (string or table to be stringified on async thread)
+---@return MimeType? mime
+---@return integer? code HTTP status code
 local function processSession(client)
     dumpSession(client)
 
     local h = findHandler(client.urlComponents.path, client.method)
     if h then
         if h.authenticate and not authenticateSession(client) then
-            sendResponse(client, nil, nil, 401)
-            return
+            return nil, nil, 401
         end
 
         local status, content, mime, code = pcall(h.handler, client)
         -- Check if the handler returned any valid response
         if status then
-            sendResponse(client, content, mime, code)
+            return content, mime, code
         else
-            if not pcall(function()
-                    local errMsg = content or "Unknown error"
-                    LogOutput("ERROR", "Handler error: %s", content)
-                    -- TODO: Fix perser failed to escape certain characters
-                    local err = json.stringify {
-                        error = errMsg
-                    }
-                    sendResponse(client, err, nil, 500)
-                end) then
+            local errMsg = content or "Unknown error"
+            LogOutput("ERROR", "Handler error: %s", errMsg)
+            local jsonOk, jsonErr = pcall(function()
+                return {
+                    error = errMsg
+                }
+            end)
+            if jsonOk then
+                return jsonErr, nil, 500
+            else
                 -- Avoid using json.stringify here to avoid unprotected handler
-                sendResponse(client, '{"error":"Internal server error"}', nil, 500)
+                return '{"error":"Internal server error"}', nil, 500
             end
         end
     else
@@ -406,10 +412,10 @@ local function processSession(client)
         local h = findHandler(client.urlComponents.path, nil)
         if h then
             -- This is a valid path, but not for the method.
-            sendResponse(client, nil, nil, 405)
             -- TODO: need to build a header with the allowed methods!
+            return nil, nil, 405
         else
-            sendResponse(client, nil, nil, 404)
+            return nil, nil, 404
         end
     end
 end
@@ -425,6 +431,44 @@ local function decodeQuery(path)
         cgi[name] = value
     end
     return cgi
+end
+
+---Dispatch a complete request to the appropriate thread based on HTTP method.
+---GET/HEAD use fire-and-forget ExecuteInGameThread (no async-thread spin-wait).
+---All mutating methods use ExecuteInGameThreadSync to guarantee completion ordering.
+---@param s ClientTable
+local function dispatchSession(s)
+    if s.method == "GET" or s.method == "HEAD" then
+        -- Fire-and-forget: queue handler to game thread, async thread will poll pendingResponse
+        ExecuteInGameThread(function()
+            local ok, content, mime, code = pcall(processSession, s)
+            if ok then
+                s.pendingResponse = { content = content, mime = mime, code = code }
+            else
+                s.pendingResponse = { content = '{"error":"Internal server error"}', code = 500 }
+            end
+        end)
+    else
+        -- Mutating method: block async thread until game thread completes
+        local res = {}
+        local ok = ExecuteInGameThreadSync(function()
+            res.content, res.mime, res.code = processSession(s)
+        end, "Webserver.processSession", 5000)
+        if not ok then
+            sendResponse(s, '{"error":"Game thread timeout"}', nil, 503)
+        else
+            if type(res.content) == "table" then
+                local strOk, strErr = pcall(json.stringify, res.content)
+                if strOk then
+                    sendResponse(s, strErr, res.mime, res.code)
+                else
+                    sendResponse(s, '{"error":"JSON stringify failed"}', nil, 500)
+                end
+            else
+                sendResponse(s, res.content, res.mime, res.code)
+            end
+        end
+    end
 end
 
 ---Handle client request data
@@ -487,8 +531,7 @@ local function handleClient(client)
 
                     if s.contentLength == 0 then
                         LogOutput("DEBUG", "Content length = 0, not waiting for content")
-                        -- Processing the session will result in it being closed
-                        processSession(s)
+                        dispatchSession(s)
                     else
                         LogOutput("DEBUG", "Waiting for content")
                         s.state = "body"
@@ -496,7 +539,7 @@ local function handleClient(client)
                 end
             else
                 s.content = data
-                processSession(s)
+                dispatchSession(s)
             end
         else
             if err == "closed" then
@@ -539,6 +582,25 @@ local function process(timeout)
             else
                 handleClient(client)
             end
+        end
+    end
+
+    -- Send pending GET/HEAD responses (async thread handles stringify + socket I/O)
+    for _, client in ipairs(clients) do
+        local s = sessions[client]
+        if s and s.pendingResponse then
+            local pr = s.pendingResponse
+            if type(pr.content) == "table" then
+                local strOk, strErr = pcall(json.stringify, pr.content)
+                if strOk then
+                    sendResponse(s, strErr, pr.mime, pr.code)
+                else
+                    sendResponse(s, '{"error":"JSON stringify failed"}', nil, 500)
+                end
+            else
+                sendResponse(s, pr.content, pr.mime, pr.code)
+            end
+            s.pendingResponse = nil
         end
     end
 
@@ -588,7 +650,7 @@ local function init(host, initPort)
     local bindAddr, bindPort = g_server:getsockname()
     LogOutput("INFO", "Webserver listening to host %s on port %i", (bindAddr or host), (bindPort or initPort))
 
-    g_server:settimeout(0)  -- Non-blocking: webserver runs on the game thread via LoopInGameThreadWithDelay
+    g_server:settimeout(0)  -- Non-blocking: accept() returns immediately if no pending connections
 
     -- Add the server socket to the client arrays so we will wait on it in select()
     table.insert(clients, g_server)
@@ -604,16 +666,18 @@ local function run(bindHost, bindPort)
     -- Register core webserver command
     registerHandler("/stop", "POST", function(session)
         isServerRunning = false
-        return json.stringify { status = "ok" }, nil, 201
+        return { status = "ok" }, nil, 201
     end)
 
     init(bindHost, bindPort)
     isServerRunning = true
-    -- Run the webserver loop on the game thread (EngineTick) via LoopInGameThreadWithDelay.
-    -- This means all HTTP handlers execute on the game thread, so UObject access is safe
-    -- without any ExecuteInGameThreadSync bridge.
-    -- process() uses timeout=0 (non-blocking socket.select) so we never stall the engine.
-    LoopInGameThreadWithDelay(1, function()
+    -- Run the webserver loop off the game thread via LoopAsync so that socket I/O
+    -- (accept, receive, select) never blocks EngineTick.  When a complete HTTP
+    -- request is ready, processSession is dispatched to the game thread with
+    -- ExecuteInGameThreadSync; the response is then sent from the async thread.
+    -- process() uses timeout=0 (non-blocking socket.select) so the async thread
+    -- never sleeps longer than necessary.
+    LoopAsync(1, function()
         process(0)
         if not isServerRunning then
             LogOutput("INFO", "Webserver stopped")

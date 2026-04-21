@@ -201,7 +201,7 @@ local function HandleShowPopupMessage(session)
       ShowMessagePopup(content.message, content.playerId)
       return nil, nil, 204
     end
-    return json.stringify { message = "No message provided" }, nil, 400
+    return { message = "No message provided" }, nil, 400
   end
   return nil, nil, 400
 end
@@ -213,7 +213,7 @@ local function HandleShowSystemMessage(session)
       ShowSystemMessageToCharacter(content.message, content.characterGuid)
       return nil, nil, 204
     end
-    return json.stringify { message = "Missing params" }, nil, 400
+    return { message = "Missing params" }, nil, 400
   end
   return nil, nil, 400
 end

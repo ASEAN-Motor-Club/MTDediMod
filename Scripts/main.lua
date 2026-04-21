@@ -43,11 +43,11 @@ local function LoadWebserver()
     server.registerHandler("/status/general/*", "GET", serverManager.HandleGetZoneState)
     server.registerHandler("/dump/lua_types", "POST", function(session)
         GenerateLuaTypes()
-        return json.stringify { status = "lua types generated" }, nil, 200
+        return { status = "lua types generated" }, nil, 200
     end)
     server.registerHandler("/mods/reload", "POST", function(session)
         RestartCurrentMod()
-        return json.stringify { status = "received mods reload signal" }, nil, 202
+        return { status = "received mods reload signal" }, nil, 202
     end)
     server.registerHandler("/status/traffic", "POST", serverManager.HandleUpdateNpcTraffic)
     server.registerHandler("/config", "POST", serverManager.HandleSetServerConfig)

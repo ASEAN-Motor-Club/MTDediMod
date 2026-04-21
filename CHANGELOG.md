@@ -6,9 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
-### [server/v0.38.0] — 2026-04-21
+### [server/v0.38.0-rc1] — 2026-04-21
 
 #### Changed
+- Restored real `ExecuteInGameThreadSync` with `_gameThreadDepth` re-entrancy detection to prevent deadlocks in nested dispatch
+- Webserver loop moved from `LoopInGameThreadWithDelay` back to `LoopAsync` — socket I/O no longer blocks the game thread
+- GET/HEAD endpoints dispatch via fire-and-forget `ExecuteInGameThread`; mutating methods (POST/PUT/DELETE/PATCH) use blocking `ExecuteInGameThreadSync` with 5s timeout
+- JSON stringify offloaded from game thread to async thread — all handlers now return Lua tables and the webserver stringifies centrally
 - `EnqueueWebhookEvent` now accepts a Lua table directly instead of a JSON string, eliminating the Lua→C++ serialize/parse roundtrip that previously blocked the game thread
 
 ### [server/v0.37.5] — 2026-04-20

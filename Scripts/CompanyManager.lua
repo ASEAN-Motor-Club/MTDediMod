@@ -413,10 +413,10 @@ local function HandleGetCompanies(session)
   local company = GetCompanies(companyGuid, filters, limit)
 
   if companyGuid and #company == 0 then
-    return json.stringify { message = string.format("Company with %s GUID not found", companyGuid) }, nil, 404
+    return { message = string.format("Company with %s GUID not found", companyGuid) }, nil, 404
   end
 
-  return json.stringify { data = company }
+  return { data = company }
 end
 
 return {

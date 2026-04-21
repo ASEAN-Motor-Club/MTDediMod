@@ -102,7 +102,7 @@ local function HandleGetCharacters()
       table.insert(data, CharacterToTable(gameState.Characters[i]))
     end
   end
-  return json.stringify { data = data }
+  return { data = data }
 end
 
 return {

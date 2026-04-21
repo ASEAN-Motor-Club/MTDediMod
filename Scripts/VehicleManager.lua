@@ -1961,18 +1961,15 @@ local function HandleGetVehicles(session)
   LogOutput("DEBUG", "GetVehicles time: %fs", getTime)
 
   if id and #data == 0 then
-    return json.stringify { message = string.format("Vehicle with ID %s not found", id) }, nil, 404
+    return { message = string.format("Vehicle with ID %s not found", id) }, nil, 404
   end
 
-  local stringifyTime, res = timer.benchmark(json.stringify, { data = data })
-  LogOutput("DEBUG", "GetVehicles stringify time: %fs", stringifyTime)
-  return res, nil, 200
+  return { data = data }, nil, 200
 end
 
 local function HandleGetVehiclesByTag(session)
   local tags = SplitString(session.queryComponents.tags, ",")
-  local res = json.stringify({ data = GetVehiclesByTag(tags) })
-  return res, nil, 200
+  return { data = GetVehiclesByTag(tags) }, nil, 200
 end
 
 ---Handle vehicle despawn request
@@ -1987,13 +1984,13 @@ local function HandleDespawnVehicle(session)
   end
 
   if not id then
-    return json.stringify { message = "Invalid vehicle ID" }, nil, 400
+    return { message = "Invalid vehicle ID" }, nil, 400
   end
 
   if DespawnVehicleById(id, playerGuid) then
     return nil, nil, 204
   else
-    return json.stringify { message = "Failed to despawn vehicle" }, nil, 400
+    return { message = "Failed to despawn vehicle" }, nil, 400
   end
 end
 
@@ -2017,7 +2014,7 @@ local function HandleCreateVehicleDealerSpawnPoint(session)
       data.VehicleParam
     )
     if status then
-      return json.stringify { data = { tag = tag } }, nil, 201
+      return { data = { tag = tag } }, nil, 201
     end
   end
   return nil, nil, 400
@@ -2026,10 +2023,7 @@ end
 ---Handle the get garages request
 ---@type RequestPathHandler
 local function HandleGetGarages(session)
-  local res = json.stringify {
-    data = GetGarages()
-  }
-  return res, nil, 200
+  return { data = GetGarages() }, nil, 200
 end
 
 ---Handle garage spawn request
@@ -2050,7 +2044,7 @@ local function HandleSpawnGarage(session)
       }
     )
     if status then
-      return json.stringify { data = { tag = tag } }, nil, 201
+      return { data = { tag = tag } }, nil, 201
     end
   end
   return nil, nil, 400
@@ -2091,23 +2085,23 @@ local function HandleSetVehicleParameter(session)
     if vehicle:IsValid() then
       local fields = SplitString(data.Field, ".") or {}
       RecursiveSetValue(vehicle, fields, data.Value)
-      return json.stringify { Status = "ok" }, nil, 200
+      return { Status = "ok" }, nil, 200
     end
-    return json.stringify { error = "Unable to find specified vehicle" }, nil, 404
+    return { error = "Unable to find specified vehicle" }, nil, 404
   end
-  return json.stringify { error = "Invalid payload provided" }, nil, 400
+  return { error = "Invalid payload provided" }, nil, 400
 end
 
 local function HandleDetachPlayerVehicle(session)
   local playerId = session.pathComponents[2]
   local content = json.parse(session.content)
   if not content then
-    return json.stringify { error = "Invalid JSON body" }, nil, 400
+    return { error = "Invalid JSON body" }, nil, 400
   end
 
   local PC = GetPlayerControllerFromGuid(playerId)
   if not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
+    return { error = "Invalid player controller" }, nil, 400
   end
 
   -- SAFETY: Net_SpawnedVehicles and Net_Hooks are replicated TArrays.
@@ -2129,7 +2123,7 @@ local function HandleDetachPlayerVehicle(session)
       end
     end)
   end, "HandleDetachPlayerVehicle", 200)
-  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
+  if not ok then return { error = "Game thread timeout" }, nil, 503 end
 end
 
 local function HandleGetPlayerVehicleDecal(session)
@@ -2151,9 +2145,9 @@ local function HandleGetPlayerVehicleDecal(session)
     }
   end, "HandleGetPlayerVehicleDecal", 200)
 
-  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
-  if errMsg then return json.stringify { error = errMsg }, nil, errCode end
-  return json.stringify(result), nil, 200
+  if not ok then return { error = "Game thread timeout" }, nil, 503 end
+  if errMsg then return { error = errMsg }, nil, errCode end
+  return (result), nil, 200
 end
 
 
@@ -2161,7 +2155,7 @@ local function HandleSetWorldVehicleDecal(session)
   local className = session.pathComponents[2]
   local content = json.parse(session.content)
   if not content then
-    return json.stringify { error = "Invalid JSON body" }, nil, 400
+    return { error = "Invalid JSON body" }, nil, 400
   end
   
   local vs = FindAllOf(className)
@@ -2228,14 +2222,14 @@ local function HandleSetPlayerVehicleDecal(session)
   local playerId = session.pathComponents[2]
   local content = json.parse(session.content)
   if not content then
-    return json.stringify { error = "Invalid JSON body" }, nil, 400
+    return { error = "Invalid JSON body" }, nil, 400
   end
 
   local PC = GetPlayerControllerFromUniqueId(playerId)
   if PC:IsValid() then
     local vehicle = GetPlayerVehicle(PC)
     if vehicle == nil then
-      return json.stringify { error = "Player is not in a vehicle" }, nil, 400
+      return { error = "Player is not in a vehicle" }, nil, 400
     end
     if vehicle:IsValid() then
       ---@diagnostic disable-next-line: need-check-nil
@@ -2247,12 +2241,12 @@ local function HandleSetPlayerVehicleDecal(session)
       vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
       PC:ServerSetVehicleCustomization(vehicle, TableToVehicleCustomization(content.customization, vehicle.Customization))
 
-      return json.stringify { Status = "ok" }, nil, 200
+      return { Status = "ok" }, nil, 200
     end
-    return json.stringify { error = "Invalid vehicle" }, nil, 400
+    return { error = "Invalid vehicle" }, nil, 400
   end
 
-  return json.stringify { error = "Invalid player controller" }, nil, 400
+  return { error = "Invalid player controller" }, nil, 400
 end
 
 local function PlayerVehicleToTable(vehicle, complete)
@@ -2302,11 +2296,11 @@ local function HandleGetPlayerVehicles(session)
 
   local PC = GetPlayerControllerFromUniqueId(playerId)
   if not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
+    return { error = "Invalid player controller" }, nil, 400
   end
 
   if not PC.Net_SpawnedVehicles:IsValid() then
-    return json.stringify { error = "Invalid player vehicles" }, nil, 400
+    return { error = "Invalid player vehicles" }, nil, 400
   end
 
   local lastPlayerVehicleId = nil
@@ -2354,7 +2348,7 @@ local function HandleGetPlayerVehicles(session)
       end
     end)
   end
-  return json.stringify { vehicles = vehicles }, nil, 200
+  return { vehicles = vehicles }, nil, 200
 end
 
 
@@ -2363,7 +2357,7 @@ local function HandlePlayerExitVehicle(session)
   local characterGuid = session.pathComponents[2]
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
+    return { error = "Invalid player controller" }, nil, 400
   end
   ExecuteInGameThreadSync(function()
     PC:ServerExitVehicle()
@@ -2377,11 +2371,11 @@ local function HandlePlayerEnterLastVehicle(session)
   local characterGuid = session.pathComponents[2]
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if PC == nil or not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
+    return { error = "Invalid player controller" }, nil, 400
   end
 
   if PC.LastVehicle == nil or not PC.LastVehicle:IsValid() then
-    return json.stringify { error = "no_last_vehicle" }, nil, 400
+    return { error = "no_last_vehicle" }, nil, 400
   end
 
   local vehicle = PC.LastVehicle
@@ -2400,7 +2394,7 @@ local function HandlePlayerEnterLastVehicle(session)
     PC:ServerEnterVehicle(vehicle, 1, -1, false)
   end)
 
-  return json.stringify { status = "success" }, nil, 200
+  return { status = "success" }, nil, 200
 end
 
 ---Handle despawning a player's current vehicle (and trailers)
@@ -2409,16 +2403,16 @@ local function HandleDespawnPlayerVehicle(session)
   local characterGuid = session.pathComponents[2]
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
+    return { error = "Invalid player controller" }, nil, 400
   end
   local count = 0
   ExecuteInGameThreadSync(function()
     count = DespawnPlayerVehicle(PC)
   end, "HandleDespawnPlayerVehicle")
   if count > 0 then
-    return json.stringify { despawned = count }, nil, 200
+    return { despawned = count }, nil, 200
   else
-    return json.stringify { error = "No vehicle to despawn" }, nil, 404
+    return { error = "No vehicle to despawn" }, nil, 404
   end
 end
 
@@ -2574,7 +2568,7 @@ local function HandleSpawnVehicle(session)
         end
       end
 
-      return json.stringify { data = { tag }, actor = vehicle:GetFullName() }
+      return { data = { tag }, actor = vehicle:GetFullName() }
     else
       error("Failed to spawn asset " .. content.AssetPath)
     end

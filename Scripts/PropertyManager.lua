@@ -121,7 +121,7 @@ local function HandleGetHouses(session)
   local guid = session.pathComponents[2]
 
   local houses = GetHouses(guid)
-  return json.stringify { data = houses }
+  return { data = houses }
 end
 
 ---Handle request for spawning a new house for sale
@@ -132,7 +132,7 @@ local function HandleSpawnHouse(session)
   if data ~= nil and data.Location and data.Rotation and data.HouseParam then
     local status, guid = SpawnHouse(data.Location, data.Rotation, data.HouseParam)
     if status and guid then
-      return json.stringify { data = { HouseGuid = guid } }, nil, 201
+      return { data = { HouseGuid = guid } }, nil, 201
     end
   end
 
@@ -142,12 +142,12 @@ end
 local function HandleTransferHouseDirect(session)
   local houseGuid = session.pathComponents[2]
   if not houseGuid then
-    return json.stringify { error = "Missing house GUID" }, nil, 400
+    return { error = "Missing house GUID" }, nil, 400
   end
 
   local data = json.parse(session.content)
   if not data or not data.NewOwnerCharacterGuid then
-    return json.stringify { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
+    return { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
   end
 
   local resultMsg = "not_executed"
@@ -180,18 +180,18 @@ local function HandleTransferHouseDirect(session)
     if not ok then resultMsg = "error: " .. tostring(err) end
   end, "HandleTransferHouseDirect")
 
-  return json.stringify { status = resultMsg }, nil, 200
+  return { status = resultMsg }, nil, 200
 end
 
 local function HandleTransferHouseDirectExtend(session)
   local houseGuid = session.pathComponents[2]
   if not houseGuid then
-    return json.stringify { error = "Missing house GUID" }, nil, 400
+    return { error = "Missing house GUID" }, nil, 400
   end
 
   local data = json.parse(session.content)
   if not data or not data.NewOwnerCharacterGuid then
-    return json.stringify { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
+    return { error = "Missing NewOwnerCharacterGuid in payload" }, nil, 400
   end
 
   local resultMsg = "not_executed"
@@ -230,18 +230,18 @@ local function HandleTransferHouseDirectExtend(session)
     if not ok then resultMsg = "error: " .. tostring(err) end
   end, "HandleTransferHouseDirectExtend")
 
-  return json.stringify { status = resultMsg }, nil, 200
+  return { status = resultMsg }, nil, 200
 end
 
 local function HandleExtendHouseRent(session)
   local houseGuid = session.pathComponents[2]
   if not houseGuid then
-    return json.stringify { error = "Missing house GUID" }, nil, 400
+    return { error = "Missing house GUID" }, nil, 400
   end
 
   local data = json.parse(session.content)
   if not data or not data.Seconds then
-    return json.stringify { error = "Missing Seconds in payload" }, nil, 400
+    return { error = "Missing Seconds in payload" }, nil, 400
   end
 
   local resultMsg = "not_executed"
@@ -256,7 +256,7 @@ local function HandleExtendHouseRent(session)
     if not ok then resultMsg = "error: " .. tostring(err) end
   end, "HandleExtendHouseRent")
 
-  return json.stringify { status = resultMsg }, nil, 200
+  return { status = resultMsg }, nil, 200
 end
 
 return {

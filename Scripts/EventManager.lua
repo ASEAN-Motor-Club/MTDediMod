@@ -457,9 +457,9 @@ local function HandleGetEvents(session)
   local eventGuid = session.pathComponents[2]
   local res = GetEvents(eventGuid)
   if eventGuid and #res == 0 then
-    return json.stringify { message = string.format("Event %s not found", eventGuid) }, nil, 404
+    return { message = string.format("Event %s not found", eventGuid) }, nil, 404
   end
-  return json.stringify { data = res }, nil, 200
+  return { data = res }, nil, 200
 end
 
 ---Handle request for a new event
@@ -472,10 +472,7 @@ local function HandleCreateNewEvent(session)
     local status, guid = CreateNewEvent(content)
     if status then
       LogOutput("DEBUG", "Created new event %s", guid)
-      local events = json.stringify {
-        data = GetEvents(guid)
-      }
-      return events, nil, 201
+      return { data = GetEvents(guid) }, nil, 201
     end
   end
 
@@ -519,10 +516,7 @@ local function HandleUpdateEvent(session)
       end
     end
 
-    local events = json.stringify {
-      data = GetEvents(eventGuid)
-    }
-    return events
+    return { data = GetEvents(eventGuid) }
   end
   return nil, nil, 400
 end

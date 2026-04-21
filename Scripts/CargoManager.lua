@@ -648,9 +648,9 @@ local function HandleGetDeliveryPoints(session)
 
   local data = GetDeliveryPoints(guid, filters, limit)
   if guid and #data == 0 then
-    return json.stringify { message = string.format("Delivery point %s not found", guid) }, nil, 404
+    return { message = string.format("Delivery point %s not found", guid) }, nil, 404
   end
-  return json.stringify {
+  return {
     data = data
   }
 end
@@ -679,7 +679,7 @@ local function HandleGetPlayerContracts(session)
     end
   end)
 
-  return json.stringify {
+  return {
     data = data
   }
 end
@@ -720,14 +720,14 @@ local function HandleDespawnPlayerCargo(session)
   local characterGuid = session.pathComponents[2]
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
+    return { error = "Invalid player controller" }, nil, 400
   end
 
   local cargoKey = DespawnPlayerCargo(PC)
   if cargoKey then
-    return json.stringify { despawned = cargoKey }, nil, 200
+    return { despawned = cargoKey }, nil, 200
   else
-    return json.stringify { error = "Player is not holding any cargo" }, nil, 404
+    return { error = "Player is not holding any cargo" }, nil, 404
   end
 end
 
@@ -834,9 +834,9 @@ local function HandleGetVehicleCargos(session)
     result = resultData
   end, "HandleGetVehicleCargos", 300)
 
-  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
-  if errMsg then return json.stringify { error = errMsg }, nil, errCode end
-  return json.stringify { data = result }, nil, 200
+  if not ok then return { error = "Game thread timeout" }, nil, 503 end
+  if errMsg then return { error = errMsg }, nil, errCode end
+  return { data = result }, nil, 200
 end
 
 
@@ -881,11 +881,11 @@ local function HandleClearVehicleCargos(session)
   local characterGuid = session.pathComponents[2]
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if not PC:IsValid() then
-    return json.stringify { error = "Invalid player controller" }, nil, 400
+    return { error = "Invalid player controller" }, nil, 400
   end
 
   local count = ClearVehicleCargos(PC)
-  return json.stringify { cleared = count }, nil, 200
+  return { cleared = count }, nil, 200
 end
 
 return {

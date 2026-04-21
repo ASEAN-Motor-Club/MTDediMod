@@ -68,6 +68,11 @@ function ExecuteInGameThread(fn)
   fn()
 end
 
+function ExecuteInGameThreadSync(exec, label, maxMs)
+  exec()
+  return true
+end
+
 -- ============================================================
 -- FName stub
 -- ============================================================
@@ -92,6 +97,14 @@ function LogOutput(level, fmt, ...)
 end
 
 -- ============================================================
+-- ============================================================
+-- LuaSocket stub (Helpers.lua requires socket for Sleep/ExecuteInGameThreadSync)
+-- ============================================================
+package.loaded["socket"] = {
+  sleep = function(secs) end,
+  gettime = function() return os.clock() end,
+}
+
 -- RequireSafe (copied from Helpers.lua to be available before Helpers loads)
 -- ============================================================
 function RequireSafe(moduleName)

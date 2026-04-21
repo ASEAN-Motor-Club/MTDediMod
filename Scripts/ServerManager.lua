@@ -201,8 +201,8 @@ local function HandleGetServerState(session)
     local ok = ExecuteInGameThreadSync(function()
         data = GetServerState()
     end, "HandleGetServerState", 100)
-    if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
-    return json.stringify { data = data }
+    if not ok then return { error = "Game thread timeout" }, nil, 503 end
+    return { data = data }
 end
 
 ---Handle the get zone state commands
@@ -210,10 +210,7 @@ end
 local function HandleGetZoneState(session)
     local zoneName = session.pathComponents[3]
     if zoneName then
-        local serverStatus = json.stringify {
-            data = GetZoneState(zoneName)
-        }
-        return serverStatus
+        return { data = GetZoneState(zoneName) }
     end
     return nil, nil, 400
 end
@@ -232,7 +229,7 @@ local function HandleUpdateNpcTraffic(session)
             maxVehiclePerPlayer = maxV
         end
         AutoAdjustServerCaps(true)
-        return json.stringify { status = "ok" }
+        return { status = "ok" }
     end
     return nil, nil, 400
 end
@@ -247,10 +244,10 @@ local function HandleServerExecCommand(session)
         if world:IsValid() then
             local PC = data.PlayerId and GetPlayerControllerFromUniqueId(data.PlayerId) or nil
             UEHelpers.GetKismetSystemLibrary():ExecuteConsoleCommand(world, data.Command, PC)
-            return json.stringify { status = "ok" }, nil, 201
+            return { status = "ok" }, nil, 201
         end
     end
-    return json.stringify { error = "Invalid payload" }, nil, 400
+    return { error = "Invalid payload" }, nil, 400
 end
 
 ---Handle get server status
@@ -259,15 +256,15 @@ local function HandleGetServerStatus(session)
     local gameState = GetMotorTownGameState()
     if not gameState:IsValid() then
         -- Game state is not created yet
-        return json.stringify { status = "not ready" }, nil, 503
+        return { status = "not ready" }, nil, 503
     end
-    return json.stringify { status = "ok" }
+    return { status = "ok" }
 end
 
 ---Handle get mod version
 ---@type RequestPathHandler
 local function HandleGetModVersion(session)
-    return json.stringify { version = statics.ModVersion }
+    return { version = statics.ModVersion }
 end
 
 local function HandleSetServerConfig(session)
@@ -278,7 +275,7 @@ local function HandleSetServerConfig(session)
 
   local body = json.parse(session.content)
   if not body then
-    return json.stringify { error = "Invalid JSON body" }, nil, 400
+    return { error = "Invalid JSON body" }, nil, 400
   end
 
   -- SAFETY: Net_ServerConfig is a replicated property; mutations must be on the game thread.
@@ -303,7 +300,7 @@ local function HandleSetServerConfig(session)
       gameState.Net_ServerConfig.bAllowPlayerToJoinWithCompanyVehicles = body.bAllowPlayerToJoinWithCompanyVehicles
     end
   end, "HandleSetServerConfig", 200)
-  if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
+  if not ok then return { error = "Game thread timeout" }, nil, 503 end
   return nil, nil, 200
 end
 
@@ -339,8 +336,8 @@ local function HandleGetPolicePatrolAreas(session)
             })
         end
     end, "HandleGetPolicePatrolAreas", 150)
-    if not ok then return json.stringify { error = "Game thread timeout" }, nil, 503 end
-    return json.stringify { data = areas }
+    if not ok then return { error = "Game thread timeout" }, nil, 503 end
+    return { data = areas }
 end
 
 ExecuteWithDelay(5000, function()

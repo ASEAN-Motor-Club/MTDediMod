@@ -59,17 +59,17 @@ local function HandleAnnounceMessage(session)
       if type(data.message) == "string" then
         local status, id = AnnounceServerMessage(data.message, data.playerId, data.isPinned)
         if status then
-          return json.stringify { status = "ok", playerId = id }
+          return { status = "ok", playerId = id }
         end
-        return json.stringify { message = "Failed to send message" }, nil, 400
+        return { message = "Failed to send message" }, nil, 400
       else
-        return json.stringify { message = "Invalid message field specified" }, nil, 400
+        return { message = "Invalid message field specified" }, nil, 400
       end
     else
-      return json.stringify { message = "No message field specified" }, nil, 400
+      return { message = "No message field specified" }, nil, 400
     end
   end
-  return json.stringify { message = "Invalid request content" }, nil, 400
+  return { message = "Invalid request content" }, nil, 400
 end
 
 return {

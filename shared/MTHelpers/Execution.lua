@@ -3,16 +3,13 @@
 
 local Execution = {}
 
----Execute the given function directly on the current thread.
+---Execute the given function on the game thread and block until it completes.
+---Delegates to the global ExecuteInGameThreadSync (defined in Helpers.lua).
 ---
----Previously this was a spin-wait synchronization bridge from the async thread to the game
----thread. Now that the webserver runs on the game thread via LoopInGameThreadWithDelay,
----we simply call the function inline.
----
----@param fn function Function to execute (runs immediately, inline)
----@param callerName string? (unused — kept for call-site compatibility)
+---@param fn function Function to execute
+---@param callerName string? Label for timeout warnings
 function Execution.InGameThreadSync(fn, callerName)
-  fn()
+  ExecuteInGameThreadSync(fn, callerName)
 end
 
 return Execution
