@@ -2166,6 +2166,7 @@ local function PlayerVehicleToTable(vehicle, complete)
     if vehicle.Customization:IsValid() then
       vehicleInfo["customization"] = VehicleCustomizationToTable(vehicle.Customization)
     end
+    LogOutput("INFO", "Getting customization")
     if vehicle.Net_Parts:IsValid() then
       vehicleInfo["parts"] = {}
       vehicle.Net_Parts:ForEach(function(index, element)
@@ -2175,6 +2176,7 @@ local function PlayerVehicleToTable(vehicle, complete)
         end
       end)
     end
+    LogOutput("INFO", "Finished")
   end
   return vehicleInfo
 end

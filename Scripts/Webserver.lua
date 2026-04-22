@@ -482,17 +482,11 @@ local function dispatchSession(s)
     -- Block the async thread until the game thread finishes (or times out).
     -- Some engine operations are not safe when the async thread races ahead.
     local resContent, resMime, resCode
-    local completed = ExecuteInGameThreadSync(function()
-        local ok, content, mime, code = pcall(processSession, s)
-        if ok then
-            resContent, resMime, resCode = content, mime, code
-        else
-            resContent, resCode = '{"error":"Internal server error"}', 500
-        end
-    end, "dispatchSession " .. (s.urlString or "unknown"))
-
-    if not completed then
-        resContent, resCode = '{"error":"Game thread timeout"}', 503
+    local ok, content, mime, code = pcall(processSession, s)
+    if ok then
+        resContent, resMime, resCode = content, mime, code
+    else
+        resContent, resCode = '{"error":"Internal server error"}', 500
     end
 
     s.pendingResponse = { content = resContent, mime = resMime, code = resCode }
@@ -727,7 +721,7 @@ local function run(bindHost, bindPort)
     -- ExecuteInGameThreadSync; the response is then sent from the async thread.
     -- process() uses timeout=0 (non-blocking socket.select) so the async thread
     -- never sleeps longer than necessary.
-    LoopAsync(1, function()
+    LoopInGameThreadAfterFrames(5, function()
         process(0)
         if not isServerRunning then
             LogOutput("INFO", "Webserver stopped")
