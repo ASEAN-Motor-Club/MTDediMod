@@ -186,7 +186,7 @@ local function getNewClients()
     end
 
     LogOutput("DEBUG", "Accepted connection from client")
-    client:settimeout(1)
+    client:settimeout(0)
     table.insert(clients, client)
 
     local s = ClientTable.new(nextSessionID, client)
@@ -503,87 +503,105 @@ end
 local function handleClient(client)
     local s = sessions[client]
 
-    local data = nil ---@type string?
-    local err = nil ---@type string|"closed"|"timeout"|nil
-    local partial = nil ---@type number?
+    while true do
+        local data = nil ---@type string?
+        local err = nil ---@type string|"closed"|"timeout"|nil
+        local partial = nil ---@type number?
+        local done = false
 
-    local state, pErr = pcall(function()
-        if s.state == "init" or s.state == "header" then
-            data, err, partial = client:receive("*l")
-        elseif s.state == "body" then
-            data, err, partial = client:receive(s.contentLength)
-        end
+        local state, pErr = pcall(function()
+            if s.state == "init" or s.state == "header" then
+                data, err, partial = client:receive("*l")
+            elseif s.state == "body" then
+                data, err, partial = client:receive(s.contentLength)
+            end
 
-        if data then
-            if s.state == "init" then
-                LogOutput("DEBUG", "(%d) INIT: '%s'", s.id, data)
-                s.rawHeaders = {}
-                local method, urlString, ver = string.match(data, "(%S+)%s+(%S+)%s+(%S+)")
-                if method ~= nil then
-                    s.method = method
-                    s.urlString = urlString
-                    LogOutput("INFO", "Incoming request %s", s.urlString)
+            if data then
+                if s.state == "init" then
+                    LogOutput("DEBUG", "(%d) INIT: '%s'", s.id, data)
+                    s.rawHeaders = {}
+                    local method, urlString, ver = string.match(data, "(%S+)%s+(%S+)%s+(%S+)")
+                    if method ~= nil then
+                        s.method = method
+                        s.urlString = urlString
+                        LogOutput("INFO", "Incoming request %s", s.urlString)
 
-                    -- Break down the url string
-                    s.urlComponents = url.parse(urlString)
+                        -- Break down the url string
+                        s.urlComponents = url.parse(urlString)
 
-                    s.pathComponents = url.parse_path(s.urlComponents.path)
+                        s.pathComponents = url.parse_path(s.urlComponents.path)
 
-                    LogOutput("DEBUG", "Query Components %s", s.urlComponents.query or "")
-                    if s.urlComponents.query ~= nil then
-                        s.queryComponents = decodeQuery(s.urlComponents.query)
-                    end
+                        LogOutput("DEBUG", "Query Components %s", s.urlComponents.query or "")
+                        if s.urlComponents.query ~= nil then
+                            s.queryComponents = decodeQuery(s.urlComponents.query)
+                        end
 
-                    s.version = ver
+                        s.version = ver
 
-                    s.state = "header"
-                else
-                    LogOutput("ERROR", "Malformed initial line")
-                    markSessionForRemoval(s)
-                    return
-                end
-            elseif s.state == "header" then
-                LogOutput("DEBUG", "(%d)  HDR: %s", s.id, data)
-                if data ~= "" then
-                    table.insert(s.rawHeaders, data)
-                else
-                    LogOutput("DEBUG", "(%d)  End Headers", s.id)
-                    local rc = parseHeaders(s)
-                    if rc ~= 0 then
-                        sendResponse(s, nil, nil, 400)
+                        s.state = "header"
+                    else
+                        LogOutput("ERROR", "Malformed initial line")
+                        markSessionForRemoval(s)
+                        done = true
                         return
                     end
-
-                    processHeaders(s)
-
-                    if s.contentLength == 0 then
-                        LogOutput("DEBUG", "Content length = 0, not waiting for content")
-                        dispatchSession(s)
+                elseif s.state == "header" then
+                    LogOutput("DEBUG", "(%d)  HDR: %s", s.id, data)
+                    if data ~= "" then
+                        table.insert(s.rawHeaders, data)
                     else
-                        LogOutput("DEBUG", "Waiting for content")
-                        s.state = "body"
+                        LogOutput("DEBUG", "(%d)  End Headers", s.id)
+                        local rc = parseHeaders(s)
+                        if rc ~= 0 then
+                            sendResponse(s, nil, nil, 400)
+                            done = true
+                            return
+                        end
+
+                        processHeaders(s)
+
+                        if s.contentLength == 0 then
+                            LogOutput("DEBUG", "Content length = 0, not waiting for content")
+                            dispatchSession(s)
+                            done = true
+                            return
+                        else
+                            LogOutput("DEBUG", "Waiting for content")
+                            s.state = "body"
+                            done = true
+                            return
+                        end
                     end
+                else
+                    s.content = data
+                    dispatchSession(s)
+                    done = true
+                    return
                 end
             else
-                s.content = data
-                dispatchSession(s)
+                if err == "closed" then
+                    LogOutput("DEBUG", "Client closed the connection: ")
+                    markSessionForRemoval(s)
+                elseif err == "timeout" then
+                    -- Non-blocking socket: no complete line/body available yet.
+                    -- This is expected between frames; keep the connection open.
+                else
+                    LogOutput("ERROR", "Receive error: %s", err)
+                    markSessionForRemoval(s)
+                end
+                done = true
+                return
             end
-        else
-            if err == "closed" then
-                LogOutput("DEBUG", "Client closed the connection: ")
-                markSessionForRemoval(s)
-            elseif err == "timeout" then
-                LogOutput("ERROR", "Receive timeout. Partial data: %s", partial)
-                markSessionForRemoval(s)
-            else
-                LogOutput("ERROR", "Receive error: %s", err)
-                markSessionForRemoval(s)
-            end
+        end)
+        if not state then
+            LogOutput("ERROR", "Process error: %s", pErr)
+            markSessionForRemoval(s)
+            break
         end
-    end)
-    if not state then
-        LogOutput("ERROR", "Process error: %s", pErr)
-        markSessionForRemoval(s)
+
+        if done then
+            break
+        end
     end
 end
 

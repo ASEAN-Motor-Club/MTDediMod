@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc14] — 2026-04-22
+
+#### Fixed
+- Webserver request read latency: `handleClient` now loops to drain all buffered request lines in a single frame instead of one line per `process()` call. Per-client sockets changed from blocking (`settimeout(1)`) to non-blocking (`settimeout(0)`), eliminating the ~1–1.7 s wait at 30 fps for typical 7–10 line HTTP requests.
+
 ### [server/v0.38.0-rc13] — 2026-04-22
 
 #### Added
