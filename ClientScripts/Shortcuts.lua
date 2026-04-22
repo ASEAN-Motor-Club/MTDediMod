@@ -5,6 +5,7 @@ local config = require("ModConfig")
 local UEHelpers = require("UEHelpers")
 local teleportManager = require("TeleportManager")
 local vehicleManager = require("VehicleManager")
+local vehicleSaveSpawn = require("VehicleSaveSpawn")
 local json = require("JsonParser")
 local http = require("socket.http")
 local ltn12 = require("ltn12")
@@ -751,5 +752,13 @@ RegisterKeyBind(Key.G, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerGhostT
 RegisterKeyBind(Key.J, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerGodToggle)
 RegisterKeyBind(Key.H, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerHideCostume)
 RegisterKeyBind(Key.V, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerInvisibleToggle)
+
+RegisterKeyBind(Key.F5, { ModifierKey.CONTROL, ModifierKey.SHIFT }, function()
+  local PC = GetMyPlayerController()
+  if PC:IsValid() and PC.LastVehicle and PC.LastVehicle:IsValid() then
+    vehicleSaveSpawn.SaveVehicle("quicksave", vehicleSaveSpawn.SerializeVehicle(PC.LastVehicle))
+    LogOutput("INFO", "Vehicle quick-saved")
+  end
+end)
 
 return {}

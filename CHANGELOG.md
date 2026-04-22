@@ -246,6 +246,14 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
+### [client/v0.2.12] — 2026-04-22
+
+#### Added
+- Single-player vehicle save/spawn commands (`/save_vehicle [name]`, `/spawn_vehicle [name]`) with aliases `/sv` and `/spv` — stores vehicle config (asset, paint, decals, parts) as local JSON in `saved_vehicles/`
+- `VehicleSaveSpawn` client module: pure client-side serialize/deserialize with direct `world:SpawnActor` and server RPC application (no networking)
+- Quick-save keybind: `Ctrl+Shift+F5` saves the current vehicle to `saved_vehicles/quicksave.json`
+- Shared `VehicleSerialization` module extracted from server `VehicleManager.lua` for bidirectional customization/decal/part serialization
+
 ### [client/v0.2.11] — 2026-04-08
 
 #### Fixed

@@ -4,6 +4,16 @@ local json = require("JsonParser")
 local cargo = require("CargoManager")
 local assetManager = require("AssetManager")
 local timer = require("Debugging/Timer")
+local vehicleSerialization = require("VehicleSerialization")
+
+local VehicleCustomizationToTable = vehicleSerialization.VehicleCustomizationToTable
+local TableToVehicleCustomization = vehicleSerialization.TableToVehicleCustomization
+local VehicleDecalLayerToTable = vehicleSerialization.VehicleDecalLayerToTable
+local TableToVehicleDecalLayer = vehicleSerialization.TableToVehicleDecalLayer
+local VehicleDecalToTable = vehicleSerialization.VehicleDecalToTable
+local TableToVehicleDecal = vehicleSerialization.TableToVehicleDecal
+local VehiclePartToTable = vehicleSerialization.VehiclePartToTable
+local TableToVehiclePart = vehicleSerialization.TableToVehiclePart
 
 local vehicleDealerSoftPath = "/Script/MotorTown.MTDealerVehicleSpawnPoint"
 local garageSoftPath = "/Game/Objects/GarageActorBP.GarageActorBP_C"
@@ -893,165 +903,8 @@ local function NetEngineHotStateToTable(engine)
   }
 end
 
----Convert FMTVehicleCustomization to JSON serializable table
----@param custom FMTVehicleCustomization
-local function VehicleCustomizationToTable(custom)
-  local data = {}
-
-  data.BodyMaterialIndex = custom.BodyMaterialIndex
-
-  data.BodyColors = {}
-  if custom.BodyColors:IsValid() then
-    custom.BodyColors:ForEach(function(index, element)
-      local bodyColor = element:get()
-      if bodyColor:IsValid() then
-        table.insert(data.BodyColors, {
-          MaterialSlotName = element:get().MaterialSlotName:ToString(),
-          Color = ColorToTable(element:get().Color),
-        })
-      end
-    end)
-  end
-
-  return data
-end
-
-local function TableToVehicleCustomization(t, custom)
-  custom.BodyColors:Empty()
-  for index, value in ipairs(t.BodyColors) do
-    custom.BodyColors[index] = {
-      MaterialSlotName = FName(value.MaterialSlotName),
-      Color = value.Color,
-      Metallic = value.Metallic,
-      Roughness = value.Roughness,
-    }
-  end
-  return {
-    BodyMaterialIndex = t.BodyMaterialIndex,
-    BodyColors = custom.BodyColors,
-  }
-end
-
----Convert FMTVehicleDecalLayer to JSON serializable table
----@param decal FMTVehicleDecalLayer
-local function VehicleDecalLayerToTable(decal)
-  return {
-    DecalKey = decal.DecalKey:ToString(),
-    Color = ColorToTable(decal.Color),
-    Position = Vector2DToTable(decal.Position),
-    Rotation = RotatorToTable(decal.Rotation),
-    DecalScale = decal.DecalScale,
-    Stretch = decal.Stretch,
-    Coverage = decal.Coverage,
-    Flags = decal.Flags,
-  }
-end
-
-local function TableToVehicleDecalLayer(decal)
-  return {
-    DecalKey = FName(decal.DecalKey),
-    Color = decal.Color,
-    Position = decal.Position,
-    Rotation = decal.Rotation,
-    DecalScale = decal.DecalScale,
-    Stretch = decal.Stretch,
-    Coverage = decal.Coverage,
-    Flags = decal.Flags,
-  }
-end
-
----Convert FMTVehicleDecal to JSON serializable table
----@param decal FMTVehicleDecal
-local function VehicleDecalToTable(decal)
-  local data = {}
-
-  if decal.DecalLayers:IsValid() then
-    decal.DecalLayers:ForEach(function(index, element)
-      local layer = element:get()
-      if layer:IsValid() then
-        table.insert(data, VehicleDecalLayerToTable(layer))
-      end
-    end)
-  end
-
-  return {
-    DecalLayers = data,
-  }
-end
-
-local function TableToVehicleDecal(decal)
-  local decalLayers = {}
-
-  for index, value in ipairs(decal.DecalLayers) do
-    table.insert(decalLayers, TableToVehicleDecalLayer(value))
-  end
-
-  return {
-    DecalLayers = decalLayers,
-  }
-end
-
----Convert FMTVehiclePart to JSON serializable table
----@param part FMTVehiclePart
-local function VehiclePartToTable(part)
-  if not part:IsValid() or not IsUObjectSafe(part) then
-    return {}
-  end
-  local data = {}
-
-  data.ID = part.ID
-  data.Key = part.Key:ToString()
-  data.Slot = part.Slot
-  data.Damage = part.Damage
-
-  data.FloatValues = {} ---@type number[]
-  if part.FloatValues:IsValid() then
-    part.FloatValues:ForEach(function(index, element)
-      table.insert(data.FloatValues, element:get())
-    end)
-  end
-
-  data.Int64Values = {} ---@type number[]
-  if part.Int64Values:IsValid() then
-    part.Int64Values:ForEach(function(index, element)
-      table.insert(data.Int64Values, element:get())
-    end)
-  end
-
-  data.StringValues = {} ---@type string[]
-  if part.StringValues:IsValid() then
-    part.StringValues:ForEach(function(index, element)
-      table.insert(data.StringValues, element:get():ToString())
-    end)
-  end
-
-  data.VectorValues = {} ---@type table[]
-  if part.VectorValues:IsValid() then
-    part.VectorValues:ForEach(function(index, element)
-      table.insert(data.VectorValues, VectorToTable(element:get()))
-    end)
-  end
-
-  ---@diagnostic disable-next-line: undefined-field
-  if part.ItemInventory:IsValid() then
-    data.ItemInventory = ItemInventoryToTable(part.ItemInventory)
-  end
-
-  return data
-end
-
-local function TableToVehiclePart(part)
-  local data = part
-
-  if part.partKey ~= nil then
-    data.Key = FName(part.partKey)
-  else
-    data.Key = FName(part.Key)
-  end
-  data.ItemInventory = TableToItemInventory(part.ItemInventory)
-
-  return data
-end
+-- Vehicle serialization functions (VehicleCustomizationToTable, VehicleDecalToTable, VehiclePartToTable, etc.)
+-- are now provided by shared/VehicleSerialization.lua
 
 ---Convert FMTVehicleAINetState to JSON serializable table
 ---@param state FMTVehicleAINetState
@@ -1288,7 +1141,7 @@ end
 ---Convert AMTVehicle to JSON serializable table
 ---@param vehicle AMTVehicle
 local function VehicleToTable(vehicle)
-  if not vehicle:IsValid() or not IsUObjectSafe(vehicle) then
+  if not vehicle:IsValid() or not IsUObjectSafe(vehicle) or vehicle:IsActorBeingDestroyed() then
     return {}
   end
   local data = {}
@@ -1683,7 +1536,7 @@ local function GetVehicles(id, fields, limit, isControlled)
 
   for i = 1, #gameState.Vehicles, 1 do
     local v = gameState.Vehicles[i]
-    if not v:IsValid() or not IsUObjectSafe(v) then goto continue end
+    if not v:IsValid() or not IsUObjectSafe(v) or v:IsActorBeingDestroyed() then goto continue end
 
     -- Filter by id
     if id and id ~= v.Net_VehicleId then
@@ -1735,7 +1588,7 @@ local function GetVehiclesByTag(tags)
     )
     for i, actorContainer in ipairs(actors) do
       local vehicle = actorContainer:get()
-      if vehicle:IsValid() and IsUObjectSafe(vehicle) then
+      if vehicle:IsValid() and IsUObjectSafe(vehicle) and not vehicle:IsActorBeingDestroyed() then
         -- SAFETY: Net_Parts TArray concurrent access crash — skip on async thread.
         local parts = {}
         table.insert(arr, {
@@ -2280,7 +2133,7 @@ local function HandleSetPlayerVehicleDecal(session)
 end
 
 local function PlayerVehicleToTable(vehicle, complete)
-  if not vehicle:IsValid() or not IsUObjectSafe(vehicle) then
+  if not vehicle:IsValid() or not IsUObjectSafe(vehicle) or vehicle:IsActorBeingDestroyed() then
     return {}
   end
   local vehicleInfo = {}
@@ -2313,7 +2166,7 @@ local function PlayerVehicleToTable(vehicle, complete)
     if vehicle.Customization:IsValid() then
       vehicleInfo["customization"] = VehicleCustomizationToTable(vehicle.Customization)
     end
-    if vehicle.Net_Parts:IsValid() and IsUObjectSafe(vehicle.Net_Parts) then
+    if vehicle.Net_Parts:IsValid() then
       vehicleInfo["parts"] = {}
       vehicle.Net_Parts:ForEach(function(index, element)
         local part = element:get()
@@ -2378,7 +2231,7 @@ local function HandleGetPlayerVehicles(session)
     LogOutput("INFO", "Adding spawned vehicles")
     PC.Net_SpawnedVehicles:ForEach(function(index, element)
       local vehicle = element:get()
-      if vehicle:IsValid() and IsUObjectSafe(vehicle) and vehicles[tostring(vehicle.Net_VehicleId)] == nil then
+      if vehicle:IsValid() and IsUObjectSafe(vehicle) and not vehicle:IsActorBeingDestroyed() and vehicles[tostring(vehicle.Net_VehicleId)] == nil then
         local vehicleInfo = PlayerVehicleToTable(vehicle, complete)
         if vehicleInfo.vehicleId then
           vehicleInfo["isLastVehicle"] = false
