@@ -14,14 +14,16 @@ function VehicleSerialization.VehicleCustomizationToTable(custom)
   data.BodyMaterialIndex = custom.BodyMaterialIndex
 
   data.BodyColors = {}
+  local count = 0
   if custom.BodyColors:IsValid() then
     custom.BodyColors:ForEach(function(index, element)
       local bodyColor = element:get()
       if bodyColor:IsValid() then
-        table.insert(data.BodyColors, {
+        count = count + 1
+        data.BodyColors[count] = {
           MaterialSlotName = element:get().MaterialSlotName:ToString(),
           Color = types.ColorToTable(element:get().Color),
-        })
+        }
       end
     end)
   end
@@ -79,12 +81,14 @@ end
 ---@return table
 function VehicleSerialization.VehicleDecalToTable(decal)
   local data = {}
+  local count = 0
 
   if decal.DecalLayers:IsValid() then
     decal.DecalLayers:ForEach(function(index, element)
       local layer = element:get()
       if layer:IsValid() then
-        table.insert(data, VehicleSerialization.VehicleDecalLayerToTable(layer))
+        count = count + 1
+        data[count] = VehicleSerialization.VehicleDecalLayerToTable(layer)
       end
     end)
   end
@@ -96,9 +100,11 @@ end
 
 function VehicleSerialization.TableToVehicleDecal(decal)
   local decalLayers = {}
+  local count = 0
 
   for index, value in ipairs(decal.DecalLayers) do
-    table.insert(decalLayers, VehicleSerialization.TableToVehicleDecalLayer(value))
+    count = count + 1
+    decalLayers[count] = VehicleSerialization.TableToVehicleDecalLayer(value)
   end
 
   return {
@@ -121,30 +127,38 @@ function VehicleSerialization.VehiclePartToTable(part)
   data.Damage = part.Damage
 
   data.FloatValues = {} ---@type number[]
+  local floatCount = 0
   if part.FloatValues:IsValid() then
     part.FloatValues:ForEach(function(index, element)
-      table.insert(data.FloatValues, element:get())
+      floatCount = floatCount + 1
+      data.FloatValues[floatCount] = element:get()
     end)
   end
 
   data.Int64Values = {} ---@type number[]
+  local int64Count = 0
   if part.Int64Values:IsValid() then
     part.Int64Values:ForEach(function(index, element)
-      table.insert(data.Int64Values, element:get())
+      int64Count = int64Count + 1
+      data.Int64Values[int64Count] = element:get()
     end)
   end
 
   data.StringValues = {} ---@type string[]
+  local stringCount = 0
   if part.StringValues:IsValid() then
     part.StringValues:ForEach(function(index, element)
-      table.insert(data.StringValues, element:get():ToString())
+      stringCount = stringCount + 1
+      data.StringValues[stringCount] = element:get():ToString()
     end)
   end
 
   data.VectorValues = {} ---@type table[]
+  local vectorCount = 0
   if part.VectorValues:IsValid() then
     part.VectorValues:ForEach(function(index, element)
-      table.insert(data.VectorValues, types.VectorToTable(element:get()))
+      vectorCount = vectorCount + 1
+      data.VectorValues[vectorCount] = types.VectorToTable(element:get())
     end)
   end
 

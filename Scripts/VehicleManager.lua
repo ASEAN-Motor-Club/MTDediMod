@@ -2355,14 +2355,16 @@ local function HandleGetPlayerLastVehicleParts(session)
 
   local complete = session.queryComponents.complete ~= nil
   local parts = {}
+  local count = 0
   if vehicle.Net_Parts:IsValid() then
     vehicle.Net_Parts:ForEach(function(index, element)
       local part = element:get()
       if IsUObjectSafe(part) then
+        count = count + 1
         if complete then
-          table.insert(parts, VehiclePartToTable(part))
+          parts[count] = VehiclePartToTable(part)
         else
-          table.insert(parts, VehiclePartMinimalToTable(part))
+          parts[count] = VehiclePartMinimalToTable(part)
         end
       end
     end)
