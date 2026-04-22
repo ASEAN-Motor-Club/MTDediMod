@@ -27,10 +27,30 @@ local function GetVehicleAssetPath(vehicle)
   return fullName:gsub("^BlueprintGeneratedClass ", ""):gsub("^Class ", "")
 end
 
+---Derive a VehicleKey FName from an asset path.
+---Example: /Game/Vehicles/Pickup/BP_Pickup.BP_Pickup_C -> "Pickup"
+---@param assetPath string
+---@return string|nil
+local function GetVehicleKeyFromAssetPath(assetPath)
+  if not assetPath then return nil end
+  -- Try parent folder before the BP file: /.../VehicleKey/BP_...
+  local key = assetPath:match("/([^/]+)/BP_[^/]+%.[^/]+$")
+  if key then
+    return key
+  end
+  -- Fallback: strip BP_ prefix and _C suffix from the class name
+  key = assetPath:match("/BP_(%w+)%.%w+_C$")
+  if key then
+    return key
+  end
+  return nil
+end
+
 -- Serialize vehicle to a saveable table
 local function SerializeVehicle(vehicle)
   local data = {}
   data.AssetPath = GetVehicleAssetPath(vehicle)
+  data.VehicleKey = GetVehicleKeyFromAssetPath(data.AssetPath)
 
   if vehicle.Customization:IsValid() then
     data.customization = vehicleSerialization.VehicleCustomizationToTable(vehicle.Customization)
@@ -93,6 +113,53 @@ local function ApplyVehicleConfig(vehicle, config, PC)
   end
 end
 
+---Build FMTVehicleSpawnParams from a saved vehicle config.
+---@param config table
+---@param location table? FVector-like table {X, Y, Z}
+---@param rotation table? FRotator-like table {Pitch, Yaw, Roll}
+---@return table
+local function BuildSpawnParams(config, location, rotation)
+  local params = {
+    VehicleKey = FName(config.VehicleKey or "Pickup"),
+    AbsoluteLocation = location or { X = 0, Y = 0, Z = 0 },
+    Rotation = rotation or { Pitch = 0, Yaw = 0, Roll = 0 },
+    VehicleId = 0,
+    bResetOnSpawn = true,
+    bUseRandomCustomization = false,
+    bForSale = false,
+  }
+
+  if config.customization then
+    params.Customization = {
+      BodyMaterialIndex = config.customization.BodyMaterialIndex or 0,
+      BodyColors = {},
+    }
+    if config.customization.BodyColors then
+      for i, bc in ipairs(config.customization.BodyColors) do
+        params.Customization.BodyColors[i] = {
+          MaterialSlotName = FName(bc.MaterialSlotName),
+          Color = bc.Color,
+          Metallic = bc.Metallic or 0.5,
+          Roughness = bc.Roughness or 0.5,
+        }
+      end
+    end
+  end
+
+  if config.decal then
+    params.Decal = vehicleSerialization.TableToVehicleDecal(config.decal)
+  end
+
+  if config.parts then
+    params.Parts = {}
+    for i, part in ipairs(config.parts) do
+      params.Parts[i] = vehicleSerialization.TableToVehiclePart(part)
+    end
+  end
+
+  return params
+end
+
 local function SaveVehicle(name, config)
   ensureDir()
   local path = saveDir .. "/" .. name .. ".json"
@@ -125,6 +192,8 @@ end
 return {
   SerializeVehicle = SerializeVehicle,
   ApplyVehicleConfig = ApplyVehicleConfig,
+  BuildSpawnParams = BuildSpawnParams,
+  GetVehicleKeyFromAssetPath = GetVehicleKeyFromAssetPath,
   SaveVehicle = SaveVehicle,
   LoadVehicle = LoadVehicle,
 }

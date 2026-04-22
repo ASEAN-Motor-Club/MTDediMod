@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc13] — 2026-04-22
+
+#### Added
+- `/player_vehicles/*/last` endpoint — lightweight last vehicle info with trailer chain
+- `/player_vehicles/*/last/decals` endpoint — decals and customization for last vehicle
+- `/player_vehicles/*/last/parts` endpoint — minimal parts by default, `?complete=1` for full values
+- `/vehicles/spawn` native spawn path via `ServerSpawnVehicle` with `FMTVehicleSpawnParams`
+- Table conversion helpers for vehicle spawn params, state, cold state, and owner settings
+
 ### [server/v0.38.0-rc11] — 2026-04-22
 
 #### Fixed

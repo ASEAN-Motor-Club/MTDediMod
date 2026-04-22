@@ -122,6 +122,38 @@ end
 Commands["/sv"] = Commands["/save_vehicle"]
 Commands["/spv"] = Commands["/spawn_vehicle"]
 
+---Spawn a saved vehicle using the native ServerSpawnVehicle RPC.
+---Requires the saved config to have a VehicleKey (re-save old configs to populate it).
+Commands["/spawn_vehicle2"] = function(PC, args)
+  local name = args[1]
+  if not name then
+    LogOutput("WARN", "/spawn_vehicle2: missing name")
+    return
+  end
+
+  local config = vehicleSaveSpawn.LoadVehicle(name)
+  if not config then
+    LogOutput("WARN", "/spawn_vehicle2: '%s' not found", name)
+    return
+  end
+
+  if not config.VehicleKey then
+    LogOutput("WARN", "/spawn_vehicle2: '%s' has no VehicleKey (re-save with /save_vehicle first)", name)
+    return
+  end
+
+  local pawn = PC:K2_GetPawn()
+  local location = pawn:IsValid() and types.VectorToTable(pawn:K2_GetActorLocation()) or {X=0, Y=0, Z=0}
+  local rotation = pawn:IsValid() and types.RotatorToTable(pawn:K2_GetActorRotation()) or {Pitch=0, Yaw=0, Roll=0}
+  location.Z = location.Z - 95
+
+  local params = vehicleSaveSpawn.BuildSpawnParams(config, location, rotation)
+  PC:ServerSpawnVehicle(params)
+  LogOutput("INFO", "/spawn_vehicle2: spawned '%s' via ServerSpawnVehicle", name)
+end
+
+Commands["/spv2"] = Commands["/spawn_vehicle2"]
+
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then
     local parts = SplitString(message, " ")

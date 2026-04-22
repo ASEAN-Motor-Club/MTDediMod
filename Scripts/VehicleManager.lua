@@ -2248,6 +2248,129 @@ end
 
 
 
+---Convert AMTVehicle to a minimal JSON table (lightweight, no nested parts/decals)
+---@param vehicle AMTVehicle
+---@return table
+local function LastVehicleMinimalToTable(vehicle)
+  return {
+    vehicleId = vehicle.Net_VehicleId,
+    fullName = vehicle:GetFullName(),
+    classFullName = vehicle:GetClass():GetFullName(),
+    position = VectorToTable(vehicle:K2_GetActorLocation()),
+    rotation = RotatorToTable(vehicle:K2_GetActorRotation()),
+    companyGuid = vehicle.Net_CompanyGuid:IsValid() and GuidToString(vehicle.Net_CompanyGuid) or json.null,
+    companyName = vehicle.Net_CompanyName:ToString(),
+    bIsAIDriving = vehicle.NetLC_ColdState:IsValid() and vehicle.NetLC_ColdState.bIsAIDriving or false,
+    Net_VehicleOwnerSetting = vehicle.Net_VehicleOwnerSetting:IsValid() and VehicleOwnerSettingToTable(vehicle.Net_VehicleOwnerSetting) or json.null,
+  }
+end
+
+---Get the player's last vehicle with minimal fields (lightweight)
+---@type RequestPathHandler
+local function HandleGetPlayerLastVehicle(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = "Invalid player controller" }, nil, 400
+  end
+
+  local vehicle = GetPlayerVehicle(PC)
+  if vehicle == nil or not vehicle:IsValid() or not IsUObjectSafe(vehicle) or vehicle:IsActorBeingDestroyed() then
+    return { error = "Player has no last vehicle" }, nil, 404
+  end
+
+  local data = LastVehicleMinimalToTable(vehicle)
+
+  -- Trailer chain with the same minimal schema
+  data.trailers = {}
+  local curr = vehicle
+  while curr do
+    local nextTrailer = nil
+    if curr.Net_Hooks:IsValid() and IsUObjectSafe(curr.Net_Hooks) then
+      curr.Net_Hooks:ForEach(function(i, val)
+        local hook = val:get()
+        if hook:IsValid() and IsUObjectSafe(hook) and hook.Trailer:IsValid() and IsUObjectSafe(hook.Trailer)
+           and not hook.Trailer:IsActorBeingDestroyed() and hook.Trailer.Net_VehicleId ~= curr.Net_VehicleId then
+          table.insert(data.trailers, LastVehicleMinimalToTable(hook.Trailer))
+          nextTrailer = hook.Trailer
+        end
+      end)
+    end
+    curr = nextTrailer
+  end
+
+  return { vehicle = data }, nil, 200
+end
+
+---Get decals and customization for the player's last vehicle
+---@type RequestPathHandler
+local function HandleGetPlayerLastVehicleDecals(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = "Invalid player controller" }, nil, 400
+  end
+
+  local vehicle = GetPlayerVehicle(PC)
+  if vehicle == nil or not vehicle:IsValid() or not IsUObjectSafe(vehicle) or vehicle:IsActorBeingDestroyed() then
+    return { error = "Player has no last vehicle" }, nil, 404
+  end
+
+  return {
+    vehicleId = vehicle.Net_VehicleId,
+    decal = vehicle.Net_Decal:IsValid() and VehicleDecalToTable(vehicle.Net_Decal) or json.null,
+    customization = vehicle.Customization:IsValid() and VehicleCustomizationToTable(vehicle.Customization) or json.null,
+  }, nil, 200
+end
+
+---Convert FMTVehiclePart to a minimal table (slot + name only, no array values)
+---@param part FMTVehiclePart
+---@return table
+local function VehiclePartMinimalToTable(part)
+  if not part:IsValid() or (IsUObjectSafe and not IsUObjectSafe(part)) then
+    return {}
+  end
+  return {
+    ID = part.ID,
+    Key = part.Key:ToString(),
+    Slot = part.Slot,
+    Damage = part.Damage,
+  }
+end
+
+---Get parts for the player's last vehicle (isolated because it's heavy)
+---Default: minimal (ID, Key, Slot, Damage). Use ?complete=1 for full values.
+---@type RequestPathHandler
+local function HandleGetPlayerLastVehicleParts(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = "Invalid player controller" }, nil, 400
+  end
+
+  local vehicle = GetPlayerVehicle(PC)
+  if vehicle == nil or not vehicle:IsValid() or not IsUObjectSafe(vehicle) or vehicle:IsActorBeingDestroyed() then
+    return { error = "Player has no last vehicle" }, nil, 404
+  end
+
+  local complete = session.queryComponents.complete ~= nil
+  local parts = {}
+  if vehicle.Net_Parts:IsValid() then
+    vehicle.Net_Parts:ForEach(function(index, element)
+      local part = element:get()
+      if IsUObjectSafe(part) then
+        if complete then
+          table.insert(parts, VehiclePartToTable(part))
+        else
+          table.insert(parts, VehiclePartMinimalToTable(part))
+        end
+      end
+    end)
+  end
+
+  return { vehicleId = vehicle.Net_VehicleId, parts = parts, complete = complete }, nil, 200
+end
+
 local function HandlePlayerExitVehicle(session)
   local characterGuid = session.pathComponents[2]
   local PC = GetPlayerControllerFromGuid(characterGuid)
@@ -2288,130 +2411,352 @@ local function HandlePlayerEnterLastVehicle(session)
   return { status = "success" }, nil, 200
 end
 
+---Convert table to FMTVehicleOwnerSetting
+---@param t table
+---@return table
+local function TableToVehicleOwnerSetting(t)
+  if not t then return nil end
+  local data = {
+    bLocked = t.bLocked or false,
+    DriveAllowedPlayers = t.DriveAllowedPlayers or 0,
+    VehicleOwnerProfitShare = t.VehicleOwnerProfitShare or 0.0,
+  }
+  if t.LevelRequirementsToDrive then
+    data.LevelRequirementsToDrive = t.LevelRequirementsToDrive
+  end
+  return data
+end
+
+---Convert table to FMTNetWheelHotState
+---@param t table
+---@return table
+local function TableToNetWheelHotState(t)
+  if not t then return nil end
+  return {
+    BrakeTemperature = t.BrakeTemperature or 0,
+    BrakeCoreTemperature = t.BrakeCoreTemperature or 0,
+    TireCoreTemperature = t.TireCoreTemperature or 0,
+    TireBrushTemperature = t.TireBrushTemperature or 0,
+  }
+end
+
+---Convert table to FMTVehicleState
+---@param t table
+---@return table
+local function TableToVehicleState(t)
+  if not t then return nil end
+  local data = {
+    Fuel = t.Fuel or 1.0,
+    Condition = t.Condition or 1.0,
+    OdoMeterKm = t.OdoMeterKm or 0.0,
+  }
+  if t.Wheels then
+    data.Wheels = {}
+    for i, wheel in ipairs(t.Wheels) do
+      data.Wheels[i] = TableToNetWheelHotState(wheel)
+    end
+  end
+  if t.LiftAxleProgresses then
+    data.LiftAxleProgresses = t.LiftAxleProgresses
+  end
+  return data
+end
+
+---Convert table to FMTVehicleColdState
+---@param t table
+---@return table
+local function TableToVehicleColdState(t)
+  if not t then return nil end
+  local data = {
+    DriveMode = t.DriveMode or 0,
+    TurnSignal = t.TurnSignal or 0,
+    HeadLightMode = t.HeadLightMode or 0,
+    SirenIndex = t.SirenIndex or 0,
+    bIsAIDriving = t.bIsAIDriving or false,
+    bStoppedInParkingSpace = t.bStoppedInParkingSpace or false,
+    bHorn = t.bHorn or false,
+    bAcceptTaxiPassenger = t.bAcceptTaxiPassenger or false,
+    DiffLockIndex = t.DiffLockIndex or 0,
+  }
+  if t.ToggleFunctions then
+    data.ToggleFunctions = t.ToggleFunctions
+  end
+  if t.RemovedWheels then
+    data.RemovedWheels = t.RemovedWheels
+  end
+  if t.LiftedAxleIndices then
+    data.LiftedAxleIndices = t.LiftedAxleIndices
+  end
+  if t.LastLocationsInRoad then
+    data.LastLocationsInRoad = {}
+    for i, loc in ipairs(t.LastLocationsInRoad) do
+      data.LastLocationsInRoad[i] = {
+        Location = loc.Location,
+        Rotation = loc.Rotation,
+      }
+    end
+  end
+  return data
+end
+
+---Convert table to FMTVehicleSetting
+---@param t table
+---@return table
+local function TableToVehicleSetting(t)
+  if not t then return nil end
+  return {
+    SettingType = t.SettingType or 0,
+    Value = t.Value or { ValueType = 0, FloatValue = 0, Int64Value = 0, BoolValue = false, StringValue = "", EnumValue = 0 },
+  }
+end
+
+---Build FMTVehicleSpawnParams from JSON content for native spawn pipeline.
+---Returns nil if required fields are missing.
+---@param content table
+---@return table|nil
+local function BuildSpawnParams(content)
+  if not content then return nil end
+
+  -- VehicleKey is required for native spawn (e.g. "Pickup", "Sedan")
+  if not content.VehicleKey then
+    return nil
+  end
+
+  local params = {
+    VehicleKey = FName(content.VehicleKey),
+    AbsoluteLocation = content.Location or { X = 0, Y = 0, Z = 0 },
+    Rotation = content.Rotation or { Pitch = 0, Yaw = 0, Roll = 0 },
+    VehicleId = content.VehicleId or 0,
+    bUseRandomCustomization = content.bUseRandomCustomization or false,
+    bForSale = content.bForSale or false,
+    bResetOnSpawn = content.bResetOnSpawn ~= false, -- default true
+    bResetIfCollide = content.bResetIfCollide or false,
+    bForceSimulate = content.bForceSimulate or false,
+    bSpawnedFromSpawner = content.bSpawnedFromSpawner or false,
+    WorldVehicleFlags = content.WorldVehicleFlags or 0,
+  }
+
+  -- OwnerCompanyGuid
+  if content.companyGuid then
+    params.OwnerCompanyGuid = StringToGuid(content.companyGuid)
+  else
+    params.OwnerCompanyGuid = { A = 0, B = 0, C = 0, D = 0 }
+  end
+
+  -- Parts
+  if content.parts then
+    params.Parts = {}
+    for i, part in ipairs(content.parts) do
+      params.Parts[i] = TableToVehiclePart(part)
+    end
+  end
+
+  -- Customization
+  if content.customization then
+    params.Customization = {
+      BodyMaterialIndex = content.customization.BodyMaterialIndex or 0,
+      BodyColors = {},
+    }
+    if content.customization.BodyColors then
+      for i, bc in ipairs(content.customization.BodyColors) do
+        params.Customization.BodyColors[i] = {
+          MaterialSlotName = FName(bc.MaterialSlotName),
+          Color = bc.Color,
+          Metallic = bc.Metallic or 0.5,
+          Roughness = bc.Roughness or 0.5,
+        }
+      end
+    end
+  end
+
+  -- Decal
+  if content.decal then
+    params.Decal = TableToVehicleDecal(content.decal)
+  end
+
+  -- OwnerSetting
+  if content.ownerSetting then
+    params.OwnerSetting = TableToVehicleOwnerSetting(content.ownerSetting)
+  else
+    params.OwnerSetting = {
+      bLocked = false,
+      DriveAllowedPlayers = 0,
+      VehicleOwnerProfitShare = content.profitShare or 0.0,
+    }
+  end
+
+  -- VehicleSettings
+  if content.vehicleSettings then
+    params.VehicleSettings = {}
+    for i, setting in ipairs(content.vehicleSettings) do
+      params.VehicleSettings[i] = TableToVehicleSetting(setting)
+    end
+  end
+
+  -- VehicleState
+  if content.vehicleState then
+    params.VehicleState = TableToVehicleState(content.vehicleState)
+  end
+
+  -- VehicleColdState
+  if content.vehicleColdState then
+    params.VehicleColdState = TableToVehicleColdState(content.vehicleColdState)
+  end
+
+  -- ActorTags
+  if content.tags then
+    params.ActorTags = {}
+    for i, tag in ipairs(content.tags) do
+      params.ActorTags[i] = FName(tag)
+    end
+  end
+
+  return params
+end
+
 local function HandleSpawnVehicle(session)
   local content = json.parse(session.content)
 
-  if content ~= nil and type(content) == "table" and content.AssetPath and content.Location then
-    if content.driverGuid ~= nil then
+  if content ~= nil and type(content) == "table" then
+    -- Native spawn path: uses PC:ServerSpawnVehicle with FMTVehicleSpawnParams
+    if content.nativeSpawn and content.VehicleKey and content.driverGuid then
       local PC = GetPlayerControllerFromGuid(content.driverGuid)
-      if PC:IsValid() then
-        local pawn = PC:K2_GetPawn()
-        if pawn:IsValid() then
-          content.Rotation = RotatorToTable(pawn:K2_GetActorRotation())
-          content.Location = VectorToTable(pawn:K2_GetActorLocation())
-          content.Location.Z = content.Location.Z - 95
-        end
+      if not PC:IsValid() then
+        return { error = "Invalid player controller" }, nil, 400
       end
+
+      local pawn = PC:K2_GetPawn()
+      if pawn:IsValid() then
+        content.Rotation = RotatorToTable(pawn:K2_GetActorRotation())
+        content.Location = VectorToTable(pawn:K2_GetActorLocation())
+        content.Location.Z = content.Location.Z - 95
+      end
+
+      local spawnParams = BuildSpawnParams(content)
+      if not spawnParams then
+        return { error = "Failed to build spawn params" }, nil, 400
+      end
+
+      LogOutput("INFO", "Native spawning vehicle via ServerSpawnVehicle: %s", content.VehicleKey)
+      PC:ServerSpawnVehicle(spawnParams)
+      return { status = "spawn_requested" }, nil, 200
     end
-    local spawned, tag, vehicle = assetManager.SpawnActor(content.AssetPath, content.Location, content.Rotation, content.tag)
-    ---@cast vehicle AMTVehicle
-    LogOutput("INFO", "Spawned vehicle")
 
-    if spawned then
-      local function setOwnerSetting(PC)
-        LogOutput("INFO", "Setting profit share")
-        if not vehicle:IsValid() then
-          return
-        end
-        ---@diagnostic disable-next-line: undefined-field
-        if not vehicle.Net_VehicleOwnerSetting:IsValid() then
-          return
-        end
-        local ownerSettings = {
-          bLocked = false,
-          DriveAllowedPlayers = 0,
-          VehicleOwnerProfitShare = content.profitShare or 0.0,
-          LevelRequirementsToDrive = vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive,
-        }
-        vehicle.Net_VehicleOwnerSetting = ownerSettings
-        -- Temporarily set the driver as the owner to set the owner setting
-        -- There's a problem with setting profitShare with other methods
-        vehicle.Net_OwnerPlayerState = PC.PlayerState
-        PC:ServerSetOwnerVehicleSetting(vehicle, ownerSettings)
-        ---@diagnostic disable-next-line: assign-type-mismatch
-        vehicle.Net_OwnerPlayerState = CreateInvalidObject()
-
-        if vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive:IsValid() then
-          vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive:ForEach(function(index, el)
-            el:set(1)
-          end)
-        end
-        LogOutput("INFO", "Profit share set 2")
-      end
-
-      if content.tags ~= nil  and vehicle.Tags:IsValid() then
-        LogOutput("INFO", "Setting tags")
-        for i, tag in ipairs(content.tags) do
-          vehicle.Tags[#vehicle.Tags+1] = FName(tag)
-        end
-      end
-
-      if content.drivable ~= nil then
-        vehicle.bDrivable = content.drivable
-      end
-
-      if content.customization then
-        LogOutput("INFO", "Setting customization")
-        vehicle.Customization.BodyMaterialIndex = content.customization.BodyMaterialIndex
-        if vehicle.Customization.BodyColors:IsValid() then
-          vehicle.Customization.BodyColors:Empty()
-          for i, bc in ipairs(content.customization.BodyColors) do
-            vehicle.Customization.BodyColors[i].MaterialSlotName = FName(bc.MaterialSlotName)
-            vehicle.Customization.BodyColors[i].Color = bc.Color
+    -- Legacy direct-spawn path (fallback)
+    if content.AssetPath and content.Location then
+      if content.driverGuid ~= nil then
+        local PC = GetPlayerControllerFromGuid(content.driverGuid)
+        if PC:IsValid() then
+          local pawn = PC:K2_GetPawn()
+          if pawn:IsValid() then
+            content.Rotation = RotatorToTable(pawn:K2_GetActorRotation())
+            content.Location = VectorToTable(pawn:K2_GetActorLocation())
+            content.Location.Z = content.Location.Z - 95
           end
         end
       end
+      local spawned, tag, vehicle = assetManager.SpawnActor(content.AssetPath, content.Location, content.Rotation, content.tag)
+      ---@cast vehicle AMTVehicle
+      LogOutput("INFO", "Spawned vehicle (legacy path)")
 
-      if content.companyGuid and content.companyName then
-        LogOutput("INFO", "Setting company")
-        vehicle.Net_CompanyGuid = StringToGuid(content.companyGuid)
-        vehicle.Net_OwnerCompanyGuid = StringToGuid(content.companyGuid)
-        vehicle.Net_CompanyName = content.companyName
-      elseif content.accountNickname then
-        vehicle.Net_AccountNickname = content.accountNickname
-      end
-
-      if content.forSale ~= nil then
-        vehicle.bForSale = content.forSale
-      end
-
-      if vehicle:IsValid() then
-        if content.decal ~= nil then
-          LogOutput("INFO", "Setting decals")
+      if spawned then
+        local function setOwnerSetting(PC)
+          LogOutput("INFO", "Setting profit share")
+          if not vehicle:IsValid() then
+            return
+          end
           ---@diagnostic disable-next-line: undefined-field
-          if vehicle.Net_Decal:IsValid() and vehicle.Net_Decal.DecalLayers:IsValid() then
-            local decal = TableToVehicleDecal(content.decal)
-            vehicle.Net_Decal.DecalLayers:Empty()
-            for index, value in ipairs(decal.DecalLayers) do
-              vehicle.Net_Decal.DecalLayers[index] = value
-            end
-            vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
+          if not vehicle.Net_VehicleOwnerSetting:IsValid() then
+            return
+          end
+          local ownerSettings = {
+            bLocked = false,
+            DriveAllowedPlayers = 0,
+            VehicleOwnerProfitShare = content.profitShare or 0.0,
+            LevelRequirementsToDrive = vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive,
+          }
+          vehicle.Net_VehicleOwnerSetting = ownerSettings
+          -- Temporarily set the driver as the owner to set the owner setting
+          -- There's a problem with setting profitShare with other methods
+          vehicle.Net_OwnerPlayerState = PC.PlayerState
+          PC:ServerSetOwnerVehicleSetting(vehicle, ownerSettings)
+          ---@diagnostic disable-next-line: assign-type-mismatch
+          vehicle.Net_OwnerPlayerState = CreateInvalidObject()
+
+          if vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive:IsValid() then
+            vehicle.Net_VehicleOwnerSetting.LevelRequirementsToDrive:ForEach(function(index, el)
+              el:set(1)
+            end)
+          end
+          LogOutput("INFO", "Profit share set 2")
+        end
+
+        if content.tags ~= nil  and vehicle.Tags:IsValid() then
+          LogOutput("INFO", "Setting tags")
+          for i, tag in ipairs(content.tags) do
+            vehicle.Tags[#vehicle.Tags+1] = FName(tag)
           end
         end
 
-        if content.driverGuid ~= nil then
-          LogOutput("INFO", "Setting driver")
-          local PC = GetPlayerControllerFromGuid(content.driverGuid)
-          if PC:IsValid() then
-            if PC.PlayerState:IsValid() then
-              setOwnerSetting(PC)
+        if content.drivable ~= nil then
+          vehicle.bDrivable = content.drivable
+        end
+
+        if content.customization then
+          LogOutput("INFO", "Setting customization")
+          vehicle.Customization.BodyMaterialIndex = content.customization.BodyMaterialIndex
+          if vehicle.Customization.BodyColors:IsValid() then
+            vehicle.Customization.BodyColors:Empty()
+            for i, bc in ipairs(content.customization.BodyColors) do
+              vehicle.Customization.BodyColors[i].MaterialSlotName = FName(bc.MaterialSlotName)
+              vehicle.Customization.BodyColors[i].Color = bc.Color
             end
-            PC:ServerEnterVehicle(vehicle, 1, -1, false)
           end
         end
+
+        if content.companyGuid and content.companyName then
+          LogOutput("INFO", "Setting company")
+          vehicle.Net_CompanyGuid = StringToGuid(content.companyGuid)
+          vehicle.Net_OwnerCompanyGuid = StringToGuid(content.companyGuid)
+          vehicle.Net_CompanyName = content.companyName
+        elseif content.accountNickname then
+          vehicle.Net_AccountNickname = content.accountNickname
+        end
+
+        if content.forSale ~= nil then
+          vehicle.bForSale = content.forSale
+        end
+
+        if vehicle:IsValid() then
+          if content.decal ~= nil then
+            LogOutput("INFO", "Setting decals")
+            ---@diagnostic disable-next-line: undefined-field
+            if vehicle.Net_Decal:IsValid() and vehicle.Net_Decal.DecalLayers:IsValid() then
+              local decal = TableToVehicleDecal(content.decal)
+              vehicle.Net_Decal.DecalLayers:Empty()
+              for index, value in ipairs(decal.DecalLayers) do
+                vehicle.Net_Decal.DecalLayers[index] = value
+              end
+              vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
+            end
+          end
+
+          if content.driverGuid ~= nil then
+            LogOutput("INFO", "Setting driver")
+            local PC = GetPlayerControllerFromGuid(content.driverGuid)
+            if PC:IsValid() then
+              if PC.PlayerState:IsValid() then
+                setOwnerSetting(PC)
+              end
+              PC:ServerEnterVehicle(vehicle, 1, -1, false)
+            end
+          end
+        end
+
+        return { data = { tag }, actor = vehicle:GetFullName() }
+      else
+        error("Failed to spawn asset " .. content.AssetPath)
       end
-
-      -- DISABLED: ExecuteInGameThreadWithDelay block for setting vehicle parts
-      -- is not working reliably. Parts setting is skipped for now.
-      -- if content.parts ~= nil then
-      --   ExecuteInGameThreadWithDelay(2000, function()
-      --     ...
-      --   end)
-      -- end
-
-      return { data = { tag }, actor = vehicle:GetFullName() }
-    else
-      error("Failed to spawn asset " .. content.AssetPath)
     end
   end
   return nil, nil, 400
@@ -2472,6 +2817,9 @@ return {
   HandleGetVehicles = HandleGetVehicles,
   HandleGetVehiclesByTag = HandleGetVehiclesByTag,
   HandleGetPlayerVehicles = HandleGetPlayerVehicles,
+  HandleGetPlayerLastVehicle = HandleGetPlayerLastVehicle,
+  HandleGetPlayerLastVehicleDecals = HandleGetPlayerLastVehicleDecals,
+  HandleGetPlayerLastVehicleParts = HandleGetPlayerLastVehicleParts,
   HandleGetPlayerVehicleDecal = HandleGetPlayerVehicleDecal,
   HandleSetPlayerVehicleDecal = HandleSetPlayerVehicleDecal,
   HandleSetWorldVehicleDecal = HandleSetWorldVehicleDecal,
