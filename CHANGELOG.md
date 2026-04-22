@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc15] — 2026-04-22
+
+#### Fixed
+- Webserver `send_all` chunk size increased from 42 bytes to 4096 bytes — cuts syscall overhead ~100x and reduces response latency for large JSON payloads
+
 ### [server/v0.38.0-rc14] — 2026-04-22
 
 #### Fixed
