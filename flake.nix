@@ -141,6 +141,7 @@
             cmake --build build-cross -j"''${NIX_BUILD_CORES:-$CORES}" "$@"
 
             echo "Build complete. Output in build-cross/${buildType}/"
+            echo "PDB symbols generated for crash-dump debugging."
           '';
         };
 
@@ -283,6 +284,20 @@
             EOF
                           echo "✓ Created mods.json"
 
+                          # Extract PDB symbols for crash-dump debugging (not shipped in release zip)
+                          SYMBOLS_DIR="symbols"
+                          mkdir -p "$SYMBOLS_DIR"
+                          for pdb_src in \
+                            "build-cross/$MOD_NAME/$MOD_NAME.pdb" \
+                            "build-cross/$BUILD_TYPE/bin/UE4SS.pdb" \
+                            "build-cross/$BUILD_TYPE/bin/$PROXY_DLL.pdb"
+                          do
+                            if [ -f "$pdb_src" ]; then
+                              cp "$pdb_src" "$SYMBOLS_DIR/"
+                              echo "✓ Copied $(basename "$pdb_src") to $SYMBOLS_DIR/"
+                            fi
+                          done
+
                           echo ""
                           echo "Package structure:"
                           find "$PACKAGE_DIR" -type f | sort | sed 's/^/  /'
@@ -295,6 +310,7 @@
                           echo ""
                           echo "=========================================="
                           echo "✓ Package created: $ZIP_NAME"
+                          echo "✓ PDB symbols saved to $SYMBOLS_DIR/"
                           echo "=========================================="
                           echo ""
                           echo "To deploy:"
@@ -354,6 +370,7 @@
             cmake --build "${clientBuildDir}" -j"''${NIX_BUILD_CORES:-$CORES}" "$@"
 
             echo "Build complete. Output in ${clientBuildDir}/${buildType}/"
+            echo "PDB symbols generated for crash-dump debugging."
           '';
         };
 
@@ -521,6 +538,20 @@
             EOF
                           echo "✓ Created mods.json"
 
+                          # Extract PDB symbols for crash-dump debugging (not shipped in release zip)
+                          SYMBOLS_DIR="symbols-client"
+                          mkdir -p "$SYMBOLS_DIR"
+                          for pdb_src in \
+                            "$BUILD_DIR/$BUILD_TYPE/bin/UE4SS.pdb" \
+                            "$BUILD_DIR/$BUILD_TYPE/bin/$PROXY_DLL.pdb" \
+                            "${clientBuildDir}/${modName}/${modName}.pdb"
+                          do
+                            if [ -f "$pdb_src" ]; then
+                              cp "$pdb_src" "$SYMBOLS_DIR/"
+                              echo "✓ Copied $(basename "$pdb_src") to $SYMBOLS_DIR/"
+                            fi
+                          done
+
                           echo ""
                           echo "Package structure:"
                           find "$PACKAGE_DIR" -type f | sort | sed 's/^/  /'
@@ -533,6 +564,7 @@
                           echo ""
                           echo "=========================================="
                           echo "✓ Package created: $ZIP_NAME"
+                          echo "✓ PDB symbols saved to $SYMBOLS_DIR/"
                           echo "=========================================="
                           echo ""
                           echo "To install:"
@@ -550,6 +582,7 @@
             crossCompileBuildInputs
             ++ (with pkgs; [
               gh
+              lldb
               lua-language-server
               lua5_4
               lua54Packages.busted
@@ -635,6 +668,97 @@
               echo "✓ Built: $PAK_OUT ($(du -sh "$PAK_OUT" | cut -f1))"
             '';
           }}/bin/pack-manager";
+        };
+
+        # Crash-dump analyzer: runs LLDB against a Windows minidump using locally-built PDBs
+        apps.analyze-crash = {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            name = "analyze-crash";
+            runtimeInputs = [pkgs.lldb];
+            text = ''
+              DMP="''${1:-}"
+              if [ -z "$DMP" ]; then
+                echo "Usage: nix run .#analyze-crash -- <path/to/crash.dmp>"
+                echo ""
+                echo "Prerequisites:"
+                echo "  1. Run 'nix run .#build' and 'nix run .#package' first to generate PDB symbols."
+                echo "  2. Symbols are collected in ./symbols/ (not shipped in release zips)."
+                echo ""
+                echo "For the best stack traces, install minidump-stackwalk:"
+                echo "  cargo install minidump-stackwalk dump_syms"
+                exit 1
+              fi
+
+              if [ ! -f "$DMP" ]; then
+                echo "Error: dump file not found: $DMP"
+                exit 1
+              fi
+
+              MOD_DLL="build-cross/${modName}/${modName}.dll"
+              MOD_PDB="symbols/${modName}.pdb"
+
+              LLDB_ARGS=(-c "$DMP")
+              if [ -f "$MOD_DLL" ]; then
+                LLDB_ARGS+=(-o "target modules add $MOD_DLL")
+              fi
+              if [ -f "$MOD_PDB" ]; then
+                LLDB_ARGS+=(-o "target symbols add $MOD_PDB")
+              fi
+              if [ -f "symbols/UE4SS.pdb" ]; then
+                LLDB_ARGS+=(-o "target symbols add symbols/UE4SS.pdb")
+              fi
+
+              LLDB_ARGS+=(-o "thread backtrace all" -o "quit")
+
+              echo "Opening $DMP with LLDB..."
+              lldb "''${LLDB_ARGS[@]}"
+            '';
+          }}/bin/analyze-crash";
+        };
+
+        # Archive PDB symbols so old crash dumps can be matched to their exact build
+        apps.archive-symbols = {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            name = "archive-symbols";
+            runtimeInputs = [pkgs.coreutils pkgs.gitMinimal];
+            text = ''
+              # Derive archive tag from current git tag, or fallback to short rev
+              TAG=$(git describe --tags --exact-match 2>/dev/null || echo "dev-$(git rev-parse --short HEAD)")
+              ARCHIVE_DIR="symbols-archive/$TAG"
+
+              mkdir -p "$ARCHIVE_DIR"
+
+              # Copy server symbols
+              if [ -d "symbols" ]; then
+                cp -r symbols/* "$ARCHIVE_DIR/" 2>/dev/null || true
+                echo "✓ Archived server symbols -> $ARCHIVE_DIR/"
+              fi
+
+              # Copy client symbols
+              if [ -d "symbols-client" ]; then
+                cp -r symbols-client/* "$ARCHIVE_DIR/" 2>/dev/null || true
+                echo "✓ Archived client symbols -> $ARCHIVE_DIR/"
+              fi
+
+              # Also record the exact git revision for traceability
+              git rev-parse HEAD > "$ARCHIVE_DIR/BUILD_REVISION.txt"
+              echo "$TAG" > "$ARCHIVE_DIR/BUILD_TAG.txt"
+
+              echo ""
+              echo "=========================================="
+              echo "✓ Symbols archived: $ARCHIVE_DIR"
+              echo "=========================================="
+              echo ""
+              echo "When a crash dump arrives, use the matching tag:"
+              echo "  nix run .#analyze-crash -- /path/to/crash.dmp"
+              echo ""
+              echo "Or with minidump-stackwalk:"
+              echo "  dump_syms $ARCHIVE_DIR/${modName}.pdb > ${modName}.sym"
+              echo "  minidump-stackwalk crash.dmp --symbols-path ./symbols"
+            '';
+          }}/bin/archive-symbols";
         };
 
         # Default to build

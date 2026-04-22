@@ -994,6 +994,9 @@ end
 ---Convert FMTVehiclePart to JSON serializable table
 ---@param part FMTVehiclePart
 local function VehiclePartToTable(part)
+  if not part:IsValid() or not IsUObjectSafe(part) then
+    return {}
+  end
   local data = {}
 
   data.ID = part.ID
@@ -1285,6 +1288,9 @@ end
 ---Convert AMTVehicle to JSON serializable table
 ---@param vehicle AMTVehicle
 local function VehicleToTable(vehicle)
+  if not vehicle:IsValid() or not IsUObjectSafe(vehicle) then
+    return {}
+  end
   local data = {}
 
   -- data.DefaultVehicleFeatures = vehicle.DefaultVehicleFeatures
@@ -1543,14 +1549,23 @@ local function VehicleToTable(vehicle)
   }
 
   data.Net_Seats = {}
-  vehicle.Net_Seats:ForEach(function(index, element)
-    table.insert(data.Net_Seats, {
-      SeatName = element:get().SeatName:ToString(),
-      Character = element:get().Character.Net_MTPlayerState:IsValid() and
-          GuidToString(element:get().Character.Net_MTPlayerState.CharacterGuid) or json.null,
-      bHasCharacter = element:get().bHasCharacter
-    })
-  end)
+  if vehicle.Net_Seats:IsValid() and IsUObjectSafe(vehicle.Net_Seats) then
+    vehicle.Net_Seats:ForEach(function(index, element)
+      local seat = element:get()
+      if IsUObjectSafe(seat) then
+        local charGuid = json.null
+        if seat.Character:IsValid() and IsUObjectSafe(seat.Character) and
+           seat.Character.Net_MTPlayerState:IsValid() and IsUObjectSafe(seat.Character.Net_MTPlayerState) then
+          charGuid = GuidToString(seat.Character.Net_MTPlayerState.CharacterGuid)
+        end
+        table.insert(data.Net_Seats, {
+          SeatName = seat.SeatName:ToString(),
+          Character = charGuid,
+          bHasCharacter = seat.bHasCharacter
+        })
+      end
+    end)
+  end
 
   data.Net_Cargo = {
     CargoWeightKg = vehicle.Net_Cargo.CargoWeightKg,
@@ -1595,16 +1610,21 @@ local function VehicleToTable(vehicle)
   data.CurrentRoad = MotorTownRoadToTable(vehicle.CurrentRoad)
 
   data.Net_Hooks = {}
-  vehicle.Net_Hooks:ForEach(function(index, element)
-    local tractor = element:get().Tractor
-    local trailer = element:get().Trailer
-    table.insert(data.Net_Hooks, {
-      Tractor = tractor:IsValid() and tractor.Net_VehicleId or json.null,
-      Trailer = trailer:IsValid() and trailer.Net_VehicleId or json.null,
-      TractorParams = VehicleHookParamToTable(element:get().TractorParams),
-      TrailerParams = VehicleHookParamToTable(element:get().TrailerParams),
-    })
-  end)
+  if vehicle.Net_Hooks:IsValid() and IsUObjectSafe(vehicle.Net_Hooks) then
+    vehicle.Net_Hooks:ForEach(function(index, element)
+      local hook = element:get()
+      if IsUObjectSafe(hook) then
+        local tractor = hook.Tractor
+        local trailer = hook.Trailer
+        table.insert(data.Net_Hooks, {
+          Tractor = tractor:IsValid() and IsUObjectSafe(tractor) and tractor.Net_VehicleId or json.null,
+          Trailer = trailer:IsValid() and IsUObjectSafe(trailer) and trailer.Net_VehicleId or json.null,
+          TractorParams = VehicleHookParamToTable(hook.TractorParams),
+          TrailerParams = VehicleHookParamToTable(hook.TrailerParams),
+        })
+      end
+    end)
+  end
 
   data.Net_Tractor = vehicle.Net_Tractor:IsValid() and vehicle.Net_Tractor.Net_VehicleId or json.null
   data.Net_MovementOwnerPC = GetPlayerUniqueId(vehicle.Net_MovementOwnerPC) or json.null
@@ -1662,16 +1682,19 @@ local function GetVehicles(id, fields, limit, isControlled)
   if not gameState:IsValid() then return arr end
 
   for i = 1, #gameState.Vehicles, 1 do
+    local v = gameState.Vehicles[i]
+    if not v:IsValid() or not IsUObjectSafe(v) then goto continue end
+
     -- Filter by id
-    if id and id ~= gameState.Vehicles[i].Net_VehicleId then
+    if id and id ~= v.Net_VehicleId then
       goto continue
     end
 
-    if isControlled and not gameState.Vehicles[i].Net_MovementOwnerPC:IsValid() then
+    if isControlled and not v.Net_MovementOwnerPC:IsValid() then
       goto continue
     end
 
-    local vehicle = VehicleToTable(gameState.Vehicles[i])
+    local vehicle = VehicleToTable(v)
     local filtered = {}
 
     if fields then
@@ -1712,17 +1735,19 @@ local function GetVehiclesByTag(tags)
     )
     for i, actorContainer in ipairs(actors) do
       local vehicle = actorContainer:get()
-      -- SAFETY: Net_Parts TArray concurrent access crash — skip on async thread.
-      local parts = {}
-      table.insert(arr, {
-        fullName = vehicle:GetFullName(),
-        classFullName = vehicle:GetClass():GetFullName(),
-        position = vehicle:K2_GetActorLocation(),
-        rotation = vehicle:K2_GetActorRotation(),
-        decal = VehicleDecalToTable(vehicle.Net_Decal),
-        customization = VehicleCustomizationToTable(vehicle.Customization),
-        parts = parts,
-      })
+      if vehicle:IsValid() and IsUObjectSafe(vehicle) then
+        -- SAFETY: Net_Parts TArray concurrent access crash — skip on async thread.
+        local parts = {}
+        table.insert(arr, {
+          fullName = vehicle:GetFullName(),
+          classFullName = vehicle:GetClass():GetFullName(),
+          position = vehicle:K2_GetActorLocation(),
+          rotation = vehicle:K2_GetActorRotation(),
+          decal = VehicleDecalToTable(vehicle.Net_Decal),
+          customization = VehicleCustomizationToTable(vehicle.Customization),
+          parts = parts,
+        })
+      end
     end
   end
   return arr
@@ -1739,13 +1764,14 @@ local function DespawnVehicleById(id, uniqueId)
   local vehicle = CreateInvalidObject()
   ---@cast vehicle AMTVehicle
   for i = 1, #gameState.Vehicles, 1 do
-    if gameState.Vehicles[i].Net_VehicleId == id then
-      vehicle = gameState.Vehicles[i]
+    local v = gameState.Vehicles[i]
+    if v:IsValid() and IsUObjectSafe(v) and v.Net_VehicleId == id then
+      vehicle = v
       break
     end
   end
 
-  if not vehicle:IsValid() then return false end
+  if not vehicle:IsValid() or not IsUObjectSafe(vehicle) then return false end
 
   for i = 1, #gameState.PlayerArray, 1 do
     local playerState = gameState.PlayerArray[i]
@@ -2080,7 +2106,7 @@ local function HandleSetVehicleParameter(session)
       end
     end
 
-    if vehicle:IsValid() then
+    if vehicle:IsValid() and IsUObjectSafe(vehicle) then
       local fields = SplitString(data.Field, ".") or {}
       RecursiveSetValue(vehicle, fields, data.Value)
       return { Status = "ok" }, nil, 200
@@ -2108,16 +2134,20 @@ local function HandleDetachPlayerVehicle(session)
   if not PC:IsValid() then return end
   PC.Net_SpawnedVehicles:ForEach(function(index, element)
     local vehicle = element:get()
-    if vehicle:IsValid() then
-      vehicle.Net_Hooks:ForEach(function(i, val)
-        local hook = val:get()
-        if hook:IsValid() and hook.Trailer:IsValid() and hook.Trailer.Net_VehicleId == content.vehicleId then
-          PC:ServerDetachTrailer(hook.Tractor, hook.Trailer)
-          if content.message ~= nil then
-            PC:ClientShowSystemMessage(FText(content.message))
+    if vehicle:IsValid() and IsUObjectSafe(vehicle) then
+      if vehicle.Net_Hooks:IsValid() and IsUObjectSafe(vehicle.Net_Hooks) then
+        vehicle.Net_Hooks:ForEach(function(i, val)
+          local hook = val:get()
+          if hook:IsValid() and IsUObjectSafe(hook) and hook.Trailer:IsValid() and IsUObjectSafe(hook.Trailer) and hook.Trailer.Net_VehicleId == content.vehicleId then
+            if hook.Tractor:IsValid() and IsUObjectSafe(hook.Tractor) then
+              PC:ServerDetachTrailer(hook.Tractor, hook.Trailer)
+              if content.message ~= nil then
+                PC:ClientShowSystemMessage(FText(content.message))
+              end
+            end
           end
-        end
-      end)
+        end)
+      end
     end
   end)
   if not ok then return { error = "Game thread timeout" }, nil, 503 end
@@ -2250,6 +2280,9 @@ local function HandleSetPlayerVehicleDecal(session)
 end
 
 local function PlayerVehicleToTable(vehicle, complete)
+  if not vehicle:IsValid() or not IsUObjectSafe(vehicle) then
+    return {}
+  end
   local vehicleInfo = {}
   vehicleInfo["vehicleId"] = vehicle.Net_VehicleId
   if vehicle.NetLC_ColdState:IsValid() then
@@ -2280,10 +2313,13 @@ local function PlayerVehicleToTable(vehicle, complete)
     if vehicle.Customization:IsValid() then
       vehicleInfo["customization"] = VehicleCustomizationToTable(vehicle.Customization)
     end
-    if vehicle.Net_Parts:IsValid() then
+    if vehicle.Net_Parts:IsValid() and IsUObjectSafe(vehicle.Net_Parts) then
       vehicleInfo["parts"] = {}
       vehicle.Net_Parts:ForEach(function(index, element)
-        table.insert(vehicleInfo["parts"], VehiclePartToTable(element:get()))
+        local part = element:get()
+        if IsUObjectSafe(part) then
+          table.insert(vehicleInfo["parts"], VehiclePartToTable(part))
+        end
       end)
     end
   end
@@ -2307,18 +2343,18 @@ local function HandleGetPlayerVehicles(session)
   local activeVehicles = {}
 
   LogOutput("INFO", "Recursively getting trailers")
-  if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() and not PC.LastVehicle:IsActorBeingDestroyed() then
+  if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() and IsUObjectSafe(PC.LastVehicle) and not PC.LastVehicle:IsActorBeingDestroyed() then
     lastPlayerVehicleId = PC.LastVehicle.Net_VehicleId
 
     local curr = PC.LastVehicle ---@type AMTVehicle?
 
-    while curr ~= nil and curr:IsValid() and not curr:IsActorBeingDestroyed() and curr.Net_Hooks:IsValid() do
+    while curr ~= nil and curr:IsValid() and IsUObjectSafe(curr) and not curr:IsActorBeingDestroyed() and curr.Net_Hooks:IsValid() and IsUObjectSafe(curr.Net_Hooks) do
       local v = curr
       table.insert(activeVehicles, v)
       curr = nil
       v.Net_Hooks:ForEach(function(i, val)
         local hook = val:get()
-        if hook:IsValid() and hook.Trailer:IsValid() and not hook.Trailer:IsActorBeingDestroyed() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
+        if hook:IsValid() and IsUObjectSafe(hook) and hook.Trailer:IsValid() and IsUObjectSafe(hook.Trailer) and not hook.Trailer:IsActorBeingDestroyed() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
           curr = hook.Trailer
         end
       end)
@@ -2328,11 +2364,13 @@ local function HandleGetPlayerVehicles(session)
   LogOutput("INFO", "Adding active vehicles")
   local vehicles = {}
   for index, vehicle in ipairs(activeVehicles) do
-    if vehicle:IsValid() and not vehicle:IsActorBeingDestroyed() then
+    if vehicle:IsValid() and IsUObjectSafe(vehicle) and not vehicle:IsActorBeingDestroyed() then
       local vehicleInfo = PlayerVehicleToTable(vehicle, complete)
-      vehicleInfo["isLastVehicle"] = true
-      vehicleInfo["index"] = index - 1
-      vehicles[tostring(vehicle.Net_VehicleId)] = vehicleInfo
+      if vehicleInfo.vehicleId then
+        vehicleInfo["isLastVehicle"] = true
+        vehicleInfo["index"] = index - 1
+        vehicles[tostring(vehicle.Net_VehicleId)] = vehicleInfo
+      end
     end
   end
 
@@ -2340,11 +2378,13 @@ local function HandleGetPlayerVehicles(session)
     LogOutput("INFO", "Adding spawned vehicles")
     PC.Net_SpawnedVehicles:ForEach(function(index, element)
       local vehicle = element:get()
-      if vehicle:IsValid() and vehicles[tostring(vehicle.Net_VehicleId)] == nil then
+      if vehicle:IsValid() and IsUObjectSafe(vehicle) and vehicles[tostring(vehicle.Net_VehicleId)] == nil then
         local vehicleInfo = PlayerVehicleToTable(vehicle, complete)
-        vehicleInfo["isLastVehicle"] = false
-        vehicleInfo["index"] = 0
-        vehicles[tostring(vehicle.Net_VehicleId)] = vehicleInfo
+        if vehicleInfo.vehicleId then
+          vehicleInfo["isLastVehicle"] = false
+          vehicleInfo["index"] = 0
+          vehicles[tostring(vehicle.Net_VehicleId)] = vehicleInfo
+        end
       end
     end)
   end

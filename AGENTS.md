@@ -119,6 +119,73 @@ Because `UEPseudo` is a private submodule of the `Re-UE4SS` organization, the Ni
 
 ---
 
+## Debugging Crash Dumps
+
+The cross-compilation build pipeline now generates **PDB debug symbols** for every C++ build, enabling crash-dump analysis on Linux/macOS without Visual Studio.
+
+### How it works
+
+- **Compiler flag** `/Zi` — embeds debug info in object files ( Release builds)
+- **Linker flag** `/DEBUG:FULL` — produces `.pdb` files next to every `.dll`
+- **Package scripts** copy PDBs to local `symbols/` (server) and `symbols-client/` (client) directories; they are **not** shipped in release zips
+
+### Quick analysis with LLDB
+
+The dev shell includes `lldb`, which can read Windows minidumps directly:
+
+```bash
+nix run --no-update-lock-file .#analyze-crash -- /path/to/crash.dmp
+```
+
+This loads the minidump, attaches `MotorTownMods.dll` + its PDB, and prints a full backtrace for every thread.
+
+### Production-quality analysis with `minidump-stackwalk`
+
+For the cleanest symbolicated output (inlined functions, source lines), install Mozilla's Rust tools:
+
+```bash
+cargo install minidump-stackwalk dump_syms
+
+# Convert PDBs to Breakpad .sym format
+dump_syms symbols/MotorTownMods.pdb > MotorTownMods.sym
+
+# Build symbol tree (UUID comes from the first line of the .sym file)
+UUID=$(head -n1 MotorTownMods.sym | awk '{print $4}')
+mkdir -p symbols/MotorTownMods.pdb/$UUID
+mv MotorTownMods.sym symbols/MotorTownMods.pdb/$UUID/
+
+# Analyze the dump
+minidump-stackwalk crash.dmp --symbols-path ./symbols --pretty
+```
+
+### Important: PDBs must match the crashing build exactly
+
+A PDB is cryptographically bound to its DLL by a GUID + age stamp generated at link time. A new build produces a new PDB — it **will not work** for an old crash dump. You must archive PDBs for every release so you can debug historical crashes.
+
+### Archiving symbols per release
+
+After packaging, archive the PDBs with the current git tag:
+
+```bash
+nix run --no-update-lock-file .#archive-symbols
+```
+
+This copies `symbols/` and `symbols-client/` into `symbols-archive/<git-tag>/` and records the exact git revision. When a crash arrives, use the matching tag's PDB.
+
+### Prerequisites
+
+1. Build and package the mod so PDBs are generated:
+   ```bash
+   nix run --no-update-lock-file .#configure
+   nix run --no-update-lock-file .#build
+   nix run --no-update-lock-file .#package
+   ```
+2. Archive the symbols:
+   ```bash
+   nix run --no-update-lock-file .#archive-symbols
+   ```
+3. Verify PDBs exist in `symbols/` or `symbols-archive/<tag>/` before analyzing a dump.
+
 ## Deployment
 
 For the full end-to-end deployment workflow (uploading, NixOS config, cache purging, server restart, client distribution), see the [mtdedimod-deploy skill](../.agents/skills/mtdedimod-deploy/SKILL.md) in the parent `amc-server` repository.

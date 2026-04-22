@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc9] — 2026-04-22
+
+#### Added
+- Cross-compilation build pipeline now generates PDB debug symbols (`/Zi` + `/DEBUG:FULL`) for crash-dump analysis on Linux/macOS
+- New flake apps: `analyze-crash` (LLDB minidump inspector) and `archive-symbols` (per-release PDB archiving)
+
+#### Fixed
+- `VehicleManager` crash hardening: `IsUObjectSafe` guards added across `VehicleToTable`, `VehiclePartToTable`, `PlayerVehicleToTable`, `GetVehicles`, `GetVehiclesByTag`, `DespawnVehicleById`, `HandleSetVehicleParameter`, `HandleDetachPlayerVehicle`, and `HandleGetPlayerVehicles` — prevents `EXCEPTION_ACCESS_VIOLATION` when iterating vehicles, seats, hooks, or parts that are mid-destruction
+
 ### [server/v0.38.0-rc8] — 2026-04-22
 
 #### Added
