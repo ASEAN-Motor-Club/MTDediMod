@@ -461,7 +461,10 @@ local function dispatchSession(s)
 
     if canRunAsync then
         -- Run directly on async thread; no game-thread queueing
+        local sessionStart = time()
         local ok, content, mime, code = pcall(processSession, s)
+        local sessionDuration = time() - sessionStart
+        LogOutput("DEBUG", "processSession (async) took %.1fms for %s %s", sessionDuration, s.method, s.urlString)
         if ok then
             s.pendingResponse = { content = content, mime = mime, code = code }
         else
@@ -482,7 +485,10 @@ local function dispatchSession(s)
     -- Block the async thread until the game thread finishes (or times out).
     -- Some engine operations are not safe when the async thread races ahead.
     local resContent, resMime, resCode
+    local sessionStart = time()
     local ok, content, mime, code = pcall(processSession, s)
+    local sessionDuration = time() - sessionStart
+    LogOutput("DEBUG", "processSession (sync) took %.1fms for %s %s", sessionDuration, s.method, s.urlString)
     if ok then
         resContent, resMime, resCode = content, mime, code
     else
@@ -587,6 +593,7 @@ end
 ---Note that if there is data to process this method may return sooner or later than the timeout time.
 ---@param timeout number Socket selection timeout in seconds
 local function process(timeout)
+    local processStart = time()
     local rclients, _, err = socket.select(clients, nil, timeout)
     ---@cast rclients TCPSocketClient[]
     if err ~= nil then
@@ -660,6 +667,13 @@ local function process(timeout)
             end
         end
         i = i - 1
+    end
+
+    local processDuration = time() - processStart
+    if processDuration > 10 then
+        LogOutput("WARN", "Game thread blocked for %.1fms in Webserver.process()", processDuration)
+    elseif enableDebug then
+        LogOutput("DEBUG", "Game thread blocked for %.1fms in Webserver.process()", processDuration)
     end
 end
 
