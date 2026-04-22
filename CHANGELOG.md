@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc8] — 2026-04-22
+
+#### Added
+- `IsUObjectSafe` C++ global function exposed to Lua — checks `RF_BeginDestroyed`, `RF_FinishDestroyed`, `PendingKill`, and `Unreachable` flags that `:IsValid()` misses
+
+#### Fixed
+- `DespawnPlayerVehicle` crash when despawning vehicles mid-destruction: every UObject in the tractor-trailer chain is now gated with `IsUObjectSafe` before property access or `ServerDespawnVehicle` calls
+
 ### [server/v0.38.0-rc7] — 2026-04-22
 
 #### Added

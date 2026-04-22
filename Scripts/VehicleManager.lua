@@ -2393,23 +2393,6 @@ local function HandlePlayerEnterLastVehicle(session)
   return { status = "success" }, nil, 200
 end
 
----Handle despawning a player's current vehicle (and trailers)
----@type RequestPathHandler
-local function HandleDespawnPlayerVehicle(session)
-  local characterGuid = session.pathComponents[2]
-  local PC = GetPlayerControllerFromGuid(characterGuid)
-  if not PC:IsValid() then
-    return { error = "Invalid player controller" }, nil, 400
-  end
-  local count = 0
-  count = DespawnPlayerVehicle(PC)
-  if count > 0 then
-    return { despawned = count }, nil, 200
-  else
-    return { error = "No vehicle to despawn" }, nil, 404
-  end
-end
-
 local function HandleSpawnVehicle(session)
   local content = json.parse(session.content)
 
@@ -2544,29 +2527,49 @@ end
 ---@return number count The number of vehicles despawned
 local function DespawnPlayerVehicle(PC)
   local count = 0
-  if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
+  if not PC:IsValid() or not IsUObjectSafe(PC) then
+    return count
+  end
+  if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() and IsUObjectSafe(PC.LastVehicle) then
     local vehiclesToDespawn = {}
     local curr = PC.LastVehicle ---@type AMTVehicle?
-    while curr ~= nil and curr:IsValid() and curr.Net_Hooks:IsValid() do
+    while curr ~= nil and curr:IsValid() and IsUObjectSafe(curr) and curr.Net_Hooks:IsValid() and IsUObjectSafe(curr.Net_Hooks) do
       local v = curr
       table.insert(vehiclesToDespawn, v)
       curr = nil
       v.Net_Hooks:ForEach(function(i, val)
         local hook = val:get()
-        if hook:IsValid() and hook.Trailer:IsValid() and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
+        if hook:IsValid() and IsUObjectSafe(hook) and hook.Trailer:IsValid() and IsUObjectSafe(hook.Trailer) and hook.Trailer.Net_VehicleId ~= v.Net_VehicleId then
           curr = hook.Trailer
         end
       end)
     end
 
     for _, vehicle in ipairs(vehiclesToDespawn) do
-      if vehicle:IsValid() then
+      if vehicle:IsValid() and IsUObjectSafe(vehicle) then
         PC:ServerDespawnVehicle(vehicle, 0)
         count = count + 1
       end
     end
   end
   return count
+end
+
+---Handle despawning a player's current vehicle (and trailers)
+---@type RequestPathHandler
+local function HandleDespawnPlayerVehicle(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = "Invalid player controller" }, nil, 400
+  end
+  local count = 0
+  count = DespawnPlayerVehicle(PC)
+  if count > 0 then
+    return { despawned = count }, nil, 200
+  else
+    return { error = "No vehicle to despawn" }, nil, 404
+  end
 end
 
 return {

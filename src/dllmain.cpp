@@ -1875,4 +1875,38 @@ auto MotorTownMods::on_lua_start(
 		lua_net.set_bool(true);
 		return 1;
 	});
+
+	// IsUObjectSafe(uobject) -> bool
+	// Performs extensive safety checks beyond :IsValid() to detect objects
+	// that are mid-destruction or pending kill. Use this before touching
+	// UObject properties from async (webserver) threads or when iterating
+	// cached references.
+	lua.register_function("IsUObjectSafe", [](const LuaMadeSimple::Lua& lua_net) -> int {
+		if (lua_net.get_stack_size() < 1) {
+			lua_net.throw_error("IsUObjectSafe requires 1 argument: UObject");
+		}
+
+		auto& object = lua_net.get_userdata<RC::LuaType::UObject>();
+		auto* obj = object.get_remote_cpp_object();
+
+		if (!obj) {
+			lua_net.set_bool(false);
+			return 1;
+		}
+
+		// Check destruction object flags
+		if (obj->HasAnyFlags(static_cast<EObjectFlags>(RF_BeginDestroyed | RF_FinishDestroyed))) {
+			lua_net.set_bool(false);
+			return 1;
+		}
+
+		// Check internal GC flags
+		if (obj->HasAnyInternalFlags(EInternalObjectFlags::PendingKill | EInternalObjectFlags::Unreachable)) {
+			lua_net.set_bool(false);
+			return 1;
+		}
+
+		lua_net.set_bool(true);
+		return 1;
+	});
 }
