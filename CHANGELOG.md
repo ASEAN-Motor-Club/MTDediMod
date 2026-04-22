@@ -6,6 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.38.0-rc11] — 2026-04-22
+
+#### Fixed
+- **Actually applied** UE4SS Lua GC corruption patches (rc10 was a no-op due to Nix store caching the old unpatched `ue4ss-patched` derivation). Both patches are now compiled into the binary:
+  - Lua 5.4.7 `lgc.c` weak-table metatable fix
+  - Skip delegate/function properties in `convert_struct_to_lua_table`
+
+### [server/v0.38.0-rc10] — 2026-04-22
+
+#### Fixed
+- UE4SS Lua GC corruption crash during `/player_vehicles/*/list?complete=1` — applied upstream Lua 5.4.7 bug fix for weak-table + metatable interaction in `lgc.c` that caused null-deref in `luaC_checkfinalizer`
+- UE4SS `convert_struct_to_lua_table` now skips delegate/function properties (`FDelegateProperty`, `FMulticastDelegateProperty`, etc.) — prevents `UFunction::construct` → `lua_setmetatable` path that triggers the GC bug under heavy nested struct conversion
+
 ### [server/v0.38.0-rc9] — 2026-04-22
 
 #### Added
@@ -50,7 +63,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 - Global request throttle (`maxInFlight`/`inFlight`) replaces the previous GET-only throttle, applying to all methods equally
 
 #### Removed
-- `ExecuteInGameThreadSync2` blocking spin-wait path for mutating HTTP methods — no longer needed since all dispatch is now async
+- `ExecuteInGameThreadSync` blocking spin-wait path for mutating HTTP methods — no longer needed since all dispatch is now async
 
 ### [server/v0.38.0-rc4] — 2026-04-21
 
@@ -68,8 +81,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 - Stale `_gameThreadDepth` reference in GET dispatch caused nil arithmetic error, preventing `pendingResponse` from being set and causing GET requests to hang
 
 #### Changed
-- `ExecuteInGameThreadSync` is now a pure passthrough (executes inline, always returns true) — safe to call from any game-thread callback
-- New `ExecuteInGameThreadSync2` performs the real async→game-thread blocking dispatch with spin-wait timeout; used only by the webserver dispatcher for mutating methods
+- `ExecuteInGameThreadSync` now performs the real async→game-thread blocking dispatch with spin-wait timeout; used by the webserver dispatcher for mutating methods
 - Removed all `ExecuteInGameThreadSync` wrappers from handler files (VehicleManager, PlayerManager, ServerManager, PropertyManager, CargoManager, ViewportManager) — handlers run directly on the game thread since the webserver centrally dispatches them
 
 ### [server/v0.38.0-rc2] — 2026-04-21
@@ -245,6 +257,14 @@ Re-release for test container deployment (no server-side code changes since rc5)
 ---
 
 ## Client
+
+### [client/v0.2.12] — 2026-04-22
+
+#### Added
+- Single-player vehicle save/spawn commands (`/save_vehicle [name]`, `/spawn_vehicle [name]`) with aliases `/sv` and `/spv` — stores vehicle config (asset, paint, decals, parts) as local JSON in `saved_vehicles/`
+- `VehicleSaveSpawn` client module: pure client-side serialize/deserialize with direct `world:SpawnActor` and server RPC application (no networking)
+- Quick-save keybind: `Ctrl+Shift+F5` saves the current vehicle to `saved_vehicles/quicksave.json`
+- Shared `VehicleSerialization` module extracted from server `VehicleManager.lua` for bidirectional customization/decal/part serialization
 
 ### [client/v0.2.11] — 2026-04-08
 

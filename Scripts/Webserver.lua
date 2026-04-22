@@ -478,15 +478,24 @@ local function dispatchSession(s)
     end
     getInFlight = getInFlight + 1
     s.inFlightCounted = true
-    -- Fire-and-forget: queue handler to game thread, async thread will poll pendingResponse
-    ExecuteInGameThread(function()
+
+    -- Block the async thread until the game thread finishes (or times out).
+    -- Some engine operations are not safe when the async thread races ahead.
+    local resContent, resMime, resCode
+    local completed = ExecuteInGameThreadSync(function()
         local ok, content, mime, code = pcall(processSession, s)
         if ok then
-            s.pendingResponse = { content = content, mime = mime, code = code }
+            resContent, resMime, resCode = content, mime, code
         else
-            s.pendingResponse = { content = '{"error":"Internal server error"}', code = 500 }
+            resContent, resCode = '{"error":"Internal server error"}', 500
         end
-    end)
+    end, "dispatchSession " .. (s.urlString or "unknown"))
+
+    if not completed then
+        resContent, resCode = '{"error":"Game thread timeout"}', 503
+    end
+
+    s.pendingResponse = { content = resContent, mime = resMime, code = resCode }
 end
 
 ---Handle client request data
@@ -715,7 +724,7 @@ local function run(bindHost, bindPort)
     -- Run the webserver loop off the game thread via LoopAsync so that socket I/O
     -- (accept, receive, select) never blocks EngineTick.  When a complete HTTP
     -- request is ready, processSession is dispatched to the game thread with
-    -- ExecuteInGameThreadSync2; the response is then sent from the async thread.
+    -- ExecuteInGameThreadSync; the response is then sent from the async thread.
     -- process() uses timeout=0 (non-blocking socket.select) so the async thread
     -- never sleeps longer than necessary.
     LoopAsync(1, function()

@@ -121,13 +121,34 @@ Because `UEPseudo` is a private submodule of the `Re-UE4SS` organization, the Ni
 
 ## Debugging Crash Dumps
 
-The cross-compilation build pipeline now generates **PDB debug symbols** for every C++ build, enabling crash-dump analysis on Linux/macOS without Visual Studio.
+The cross-compilation build pipeline generates **PDB debug symbols** for every C++ build, enabling crash-dump analysis on Linux/macOS without Visual Studio.
 
 ### How it works
 
-- **Compiler flag** `/Zi` — embeds debug info in object files ( Release builds)
+- **Compiler flag** `/Zi` — embeds debug info in object files (Release builds)
 - **Linker flag** `/DEBUG:FULL` — produces `.pdb` files next to every `.dll`
+- **PE debug directory patcher** (`tools/patch-pe-debug-dir.py`) — `lld-link` creates valid PDBs but fails to write the `IMAGE_DEBUG_DIRECTORY` entry; the patcher fixes this post-link so minidumps contain matching CV records
 - **Package scripts** copy PDBs to local `symbols/` (server) and `symbols-client/` (client) directories; they are **not** shipped in release zips
+
+### Quick analysis with `minidump_stackwalk`
+
+The `breakpad` package provides `minidump_stackwalk` and `minidump_dump`:
+
+```bash
+# Find latest dump on server
+ssh root@amc-peripheral 'ls -lt /var/lib/motortown-server/MotorTown/Saved/Crashes/*/UEMinidump.dmp | head -5'
+
+# Copy locally
+scp root@amc-peripheral:.../UEMinidump.dmp /tmp/latest.dmp
+
+# Generate Breakpad .sym from PDB
+nix-shell -p dump_syms --run "dump_syms symbols-archive/<tag>/UE4SS.pdb > /tmp/UE4SS.sym"
+
+# Run stackwalk
+nix-shell -p breakpad --run "minidump_stackwalk /tmp/latest.dmp symbols-archive/<tag>/"
+```
+
+Look for `Thread 0 (crashed)` to find the faulting instruction. The `.sym` file resolves function names and source lines.
 
 ### Quick analysis with LLDB
 
@@ -137,26 +158,7 @@ The dev shell includes `lldb`, which can read Windows minidumps directly:
 nix run --no-update-lock-file .#analyze-crash -- /path/to/crash.dmp
 ```
 
-This loads the minidump, attaches `MotorTownMods.dll` + its PDB, and prints a full backtrace for every thread.
-
-### Production-quality analysis with `minidump-stackwalk`
-
-For the cleanest symbolicated output (inlined functions, source lines), install Mozilla's Rust tools:
-
-```bash
-cargo install minidump-stackwalk dump_syms
-
-# Convert PDBs to Breakpad .sym format
-dump_syms symbols/MotorTownMods.pdb > MotorTownMods.sym
-
-# Build symbol tree (UUID comes from the first line of the .sym file)
-UUID=$(head -n1 MotorTownMods.sym | awk '{print $4}')
-mkdir -p symbols/MotorTownMods.pdb/$UUID
-mv MotorTownMods.sym symbols/MotorTownMods.pdb/$UUID/
-
-# Analyze the dump
-minidump-stackwalk crash.dmp --symbols-path ./symbols --pretty
-```
+This loads the minidump and attaches `MotorTownMods.dll` + its PDB for basic inspection.
 
 ### Important: PDBs must match the crashing build exactly
 
@@ -185,6 +187,43 @@ This copies `symbols/` and `symbols-client/` into `symbols-archive/<git-tag>/` a
    nix run --no-update-lock-file .#archive-symbols
    ```
 3. Verify PDBs exist in `symbols/` or `symbols-archive/<tag>/` before analyzing a dump.
+
+---
+
+## Known Issues
+
+### lld-link PE debug directory bug
+
+`lld-link` with `/DEBUG:FULL` creates valid PDBs and embeds RSDS CodeView records in the PE binary, but **fails to write the `IMAGE_DEBUG_DIRECTORY` entry** that points to the RSDS record. This means:
+- PDBs exist and have matching GUIDs to the DLLs
+- The DLL contains the RSDS record with the GUID
+- But the PE header's debug directory is empty/all-zero
+- UE5's crash reporter writes minidumps that **lack CV records** (no GUIDs in the module list)
+- `minidump-stackwalk` and LLDB cannot auto-match PDBs to modules in the dump
+
+**Fix**: `tools/patch-pe-debug-dir.py` locates the embedded RSDS record and writes the missing `IMAGE_DEBUG_DIRECTORY` (type=2 CODEVIEW) entry. Integrated into `buildScript` and `buildClientScript` in `flake.nix` so it auto-runs after `cmake --build`.
+
+### UE4SS Lua GC corruption (luaC_checkfinalizer crash)
+
+**Symptom**: `EXCEPTION_ACCESS_VIOLATION_READ` at `0x0` in `UE4SS.dll`, crash inside `luaC_checkfinalizer` at `lgc.c:1035`. Call stack includes `convert_struct_to_lua_table` → `UFunction::construct` → `lua_setmetatable` → `luaC_checkfinalizer`.
+
+**Trigger**: Heavy nested struct-to-table conversion, e.g. `/player_vehicles/*/list?complete=1` iterating through `Net_Parts` with nested TArrays.
+
+**Root cause**: Two interacting bugs:
+
+1. **Lua 5.4.7 weak-table + metatable GC bug** (upstream, fixed in Lua master but not 5.4.7):
+   When a metatable is created on an all-weak table during the GC propagate phase, the table must be re-linked to `grayagain` so its metatable is traversed. Without this the GC lists become corrupted.
+   
+   Fix: `patches-ue4ss/lua-lgc-weak-table-metatable-fix.patch`
+
+2. **UE4SS `convert_struct_to_lua_table` creates userdata via `UFunction::construct`**:
+   Delegate/function properties trigger `UFunction::construct` which calls `lua_setmetatable` on fresh userdata. This is the exact path that crashes when GC lists are corrupted.
+   
+   Fix: `patches-ue4ss/ue4ss-skip-delegate-properties-in-struct-conversion.patch` — skips delegate/function properties during struct-to-table conversion.
+
+**Related upstream PRs**:
+- PR #1201 "Increased stability for Lua mods" — thread safety and callback deferral, does NOT fix this GC bug directly
+- PR #1130 "Exposes AsyncCompute and JSON to Lua API" — unrelated
 
 ## Deployment
 

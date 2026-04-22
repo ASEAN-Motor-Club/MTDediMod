@@ -1,12 +1,11 @@
 -- Tests for Webserver.lua threading and dispatch logic
 --
 -- These tests verify:
---   1. ExecuteInGameThreadSync is a passthrough (executes inline)
---   2. ExecuteInGameThreadSync2 async dispatch (spin-wait from async thread)
---   3. ExecuteInGameThreadSync2 timeout behavior
---   4. Webserver GET/HEAD dispatch uses fire-and-forget ExecuteInGameThread
---   5. Webserver POST/PUT/DELETE/PATCH dispatch uses blocking ExecuteInGameThreadSync2
---   6. pendingResponse polling and JSON stringify on async thread
+--   1. ExecuteInGameThreadSync blocking dispatch (spin-wait from async thread)
+--   2. ExecuteInGameThreadSync timeout behavior
+--   3. Webserver GET/HEAD dispatch runs directly on async thread
+--   4. Webserver POST/PUT/DELETE/PATCH dispatch uses blocking ExecuteInGameThreadSync
+--   5. pendingResponse polling and JSON stringify on async thread
 
 -- ============================================================
 -- Stubs for Webserver.lua dependencies
@@ -59,22 +58,6 @@ require("Helpers")
 -- ============================================================
 
 describe("ExecuteInGameThreadSync", function()
-  it("is a passthrough that executes inline", function()
-    local executed = false
-    local result = nil
-
-    local ok = _G.ExecuteInGameThreadSync(function()
-      executed = true
-      result = "inline_ok"
-    end, "passthrough_test", 1000)
-
-    assert.is_true(ok)
-    assert.is_true(executed)
-    assert.are.equal("inline_ok", result)
-  end)
-end)
-
-describe("ExecuteInGameThreadSync2", function()
   it("uses ExecuteInGameThread + spin-wait when called from async thread", function()
     local executed = false
 
@@ -86,7 +69,7 @@ describe("ExecuteInGameThreadSync2", function()
       fn()  -- simulate game thread executing immediately
     end
 
-    local ok = _G.ExecuteInGameThreadSync2(function()
+    local ok = _G.ExecuteInGameThreadSync(function()
       executed = true
     end, "async_test", 100)
 
@@ -105,7 +88,7 @@ describe("ExecuteInGameThreadSync2", function()
       -- Intentionally do not call fn() — simulates stalled game thread
     end
 
-    local ok = _G.ExecuteInGameThreadSync2(function()
+    local ok = _G.ExecuteInGameThreadSync(function()
       error("should not execute")
     end, "timeout_test", 5)
 

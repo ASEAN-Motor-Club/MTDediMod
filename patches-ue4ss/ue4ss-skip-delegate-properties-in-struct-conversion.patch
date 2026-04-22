@@ -1,0 +1,22 @@
+--- a/UE4SS/src/LuaType/LuaUObject.cpp
++++ b/UE4SS/src/LuaType/LuaUObject.cpp
+@@ -638,6 +638,19 @@ namespace RC::LuaType
+             // Check if we can handle this field type
+             bool can_handle = StaticState::m_property_value_pushers.contains(name_comparison_index);
+ 
++            // Skip delegate/function properties during struct-to-table conversion.
++            // These can trigger UFunction::construct which calls lua_setmetatable on
++            // a newly created userdata. Under heavy struct conversion load this path
++            // can hit a Lua 5.4 GC corruption bug (weak-table + metatable interaction)
++            // that causes a null-deref in luaC_checkfinalizer.
++            if (can_handle && (field->IsA<Unreal::FDelegateProperty>() ||
++                               field->IsA<Unreal::FMulticastDelegateProperty>() ||
++                               field->IsA<Unreal::FMulticastInlineDelegateProperty>() ||
++                               field->IsA<Unreal::FMulticastSparseDelegateProperty>()))
++            {
++                can_handle = false;
++            }
++
+             if (can_handle)
+             {
+                 // If it's a container, also check if we can handle the inner type

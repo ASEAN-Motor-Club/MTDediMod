@@ -574,17 +574,14 @@ end
 
 ---Execute the given function on the game thread and block until it completes.
 ---
----This is the "real" blocking implementation used by the webserver dispatch.
----It queues the function via ExecuteInGameThread and spin-waits with socket.sleep
----until it finishes (or times out).  It does NOT check _gameThreadDepth, so it
----must never be called from inside a game-thread callback (use ExecuteInGameThreadSync
----for that).
+---Queues the function via ExecuteInGameThread and spin-waits with socket.sleep
+---until it finishes (or times out).
 ---
 ---@param exec fun() Function to execute
 ---@param label string? Label for timeout warnings
 ---@param maxMs number? Upper bound in ms for the async wait (default 1000)
 ---@return boolean completed true if the function completed within maxMs
-function ExecuteInGameThreadSync2(exec, label, maxMs)
+function ExecuteInGameThreadSync(exec, label, maxMs)
   maxMs = maxMs or 1000
   local wait = 0
   local isProcessing = true
@@ -594,7 +591,7 @@ function ExecuteInGameThreadSync2(exec, label, maxMs)
     execOk, execErr = pcall(exec)
     isProcessing = false
     if not execOk then
-      LogOutput("ERROR", "ExecuteInGameThreadSync2 error: %s", execErr)
+      LogOutput("ERROR", "ExecuteInGameThreadSync error: %s", execErr)
     end
   end)
 
@@ -604,23 +601,8 @@ function ExecuteInGameThreadSync2(exec, label, maxMs)
   end
 
   if isProcessing then
-    LogOutput("WARN", "ExecuteInGameThreadSync2 timed out after %dms: %s", maxMs, label or "unknown")
+    LogOutput("WARN", "ExecuteInGameThreadSync timed out after %dms: %s", maxMs, label or "unknown")
     return false
   end
-  return true
-end
-
----Execute the given function inline (passthrough).
----
----This is the safe version for use inside handler code that may already be
----running on the game thread (e.g. inside a processSession callback).  It
----never queues or blocks; it just calls exec() directly.
----
----@param exec fun() Function to execute
----@param label string? Label for timeout warnings (ignored)
----@param maxMs number? Upper bound in ms (ignored)
----@return boolean completed always true
-function ExecuteInGameThreadSync(exec, label, maxMs)
-  exec()
   return true
 end

@@ -2,6 +2,9 @@ local vehicleManager = require("VehicleManager")
 local teleportManager = require("TeleportManager")
 local satNav = require("SatNav")
 local integrityChecker = require("IntegrityChecker")
+local vehicleSaveSpawn = require("VehicleSaveSpawn")
+local UEHelpers = require("UEHelpers")
+local types = require("MTHelpers.Types")
 
 local Commands = {}
 
@@ -50,6 +53,74 @@ Commands["/nav"] = Commands["/satnav"]
 Commands["/check"] = function(PC, args)
   integrityChecker.RunCheck()
 end
+
+Commands["/save_vehicle"] = function(PC, args)
+  local name = args[1]
+  if not name then
+    LogOutput("WARN", "/save_vehicle: missing name")
+    return
+  end
+  local vehicle = PC.LastVehicle
+  if not vehicle or not vehicle:IsValid() then
+    LogOutput("WARN", "/save_vehicle: no active vehicle")
+    return
+  end
+  local data = vehicleSaveSpawn.SerializeVehicle(vehicle)
+  vehicleSaveSpawn.SaveVehicle(name, data)
+end
+
+Commands["/spawn_vehicle"] = function(PC, args)
+  local name = args[1]
+  if not name then
+    LogOutput("WARN", "/spawn_vehicle: missing name")
+    return
+  end
+  local config = vehicleSaveSpawn.LoadVehicle(name)
+  if not config then
+    LogOutput("WARN", "/spawn_vehicle: '%s' not found", name)
+    return
+  end
+
+  local world = UEHelpers.GetWorld()
+  if not world or not world:IsValid() then
+    LogOutput("WARN", "/spawn_vehicle: invalid world")
+    return
+  end
+
+  local assetPath = config.AssetPath:gsub("^BlueprintGeneratedClass ", ""):gsub("^Class ", "")
+  local assetClass = StaticFindObject(assetPath)
+  if not assetClass or not assetClass:IsValid() then
+    LogOutput("WARN", "/spawn_vehicle: asset not found: %s", assetPath)
+    return
+  end
+
+  local pawn = PC:K2_GetPawn()
+  local location = pawn:IsValid() and types.VectorToTable(pawn:K2_GetActorLocation()) or {X=0, Y=0, Z=0}
+  local rotation = pawn:IsValid() and types.RotatorToTable(pawn:K2_GetActorRotation()) or {Pitch=0, Yaw=0, Roll=0}
+  -- Offset down slightly so vehicle spawns on ground
+  location.Z = location.Z - 95
+
+  local vehicle = world:SpawnActor(
+    assetClass,
+    location,
+    rotation
+  )
+
+  if not vehicle or not vehicle:IsValid() then
+    LogOutput("WARN", "/spawn_vehicle: spawn failed")
+    return
+  end
+
+  -- Apply config (customization, decals, parts)
+  vehicleSaveSpawn.ApplyVehicleConfig(vehicle, config, PC)
+
+  -- Auto-enter driver seat
+  PC:ServerEnterVehicle(vehicle, 1, -1, false)
+  LogOutput("INFO", "/spawn_vehicle: spawned '%s'", name)
+end
+
+Commands["/sv"] = Commands["/save_vehicle"]
+Commands["/spv"] = Commands["/spawn_vehicle"]
 
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then

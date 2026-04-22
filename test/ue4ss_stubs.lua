@@ -73,11 +73,6 @@ function ExecuteInGameThreadSync(exec, label, maxMs)
   return true
 end
 
-function ExecuteInGameThreadSync2(exec, label, maxMs)
-  exec()
-  return true
-end
-
 -- ============================================================
 -- FName stub
 -- ============================================================

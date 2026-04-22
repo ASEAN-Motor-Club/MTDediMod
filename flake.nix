@@ -63,7 +63,11 @@
 
           phases = ["unpackPhase" "patchPhase" "installPhase"];
 
-          patches = [./patches-ue4ss/ue4ss-cross-compile.patch];
+          patches = [
+            ./patches-ue4ss/ue4ss-cross-compile.patch
+            ./patches-ue4ss/lua-lgc-weak-table-metatable-fix.patch
+            ./patches-ue4ss/ue4ss-skip-delegate-properties-in-struct-conversion.patch
+          ];
 
           installPhase = ''
             mkdir -p $out
@@ -142,6 +146,15 @@
 
             echo "Build complete. Output in build-cross/${buildType}/"
             echo "PDB symbols generated for crash-dump debugging."
+
+            # Patch PE debug directories (workaround for lld-link bug)
+            if command -v python3 >/dev/null 2>&1; then
+              for dll in build-cross/${buildType}/bin/*.dll build-cross/${modName}/${modName}.dll; do
+                if [ -f "$dll" ]; then
+                  python3 "${./tools/patch-pe-debug-dir.py}" "$dll" 2>/dev/null || true
+                fi
+              done
+            fi
           '';
         };
 
@@ -371,6 +384,15 @@
 
             echo "Build complete. Output in ${clientBuildDir}/${buildType}/"
             echo "PDB symbols generated for crash-dump debugging."
+
+            # Patch PE debug directories (workaround for lld-link bug)
+            if command -v python3 >/dev/null 2>&1; then
+              for dll in "${clientBuildDir}"/${buildType}/bin/*.dll "${clientBuildDir}"/${modName}/${modName}.dll; do
+                if [ -f "$dll" ]; then
+                  python3 "${./tools/patch-pe-debug-dir.py}" "$dll" 2>/dev/null || true
+                fi
+              done
+            fi
           '';
         };
 

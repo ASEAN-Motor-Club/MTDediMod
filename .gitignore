@@ -30,3 +30,8 @@ result
 lua_modules/
 .luarocks/
 bp_assets/
+
+# Symbols (regenerated per build)
+symbols/
+symbols-client/
+symbols-archive/
