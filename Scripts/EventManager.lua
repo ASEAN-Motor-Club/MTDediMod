@@ -1,5 +1,4 @@
 local UEHelpers = require("UEHelpers")
-local webhook = require("Webclient")
 local json = require("JsonParser")
 
 ---Convert FMTEventPlayer to JSON serializable table
@@ -338,67 +337,50 @@ end)
 
 -- Register event hooks
 
-webhook.RegisterEventHook(
-  "ServerAddEvent",
-  function(context, eventParam)
-    local PC = context:get() ---@type AMotorTownPlayerController
-    local event = eventParam:get() ---@type FMTEvent
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerAddEvent",
+  function(PC, eventParam)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
+    local event = eventParam:get()
 
     LogOutput("DEBUG", "New event %s created", GuidToString(event.EventGuid))
 
-    return {
-      PlayerId = GetPlayerUniqueId(PC),
+    EnqueueWebhookEvent("ServerAddEvent", {
+      CharacterGuid = GetPlayerGuid(playerController),
+      PlayerId = GetPlayerUniqueId(playerController),
       Event = EventToTable(event),
-    }
+    })
   end
 )
 
-webhook.RegisterEventHook(
-  "ServerChangeEventState",
-  function(context, eventParam, stateParam)
-    local PC = context:get() ---@type AMotorTownPlayerController
-    local guid = eventParam:get() ---@type FGuid
-    local eventState = stateParam:get() ---@type EMTEventState
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerChangeEventState",
+  function() end, -- empty pre-hook
+  function(PC, eventParam, stateParam)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
+    local guid = eventParam:get()
     local eventGuid = GuidToString(guid)
-
-    LogOutput("DEBUG", "Event %s state changed to %i", eventGuid, eventState)
-
     local event = GetEvents(eventGuid)
-
     if #event == 0 then return end
-
-    return {
-      PlayerId = GetPlayerUniqueId(PC),
-      Event = EventToTable(event[1])
-    }
+    EnqueueWebhookEvent("ServerChangeEventState", {
+      CharacterGuid = GetPlayerGuid(playerController),
+      PlayerId = GetPlayerUniqueId(playerController),
+      Event = event[1],
+    })
   end
 )
 
-webhook.RegisterEventHook(
-  "ServerRemoveEvent",
-  function(context, eventParam)
-    local PC = context:get() ---@type AMotorTownPlayerController
-    local event = eventParam:get() ---@type FGuid
-    local eventGuid = GuidToString(event)
-
-    LogOutput("DEBUG", "Event %s removed", eventGuid)
-
-    return {
-      PlayerId = GetPlayerUniqueId(PC),
-      EventGuid = eventGuid
-    }
-  end
-)
-
-webhook.RegisterEventHook(
-  "ServerPassedRaceSection",
-  function(context, eventGuid, sectionIndex, totalTimeSeconds, laptimeSeconds)
-    local PC = context:get() ---@cast PC AMotorTownPlayerController
-
-    if not PC:IsValid() then return end
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerPassedRaceSection",
+  function(PC, eventGuid, sectionIndex, totalTimeSeconds, laptimeSeconds)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
 
     local data = {
-      PlayerId = GetPlayerUniqueId(PC),
+      CharacterGuid = GetPlayerGuid(playerController),
+      PlayerId = GetPlayerUniqueId(playerController),
       EventGuid = GuidToString(eventGuid:get()),
       SectionIndex = sectionIndex:get(),
       TotalTimeSeconds = totalTimeSeconds:get(),
@@ -406,46 +388,64 @@ webhook.RegisterEventHook(
     }
     LogOutput("DEBUG", "ServerPassedRaceSection: %s", json.stringify(data))
 
-    return data
+    EnqueueWebhookEvent("ServerPassedRaceSection", data)
   end
 )
 
-webhook.RegisterEventHook(
-  "ServerJoinEvent",
-  function(context, eventGuid)
-    local PC = context:get() ---@cast PC AMotorTownPlayerController
-
-    if not PC:IsValid() then return end
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerJoinEvent",
+  function(PC, eventGuid)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
 
     local guid = GuidToString(eventGuid:get())
 
     local data = {
-      PlayerId = GetPlayerUniqueId(PC),
+      CharacterGuid = GetPlayerGuid(playerController),
+      PlayerId = GetPlayerUniqueId(playerController),
       EventGuid = guid
     }
 
     LogOutput("DEBUG", "serverJoinEvent: %s", json.stringify(data))
 
-    return data
+    EnqueueWebhookEvent("ServerJoinEvent", data)
   end
 )
 
-webhook.RegisterEventHook(
-  "ServerLeaveEvent",
-  function(context, eventGuid)
-    local PC = context:get() ---@cast PC AMotorTownPlayerController
-
-    if not PC:IsValid() then return end
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerLeaveEvent",
+  function(PC, eventGuid)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
 
     local guid = GuidToString(eventGuid:get())
 
     local data = {
-      PlayerId = GetPlayerUniqueId(PC),
+      CharacterGuid = GetPlayerGuid(playerController),
+      PlayerId = GetPlayerUniqueId(playerController),
       EventGuid = guid
     }
 
     LogOutput("DEBUG", "serverLeaveEvent: %s", json.stringify(data))
-    return data
+    EnqueueWebhookEvent("ServerLeaveEvent", data)
+  end
+)
+
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerRemoveEvent",
+  function(PC, eventParam)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
+    local event = eventParam:get()
+    local eventGuid = GuidToString(event)
+
+    LogOutput("DEBUG", "Event %s removed", eventGuid)
+
+    EnqueueWebhookEvent("ServerRemoveEvent", {
+      CharacterGuid = GetPlayerGuid(playerController),
+      PlayerId = GetPlayerUniqueId(playerController),
+      EventGuid = eventGuid
+    })
   end
 )
 
