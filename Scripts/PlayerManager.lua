@@ -319,20 +319,41 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", funct
 
   LogOutput("INFO", "ServerSendChat: player=%s msg=%s cat=%d guid=%s", uniqueId, messageStr, categoryVal, characterGuid)
 
-  local ok = EnqueueWebhookEvent("ServerSendChat", {
-    Message = messageStr,
-    Category = categoryVal,
-    CharacterGuid = characterGuid,
-    UniqueID = uniqueId,
-  })
-  LogOutput("INFO", "EnqueueWebhookEvent result: %s", tostring(ok))
-
   local muteInfo = GetMuteInfo(uniqueId)
   LogOutput("INFO", "GetMuteInfo(%s) = %s", uniqueId, tostring(muteInfo ~= nil))
+
+  local finalCategory = categoryVal
+
   if muteInfo and categoryVal == 0 then
-    local redirectCategory = muteInfo.hard and MUTE_CATEGORY_HARD or MUTE_CATEGORY_SOFT
-    Category:set(redirectCategory)
+    finalCategory = muteInfo.hard and MUTE_CATEGORY_HARD or MUTE_CATEGORY_SOFT
     LogOutput("INFO", "Muted player %s: redirected chat from Normal to %s", uniqueId, muteInfo.hard and "Company" or "SmallArea")
+  end
+
+  -- Slash command filtering: redirect non-whitelisted commands to company chat
+  if categoryVal == 0 and messageStr:sub(1, 1) == "/" then
+    local command = messageStr:match("^/([^%s]+)")
+    if command then
+      local whitelist = { bot = true, song_request = true }
+      if not whitelist[command] then
+        finalCategory = MUTE_CATEGORY_HARD
+        LogOutput("INFO", "Slash command /%s redirected to company chat", command)
+      end
+    end
+  end
+
+  if finalCategory ~= categoryVal then
+    Category:set(finalCategory)
+  end
+
+  -- Send webhook for slash commands and muted players; normal chat is handled by logs
+  if messageStr:sub(1, 1) == "/" or muteInfo ~= nil then
+    local ok = EnqueueWebhookEvent("ServerSendChat", {
+      Message = messageStr,
+      Category = finalCategory,
+      CharacterGuid = characterGuid,
+      UniqueID = uniqueId,
+    })
+    LogOutput("INFO", "EnqueueWebhookEvent result: %s", tostring(ok))
   end
 end)
 
