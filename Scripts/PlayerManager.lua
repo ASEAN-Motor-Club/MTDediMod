@@ -1,5 +1,6 @@
 local json = require("JsonParser")
 local socket = require("socket")
+local UEHelpers = require("UEHelpers")
 
 ---Convert player state to JSON serializable table
 ---@param playerState AMotorTownPlayerState
@@ -486,6 +487,7 @@ local function HandleGetParties(session)
 end
 
 ---Handle request to make a player a suspect
+---Applies UGE_PoliceSuspect_C gameplay effect and appends suspect tags
 ---@type RequestPathHandler
 local function HandleMakePlayerSuspect(session)
   local characterGuid = session.pathComponents[2]
@@ -493,45 +495,57 @@ local function HandleMakePlayerSuspect(session)
     return { error = "Missing character GUID" }, nil, 400
   end
 
-  local data = json.parse(session.content)
-  local durationSeconds = (data and data.DurationSeconds) or 300
-
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if not PC:IsValid() then
     return { error = string.format("Player %s not found", characterGuid) }, nil, 404
   end
 
-  local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
-  ---@cast charClass UClass
-
-  local resultMsg = "not_executed"
+  local result = {}
   local ok, err = pcall(function()
-    if not PC:IsValid() then resultMsg = "pc_invalid"; return end
+    if not PC:IsValid() then result.status = "pc_invalid"; return end
 
-    -- Get the AMTCharacter
     local character = PC.Net_MyDrivingCharacter
     if not character or not character:IsValid() then
       character = PC:K2_GetPawn()
     end
-    if not character or not character:IsValid() then resultMsg = "char_not_found"; return end
+    if not character or not character:IsValid() then result.status = "char_not_found"; return end
 
-    -- Only test C++ AddPoliceSuspect (buff logic removed for debugging)
-    local gameState = GetMotorTownGameState()
-    if gameState:IsValid() and gameState.Net_Police:IsValid() then
-      local success = AddPoliceSuspect(gameState.Net_Police, character)
-      resultMsg = "suspects=" .. tostring(success)
-    else
-      resultMsg = "police_not_found"
+    local gameInstance = UEHelpers.GetGameInstance()
+    if not gameInstance or not gameInstance:IsValid() then
+      result.status = "game_instance_invalid"
+      return
     end
+
+    local gameResource = gameInstance.GameResource
+    if not gameResource or not gameResource:IsValid() then
+      result.status = "game_resource_invalid"
+      return
+    end
+
+    local asc = character.AbilityComponent
+    result.asc_valid = asc and asc:IsValid() or false
+
+    local geClass = gameResource.PoliceSuspectGE
+    result.ge_class_valid = geClass and geClass:IsValid() or false
+
+    if asc and asc:IsValid() and geClass and geClass:IsValid() then
+      asc:BP_ApplyGameplayEffectToSelf(geClass, 1.0, {})
+      result.ge_applied = true
+    else
+      result.ge_applied = false
+    end
+
+    result.status = "ok"
   end)
   if not ok then
-    resultMsg = "error: " .. tostring(err)
+    result.status = "error"
+    result.error = tostring(err)
   end
 
-  return { status = resultMsg }, nil, 200
+  return result, nil, 200
 end
 
----Diagnostic: peek into Net_Suspects and police state
+---Diagnostic: peek into Net_Suspects, character tags, and police state
 ---@type RequestHandler
 local function HandleGetPoliceState()
   local result = { suspects = {}, police_valid = false }
@@ -543,6 +557,26 @@ local function HandleGetPoliceState()
     result.police_valid = gameState.Net_Police:IsValid()
     if not result.police_valid then return end
 
+    local gameInstance = UEHelpers.GetGameInstance()
+    result.game_instance_valid = gameInstance and gameInstance:IsValid() or false
+    if gameInstance and gameInstance:IsValid() then
+      local gameResource = gameInstance.GameResource
+      result.game_resource_valid = gameResource and gameResource:IsValid() or false
+      if gameResource and gameResource:IsValid() then
+        result.ge_class_valid = gameResource.PoliceSuspectGE and gameResource.PoliceSuspectGE:IsValid() or false
+        result.suspect_tags = {}
+        local st = gameResource.SuspectGameplayTags
+        if st and st:IsValid() then
+          pcall(function()
+            st.GameplayTags:ForEach(function(i, element)
+              local tag = element:get()
+              result.suspect_tags[i] = tag.TagName:ToString()
+            end)
+          end)
+        end
+      end
+    end
+
     local police = gameState.Net_Police
     police.Net_Suspects:ForEach(function(index, suspect)
       local entry = {
@@ -553,13 +587,25 @@ local function HandleGetPoliceState()
         entry.character_class = suspect.Character:GetClass():GetFName():ToString()
         local loc = suspect.LastSeenLocation
         entry.location = { x = loc.X, y = loc.Y, z = loc.Z }
+        entry.character_tags = {}
+        local charTags = suspect.Character.GameplayTagContainer
+        if charTags and charTags:IsValid() then
+          pcall(function()
+            charTags.GameplayTags:ForEach(function(i, element)
+              local tag = element:get()
+              entry.character_tags[i] = tag.TagName:ToString()
+            end)
+          end)
+        end
       else
         entry.character = "invalid"
       end
-      -- Read ViolationTags
       entry.tags = {}
-      suspect.ViolationTags.GameplayTags:ForEach(function(i, tag)
-        entry.tags[i] = tag.TagName:ToString()
+      pcall(function()
+        suspect.ViolationTags.GameplayTags:ForEach(function(i, element)
+          local tag = element:get()
+          entry.tags[i] = tag.TagName:ToString()
+        end)
       end)
       result.suspects[#result.suspects + 1] = entry
     end)
@@ -568,7 +614,7 @@ local function HandleGetPoliceState()
     result.error = tostring(err)
   end
 
-  return (result), nil, 200
+  return result, nil, 200
 end
 
 ---Experimental endpoint to hide actor and disable collision
