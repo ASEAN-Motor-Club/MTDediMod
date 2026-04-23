@@ -151,7 +151,7 @@ _G.__CppDispatchRequest = function(method, path, query_json, headers_json, body)
     local h = findHandler(path, method)
     if h then
         if h.authenticate and not authenticateSession(session) then
-            return 401, nil, nil
+            return 401, "", "application/json"
         end
 
         local ok, content, mime, code = pcall(h.handler, session)
@@ -164,6 +164,8 @@ _G.__CppDispatchRequest = function(method, path, query_json, headers_json, body)
                 else
                     return 500, json.stringify({error = "JSON stringify failed"}), "application/json"
                 end
+            elseif content == nil then
+                response_body = ""
             end
             return code or 200, response_body, mime or "application/json"
         else
@@ -179,9 +181,9 @@ _G.__CppDispatchRequest = function(method, path, query_json, headers_json, body)
     else
         local any = findHandler(path, nil)
         if any then
-            return 405, nil, nil
+            return 405, "", "application/json"
         else
-            return 404, nil, nil
+            return 404, "", "application/json"
         end
     end
 end
