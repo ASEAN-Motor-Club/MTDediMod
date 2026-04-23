@@ -11,8 +11,6 @@ public:
 	MotorTownMods();
 	~MotorTownMods() override;
 
-	auto on_update() -> void override {};
-
 	auto on_unreal_init() -> void override;
 
 	auto on_lua_start(

@@ -16,6 +16,7 @@
 #include <Unreal/FProperty.hpp>
 
 #include "webserver.h"
+#include "LuaHttpServer.h"
 #include "statics.h"
 #include "HookManager.h"
 
@@ -61,6 +62,14 @@ auto MotorTownMods::on_unreal_init() -> void
 
 	// Init API server
 	auto server = Webserver::Get();
+
+	// Start Lua HTTP server (handles MOD_SERVER_PORT)
+	int lua_port = 5001;
+	if (const char* val = getenv("MOD_SERVER_PORT"))
+	{
+		lua_port = atoi(val);
+	}
+	LuaHttpServer::Get()->Start(lua_port);
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived"),
 		"ServerCargoArrived",
@@ -1694,6 +1703,9 @@ auto MotorTownMods::on_lua_start(
 	LuaMadeSimple::Lua& async_lua,
 	std::vector<LuaMadeSimple::Lua*>& hook_luas) -> void
 {
+	LuaHttpServer::Get()->SetLuaState(main_lua.get_lua_state());
+	LuaHttpServer::Get()->RegisterEngineTickHook();
+
 	lua.register_function("ExportStructAsText", [](const LuaMadeSimple::Lua& lua_net) -> int {
 		int32_t stack_size = lua_net.get_stack_size();
 
