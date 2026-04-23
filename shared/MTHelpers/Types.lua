@@ -150,14 +150,19 @@ end
 ---@param item table
 ---@return table
 function Types.TableToItemInventory(item)
+  if not item then
+    return { Slots = {} }
+  end
   local data = item
   local slots = {}
 
-  for i, slot in ipairs(data.Slots) do
-    table.insert(slots, {
-      Key = FName(slot.Key),
-      NumStack = slot.NumStack
-    })
+  if data.Slots then
+    for i, slot in ipairs(data.Slots) do
+      table.insert(slots, {
+        Key = FName(slot.Key),
+        NumStack = slot.NumStack
+      })
+    end
   end
   data.Slots = slots
 
