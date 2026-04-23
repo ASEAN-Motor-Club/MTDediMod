@@ -1,7 +1,0 @@
-cmake_minimum_required(VERSION 3.22)
-project(UE4SSWrapper)
-if(NOT UE4SS_SOURCE_DIR)
-    set(UE4SS_SOURCE_DIR "/nix/store/gxcwhyj48mq6s8jcxkpdvb5v0hrwbasm-ue4ss-patched")
-endif()
-add_subdirectory("/nix/store/gxcwhyj48mq6s8jcxkpdvb5v0hrwbasm-ue4ss-patched" RE-UE4SS)
-add_subdirectory("src" MotorTownMods)

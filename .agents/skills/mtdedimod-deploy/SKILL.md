@@ -157,6 +157,9 @@ git tag server/v0.34.0-rc5
 
 From the `MTDediMod` directory, check if C++ sources changed since the previous server tag. Only run the build if they did — Lua-only changes skip this step.
 
+> [!IMPORTANT]
+> You **do not** need to run `.#configure` before every build. Configure is only required once (when `build-cross/` does not yet exist). If `build-cross/` already exists, run `.#build` directly.
+
 ```bash
 cd MTDediMod
 
@@ -166,6 +169,8 @@ git diff --name-only "$PREV_TAG" HEAD | grep -q '^src/' && nix run .#build || ec
 
 > [!WARNING]
 > If you see `warning: Git tree is dirty`, **stop**. Go back to step 1. Building from a dirty tree means the zip won't match the tag.
+>
+> If you see `CMake Error: add_subdirectory given source "src" which is not an existing directory`, you ran the command from the parent `amc-server/` directory instead of `MTDediMod/`. The wrapper `CMakeLists.txt` and `build-cross/` must be created inside `MTDediMod/`, not the repo root. `cd MTDediMod` first.
 
 ### 4. Package the zip
 
