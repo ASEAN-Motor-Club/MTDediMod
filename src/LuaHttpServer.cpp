@@ -395,20 +395,16 @@ void LuaHttpServer::DispatchOnGameThread()
 		}
 		cv_.notify_all();
 
-		// Time budget: if we've exceeded the per-tick allowance, stop and
-		// put the remaining requests back at the front of the queue.
-		if (i + 1 < local_pending.size())
+		// Warn if a single handler took an unexpectedly long time.
+		auto elapsed = std::chrono::steady_clock::now() - tick_start;
+		if (elapsed > MAX_TICK_BUDGET)
 		{
-			auto elapsed = std::chrono::steady_clock::now() - tick_start;
-			if (elapsed > MAX_TICK_BUDGET)
-			{
-				std::lock_guard<std::mutex> lock(mtx_);
-				pending_.insert(
-					pending_.begin(),
-					std::make_move_iterator(local_pending.begin() + i + 1),
-					std::make_move_iterator(local_pending.end()));
-				break;
-			}
+			auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+			Output::send<LogLevel::Warning>(
+				STR("[LuaHttpServer] Slow handler: {} {} took {} ms\n"),
+				to_wstring(req.method),
+				to_wstring(req.path),
+				elapsed_ms);
 		}
 	}
 }
