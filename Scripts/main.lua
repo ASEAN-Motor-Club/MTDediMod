@@ -103,6 +103,8 @@ local function LoadWebserver()
     -- Vehicle management
     server.registerHandler("/vehicles", "GET", vehicleManager.HandleGetVehicles)
     server.registerHandler("/vehicles/spawn", "POST", vehicleManager.HandleSpawnVehicle)
+    server.registerHandler("/vehicle_parts_by_tag/*", "GET", vehicleManager.HandleGetVehiclePartsByTag)
+    server.registerHandler("/vehicle_parts_by_tag/*", "POST", vehicleManager.HandleSetVehiclePartsByTag)
     server.registerHandler("/tagged_vehicles", "GET", vehicleManager.HandleGetVehiclesByTag)
     server.registerHandler("/vehicles", "PATCH", vehicleManager.HandleSetVehicleParameter)
     server.registerHandler("/player_vehicles/*/detach", "POST", vehicleManager.HandleDetachPlayerVehicle)

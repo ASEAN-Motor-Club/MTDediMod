@@ -302,19 +302,26 @@ void LuaHttpServer::DispatchOnGameThread()
 	if (!lua_state_)
 		return;
 
-	// Serialize with all other UE4SS Lua operations on the game thread.
-	std::lock_guard<std::recursive_mutex> guard{LuaMod::m_thread_actions_mutex};
-
+	// Early exit when idle: avoid acquiring LuaMod::m_thread_actions_mutex
+	// when there is no work to do. pending_ is independent of LuaMod state.
 	std::vector<Request> local_pending;
 	{
 		std::lock_guard<std::mutex> lock(mtx_);
+		if (pending_.empty())
+			return;
 		size_t n = std::min(pending_.size(), MAX_PER_TICK);
 		local_pending.assign(pending_.begin(), pending_.begin() + n);
 		pending_.erase(pending_.begin(), pending_.begin() + n);
 	}
 
-	for (auto& req : local_pending)
+	// Serialize with all other UE4SS Lua operations on the game thread.
+	std::lock_guard<std::recursive_mutex> guard{LuaMod::m_thread_actions_mutex};
+
+	auto tick_start = std::chrono::steady_clock::now();
+	for (size_t i = 0; i < local_pending.size(); ++i)
 	{
+		auto& req = local_pending[i];
+
 		Response response;
 		response.status_code = 500;
 		response.body = "{\"error\":\"Internal server error\"}";
@@ -387,5 +394,21 @@ void LuaHttpServer::DispatchOnGameThread()
 			completed_[req.id] = std::move(response);
 		}
 		cv_.notify_all();
+
+		// Time budget: if we've exceeded the per-tick allowance, stop and
+		// put the remaining requests back at the front of the queue.
+		if (i + 1 < local_pending.size())
+		{
+			auto elapsed = std::chrono::steady_clock::now() - tick_start;
+			if (elapsed > MAX_TICK_BUDGET)
+			{
+				std::lock_guard<std::mutex> lock(mtx_);
+				pending_.insert(
+					pending_.begin(),
+					std::make_move_iterator(local_pending.begin() + i + 1),
+					std::make_move_iterator(local_pending.end()));
+				break;
+			}
+		}
 	}
 }

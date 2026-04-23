@@ -54,8 +54,9 @@ private:
 	};
 
 	static constexpr size_t MAX_BODY_SIZE = 1024 * 1024; // 1 MiB
-	static constexpr size_t MAX_PER_TICK = 8;
+	static constexpr size_t MAX_PER_TICK = 1;
 	static constexpr size_t MAX_PENDING = 64;
+	static constexpr std::chrono::milliseconds MAX_TICK_BUDGET{2};
 
 	std::mutex mtx_;
 	std::condition_variable cv_;

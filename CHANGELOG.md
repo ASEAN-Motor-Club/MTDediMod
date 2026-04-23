@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.39.0-rc3] — 2026-04-23
+
+#### Changed
+- **LuaHttpServer game-thread dispatch optimized** — reduces idle overhead and prevents frame hitches under burst load:
+  - Early return when `pending_` is empty: `LuaMod::m_thread_actions_mutex` is no longer acquired on every frame when idle
+  - `MAX_PER_TICK` reduced from 8 to 1: spreads burst requests across frames instead of processing up to 8 handlers in a single tick
+  - Added 2 ms per-tick time budget: if a single handler exceeds the budget, remaining requests are re-queued for the next frame
+
 ### [server/v0.38.0-rc15] — 2026-04-22
 
 #### Fixed

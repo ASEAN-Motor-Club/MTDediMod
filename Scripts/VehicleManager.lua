@@ -2074,25 +2074,31 @@ local function HandleSetWorldVehicleDecal(session)
       end
 
       if content.parts ~= nil then
-        LogOutput("INFO", "Setting parts")
+        LogOutput("INFO", "Setting parts, count=" .. tostring(#content.parts))
         if vehicle:IsValid() and vehicle.Net_Parts:IsValid() then
           vehicle.Net_Parts:Empty()
           for i, part in ipairs(content.parts) do
-            vehicle.Net_Parts[i] = TableToVehiclePart(part)
+            LogOutput("INFO", "  part[" .. i .. "] raw Key=" .. tostring(part.Key) .. " partKey=" .. tostring(part.partKey))
+            local convertedPart = TableToVehiclePart(part)
+            LogOutput("INFO", "  part[" .. i .. "] converted Key=" .. tostring(convertedPart.Key) .. " Slot=" .. tostring(convertedPart.Slot))
             if part.StringValues ~= nil then
-              vehicle.Net_Parts[i].StringValues = part.StringValues
+              convertedPart.StringValues = part.StringValues
             end
             if part.FloatValues ~= nil then
-              vehicle.Net_Parts[i].FloatValues = part.FloatValues
+              convertedPart.FloatValues = part.FloatValues
             end
             if part.Int64Values ~= nil then
-              vehicle.Net_Parts[i].Int64Values = part.Int64Values
+              convertedPart.Int64Values = part.Int64Values
             end
             if part.VectorValues ~= nil then
-              vehicle.Net_Parts[i].VectorValues = part.VectorValues
+              convertedPart.VectorValues = part.VectorValues
             end
+            vehicle.Net_Parts[i] = convertedPart
           end
+          LogOutput("INFO", "Calling ServerSetParts with " .. tostring(vehicle.Net_Parts:Num()) .. " parts on Net_Parts TArray")
           vehicle:ServerSetParts(vehicle.Net_Parts)
+        else
+          LogOutput("ERROR", "Vehicle or Net_Parts invalid, cannot set parts")
         end
       end
     end
@@ -2512,6 +2518,126 @@ local function TableToVehicleSetting(t)
   }
 end
 
+---Apply parts to an existing vehicle's Net_Parts TArray and call ServerSetParts.
+---@param vehicle AMTVehicle
+---@param parts table[]
+---@return boolean
+local function ApplyPartsToVehicle(vehicle, parts)
+  if not vehicle:IsValid() or not vehicle.Net_Parts:IsValid() then
+    LogOutput("ERROR", "ApplyPartsToVehicle: vehicle or Net_Parts invalid")
+    return false
+  end
+  vehicle.Net_Parts:Empty()
+  for i, part in ipairs(parts) do
+    local convertedPart = TableToVehiclePart(part)
+    if part.StringValues ~= nil then
+      convertedPart.StringValues = part.StringValues
+    end
+    if part.FloatValues ~= nil then
+      convertedPart.FloatValues = part.FloatValues
+    end
+    if part.Int64Values ~= nil then
+      convertedPart.Int64Values = part.Int64Values
+    end
+    if part.VectorValues ~= nil then
+      convertedPart.VectorValues = part.VectorValues
+    end
+    vehicle.Net_Parts[i] = convertedPart
+  end
+  -- Build a fresh Lua table to pass to ServerSetParts instead of the TArray proxy.
+  -- Passing the TArray proxy directly causes "index out of range" after :Empty().
+  local partsArray = {}
+  if vehicle.Net_Parts:IsValid() then
+    vehicle.Net_Parts:ForEach(function(index, element)
+      table.insert(partsArray, element:get())
+    end)
+  end
+  vehicle:ServerSetParts(partsArray)
+  LogOutput("INFO", "ApplyPartsToVehicle: applied %d parts to %s", #parts, vehicle:GetFullName())
+  return true
+end
+
+---Find the first valid AMTVehicle with the given tag.
+---@param tag string
+---@return AMTVehicle|nil
+local function FindVehicleByTag(tag)
+  local actors = {}
+  UEHelpers.GetGameplayStatics():GetAllActorsWithTag(
+    UEHelpers.GetWorld(),
+    FName(tag),
+    actors
+  )
+  local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+  for i, actorContainer in ipairs(actors) do
+    local actor = actorContainer:get()
+    if actor:IsValid() and IsUObjectSafe(actor) and not actor:IsActorBeingDestroyed() then
+      if actor:IsA(vehicleClass) then
+        return actor
+      end
+    end
+  end
+  return nil
+end
+
+---Verify that a spawned vehicle has the expected parts applied.
+---If counts mismatch, re-apply parts and schedule another check.
+---@param tag string
+---@param expectedParts table[]
+---@param attempt number
+local function VerifyAndRetryVehicleParts(tag, expectedParts, attempt)
+  local maxRetries = 3
+  local vehicle = FindVehicleByTag(tag)
+  if not vehicle or not vehicle:IsValid() or not IsUObjectSafe(vehicle) then
+    LogOutput("WARN", "VerifyAndRetryVehicleParts: vehicle with tag '%s' not found or invalid (attempt %d)", tag, attempt)
+    if attempt < maxRetries then
+      ExecuteWithDelay(1000 * attempt, function()
+        VerifyAndRetryVehicleParts(tag, expectedParts, attempt + 1)
+      end)
+    end
+    return
+  end
+
+  if not vehicle.Net_Parts:IsValid() then
+    LogOutput("WARN", "VerifyAndRetryVehicleParts: Net_Parts invalid for tag '%s' (attempt %d)", tag, attempt)
+    if attempt < maxRetries then
+      ExecuteWithDelay(1000 * attempt, function()
+        VerifyAndRetryVehicleParts(tag, expectedParts, attempt + 1)
+      end)
+    end
+    return
+  end
+
+  local netPartsCount = vehicle.Net_Parts:Num()
+
+  LogOutput("INFO",
+    "VerifyAndRetryVehicleParts: tag='%s' attempt=%d netParts=%d expected=%d",
+    tag, attempt, netPartsCount, #expectedParts
+  )
+
+  local netPartsOk = netPartsCount >= #expectedParts
+
+  if netPartsOk then
+    LogOutput("INFO", "VerifyAndRetryVehicleParts: verified OK for tag='%s'", tag)
+    return
+  end
+
+  if attempt < maxRetries then
+    LogOutput("WARN",
+      "VerifyAndRetryVehicleParts: mismatch for tag='%s', re-applying parts (retry %d/%d)",
+      tag, attempt, maxRetries
+    )
+    ApplyPartsToVehicle(vehicle, expectedParts)
+    ExecuteWithDelay(1000 * attempt, function()
+      VerifyAndRetryVehicleParts(tag, expectedParts, attempt + 1)
+    end)
+  else
+    LogOutput("ERROR",
+      "VerifyAndRetryVehicleParts: permanent failure for tag='%s' netParts=%d attachmentParts=%d expected=%d",
+      tag, netPartsCount, attachmentCount, #expectedParts
+    )
+  end
+end
+
 ---Build FMTVehicleSpawnParams from JSON content for native spawn pipeline.
 ---Returns nil if required fields are missing.
 ---@param content table
@@ -2743,6 +2869,11 @@ local function HandleSpawnVehicle(session)
             end
           end
 
+          if content.parts ~= nil then
+            LogOutput("INFO", "Legacy spawn: applying %d parts", #content.parts)
+            ApplyPartsToVehicle(vehicle, content.parts)
+          end
+
           if content.driverGuid ~= nil then
             LogOutput("INFO", "Setting driver")
             local PC = GetPlayerControllerFromGuid(content.driverGuid)
@@ -2814,6 +2945,53 @@ local function HandleDespawnPlayerVehicle(session)
   end
 end
 
+---Handle GET /vehicle_parts_by_tag/*
+---@type RequestPathHandler
+local function HandleGetVehiclePartsByTag(session)
+  local tag = session.pathComponents[2]
+  if not tag then
+    return { error = "Missing tag" }, nil, 400
+  end
+
+  local vehicle = FindVehicleByTag(tag)
+  if not vehicle or not vehicle:IsValid() or not IsUObjectSafe(vehicle) then
+    return { error = "Vehicle not found" }, nil, 404
+  end
+
+  local netPartsCount = vehicle.Net_Parts:IsValid() and vehicle.Net_Parts:Num() or -1
+
+  return {
+    tag = tag,
+    netPartsCount = netPartsCount,
+  }, nil, 200
+end
+
+---Handle POST /vehicle_parts_by_tag/*
+---Applies parts to an existing tagged vehicle.
+---@type RequestPathHandler
+local function HandleSetVehiclePartsByTag(session)
+  local tag = session.pathComponents[2]
+  local content = json.parse(session.content)
+  if not tag then
+    return { error = "Missing tag" }, nil, 400
+  end
+  if not content or not content.parts then
+    return { error = "Missing parts" }, nil, 400
+  end
+
+  local vehicle = FindVehicleByTag(tag)
+  if not vehicle or not vehicle:IsValid() or not IsUObjectSafe(vehicle) then
+    return { error = "Vehicle not found" }, nil, 404
+  end
+
+  local ok = ApplyPartsToVehicle(vehicle, content.parts)
+  if ok then
+    return { status = "parts_applied", tag = tag, count = #content.parts }, nil, 200
+  else
+    return { error = "Failed to apply parts" }, nil, 500
+  end
+end
+
 return {
   DespawnPlayerVehicle = DespawnPlayerVehicle,
   HandleGetVehicles = HandleGetVehicles,
@@ -2832,6 +3010,8 @@ return {
   HandleGetGarages = HandleGetGarages,
   HandleSpawnGarage = HandleSpawnGarage,
   HandleSpawnVehicle = HandleSpawnVehicle,
+  HandleGetVehiclePartsByTag = HandleGetVehiclePartsByTag,
+  HandleSetVehiclePartsByTag = HandleSetVehiclePartsByTag,
   VehicleToTable = VehicleToTable,
   VehicleCustomizationToTable = VehicleCustomizationToTable,
   VehicleDecalToTable = VehicleDecalToTable,
