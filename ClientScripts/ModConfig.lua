@@ -25,10 +25,6 @@ local modConfig = {
     modVersion = statics.ModVersion,
     modApiUrl = "http://127.0.0.1:5001",
     shortcuts = {
-        arrest = {
-            keyboard = { key = "A", modifiers = { "CONTROL", "SHIFT" } },
-            gamepad = { buttons = { "Gamepad_RightShoulder", "Gamepad_FaceButton_Bottom" } }
-        },
         raycast_despawn = {
             keyboard = { key = "X", modifiers = { "CONTROL", "SHIFT" } },
         }

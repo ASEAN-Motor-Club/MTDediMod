@@ -11,7 +11,6 @@ local ltn12 = require("ltn12")
 
 --- Minimum interval between shortcut triggers (ms)
 local DEBOUNCE_MS = 1000
-local lastTriggerTime = 0
 local lastDespawnTime = 0
 local lastImpulseTime = 0
 local lastDespawnDialogTime = 0
@@ -72,25 +71,6 @@ local function ModApiPost(endpoint, payload)
     else
         LogOutput("WARN", "ModApiPost %s failed: %s", endpoint, tostring(code))
     end
-end
-
----Send the /arrest command via ServerSendChat
-local function TriggerArrest()
-    local now = os.clock() * 1000
-    if now - lastTriggerTime < DEBOUNCE_MS then
-        return
-    end
-    lastTriggerTime = now
-
-    ExecuteInGameThread(function()
-        local PC = GetMyPlayerController()
-        if PC:IsValid() then
-            PC:ServerSendChat("/arrest", 0)
-            LogOutput("INFO", "Arrest shortcut triggered")
-        else
-            LogOutput("WARN", "Arrest shortcut: PlayerController not valid")
-        end
-    end)
 end
 
 ---Toggle the nearest door on the vehicle the player is aiming at
@@ -573,92 +553,6 @@ local function TriggerDespawnDialog()
 end
 
 
-local function RegisterKeyboardShortcut()
-    local shortcuts = config.GetModConfig("shortcuts")
-    if not shortcuts or not shortcuts.arrest or not shortcuts.arrest.keyboard then
-        LogOutput("WARN", "No keyboard shortcut config for arrest")
-        return
-    end
-
-    local kb = shortcuts.arrest.keyboard
-    local keyCode = Key[kb.key]
-    if not keyCode then
-        LogOutput("ERROR", "Invalid shortcut key: %s", kb.key)
-        return
-    end
-
-    local mods = {}
-    if kb.modifiers then
-        for _, m in ipairs(kb.modifiers) do
-            if ModifierKey[m] then
-                table.insert(mods, ModifierKey[m])
-            else
-                LogOutput("WARN", "Unknown modifier key: %s", m)
-            end
-        end
-    end
-
-    RegisterKeyBind(keyCode, mods, TriggerArrest)
-    LogOutput("INFO", "Arrest keyboard shortcut registered: %s + %s",
-        table.concat(kb.modifiers or {}, "+"), kb.key)
-end
-
---- Construct an FKey struct from a UE key name string (e.g. "Gamepad_RightShoulder")
----@param keyName string UE key name
----@return table FKey-compatible struct
-local function MakeFKey(keyName)
-    return { KeyName = FName(keyName) }
-end
-
---- Register gamepad shortcut from config using IsInputKeyDown polling
-local function RegisterGamepadShortcut()
-    local shortcuts = config.GetModConfig("shortcuts")
-    if not shortcuts or not shortcuts.arrest or not shortcuts.arrest.gamepad then
-        LogOutput("INFO", "No gamepad shortcut config for arrest")
-        return
-    end
-
-    local gp = shortcuts.arrest.gamepad
-    if not gp.buttons or #gp.buttons == 0 then
-        LogOutput("WARN", "No gamepad buttons configured for arrest")
-        return
-    end
-
-    -- Pre-build FKey structs for each configured button
-    local fkeys = {}
-    for _, btnName in ipairs(gp.buttons) do
-        table.insert(fkeys, MakeFKey(btnName))
-    end
-
-    -- Track whether combo was active last tick to prevent repeat-fire while held
-    local wasActive = false
-
-    -- Poll every 100ms on the game thread
-    LoopInGameThreadWithDelay(100, function()
-        local PC = GetMyPlayerController()
-        if not PC:IsValid() then return end
-
-        local allDown = true
-        for _, fkey in ipairs(fkeys) do
-            if not PC:IsInputKeyDown(fkey) then
-                allDown = false
-                break
-            end
-        end
-
-        if allDown and not wasActive then
-            wasActive = true
-            TriggerArrest()
-        elseif not allDown then
-            wasActive = false
-        end
-    end)
-
-    LogOutput("INFO", "Arrest gamepad shortcut registered (polling): %s",
-        table.concat(gp.buttons, "+"))
-end
-
-
 ---Open a text input dialog for teleport location, then teleport on submit
 local lastTeleportDialogTime = 0
 local teleportDialogOpen = false
@@ -739,8 +633,6 @@ end
 
 
 -- Initialize shortcuts
-RegisterKeyboardShortcut()
-RegisterGamepadShortcut()
 RegisterKeyBind(Key.RIGHT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnAimed)
 RegisterKeyBind(Key.I, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
