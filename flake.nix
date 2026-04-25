@@ -94,12 +94,11 @@
         buildType = "Game__Shipping__Win64";
         proxyPath = "C:\\Windows\\System32\\version.dll";
 
-        # Pre-built Lua binaries (luasocket, luasec/ssl, cjson, etc.)
-        luaBinaries = pkgs.fetchzip {
-          url = "https://github.com/ASEAN-Motor-Club/MTDediMod/releases/download/v/shared.zip";
-          hash = "sha256-GXfXlaHpjBNG/9xP4jUg/OjtZZPmZTvdIG9t4zzXP0E=";
-          stripRoot = false;
-        };
+        # Pre-built Lua binaries (luasocket, luasec/ssl, cjson, fetch, etc.)
+        luaBinaries = pkgs.runCommand "lua-binaries" {} ''
+          mkdir -p $out
+          ${pkgs.unzip}/bin/unzip -q ${./deps/fetch.zip} -d $out/
+        '';
 
         # Pre-built UE4SS release binaries (fallback when cross-compile fails)
         ue4ssPrebuilt = pkgs.fetchzip {
