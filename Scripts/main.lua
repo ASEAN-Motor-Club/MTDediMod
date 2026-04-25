@@ -31,6 +31,7 @@ local function LoadWebserver()
     local vehicleManager = require("VehicleManager")
     local assetManager = require("AssetManager")
     local webclient = require("Webclient")
+    local depotManager = require("DepotManager")
 
     -- Note that the ordering of the path registration matters.
     -- Put more specific paths before more general ones
@@ -136,6 +137,10 @@ local function LoadWebserver()
 
     -- Company management
     server.registerHandler("/companies", "GET", companyManager.HandleGetCompanies)
+
+    -- Depot management
+    server.registerHandler("/depots", "GET", depotManager.HandleGetDepots, false)
+    server.registerHandler("/depots/*", "GET", depotManager.HandleGetDepots, false)
 
     -- Character management
     server.registerHandler("/characters", "GET", characterManager.HandleGetCharacters)
