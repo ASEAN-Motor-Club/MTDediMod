@@ -18,5 +18,6 @@ require("IntegrityChecker")
 require("ModManager")
 require("RPRestrictions")
 local teleportWidget = require("TeleportWidget")
+local emoteWidget = require("EmoteWidget")
 
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)
