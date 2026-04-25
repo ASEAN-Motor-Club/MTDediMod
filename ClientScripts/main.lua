@@ -1,4 +1,4 @@
-local dir = os.getenv("PWD") or io.popen("cd"):read()
+local dir = os.getenv("PWD") or io:popen("cd"):read()
 package.cpath = package.cpath .. ";" .. dir .. "/ue4ss/Mods/shared/?/core.dll"
 package.cpath = package.cpath .. ";" .. dir .. "/ue4ss/Mods/shared/?.dll"
 
@@ -17,6 +17,6 @@ require("Shortcuts")
 require("IntegrityChecker")
 require("ModManager")
 require("RPRestrictions")
+local teleportWidget = require("TeleportWidget")
 
-ExecuteConsoleCommand("r.ViewDistanceScale 100")
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)
