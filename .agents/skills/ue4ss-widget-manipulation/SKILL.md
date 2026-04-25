@@ -85,81 +85,11 @@ UE visibility values (correct enum order):
 
 > **Important**: `Visible (0)` allows the widget and its children to receive input. `SelfHitTestInvisible (4)` renders the widget but blocks it from receiving input — useful when you want children (like text) to handle clicks instead.
 
-## Creating UMG widgets at runtime
+## Related skills
 
-Use `StaticConstructObject` with the widget class path and parent:
-
-```lua
-local btn = StaticConstructObject(
-    StaticFindObject("/Script/UMG.Button"),
-    parentWidget, FName("MyButton"))
-```
-
-### USizeBox for fixed-width modals
-
-```lua
-local sizeBox = StaticConstructObject(
-    StaticFindObject("/Script/UMG.SizeBox"),
-    canvas, FName("ModalSizeBox"))
-sizeBox:SetWidthOverride(360)
-```
-
-Attach the `SizeBox` to the canvas (not the inner widget), then toggle `sizeBox` visibility.
-
-### HorizontalBoxSlot:SetSize requires FSlateChildSize struct
-
-Pass a table, not a raw number:
-
-```lua
--- Wrong: spacerSlot:SetSize(1)
--- Correct:
-spacerSlot:SetSize({SizeRule = 1, Value = 1.0}) -- SizeRule 1 = Fill
-```
-
-### Canvas positioning
-
-```lua
-local canvasSlot = rootCanvas:AddChildToCanvas(sizeBox)
-canvasSlot:SetAnchors({
-    Minimum = {X=0.5, Y=0.75},
-    Maximum = {X=0.5, Y=0.75}
-})
-canvasSlot:SetAlignment({X=0.5, Y=1}) -- pivot at bottom-center
-canvasSlot:SetAutoSize(true)
-```
-
-## Input handling without delegates
-
-UE4SS delegate binding (`OnClicked:Add`) crashes. Use `LoopInGameThreadWithDelay` with `IsPressed()` polling instead:
-
-```lua
-local pollHandle = LoopInGameThreadWithDelay(100, function()
-    if btn:IsPressed() then
-        -- handle click
-    end
-end)
-```
-
-Stop polling properly with `CancelDelayedAction`:
-
-```lua
-CancelDelayedAction(pollHandle)
-pollHandle = nil
-```
-
-> **Lua order matters**: `local function` must be declared **before** it is called. If `Show()` calls `StartPolling()`, define `StartPolling()` above `Show()`.
-
-## Fetching external APIs
-
-Use the custom `fetch` library (provided as `fetch/core.dll` + `fetch/init.lua`):
-
-```lua
-local fetch = require("fetch.init")
-local data, err = fetch.get("https://api.example.com/data")
-if data then
-    -- data is already parsed JSON
-end
-```
+- **UE4SS UMG Creation** — Creating widgets at runtime, containers, sizing, positioning
+- **UE4SS Input Polling** — Handling clicks without delegates, debouncing, lifecycle
+- **UE4SS Fetch API** — Making HTTPS requests from UE4SS Lua
 
 ## UE4SS API reference
 
