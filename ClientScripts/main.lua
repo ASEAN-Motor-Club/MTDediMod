@@ -15,5 +15,6 @@ local config = require("ModConfig")
 local viewportManager = require("ViewportManager")
 local commands = require("Commands")
 local teleportWidget = require("TeleportWidget")
+local emoteWidget = require("EmoteWidget")
 
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)

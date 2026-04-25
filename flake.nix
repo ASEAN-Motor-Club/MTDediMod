@@ -94,9 +94,16 @@
         buildType = "Game__Shipping__Win64";
         proxyPath = "C:\\Windows\\System32\\version.dll";
 
-        # Pre-built Lua binaries (luasocket, luasec/ssl, cjson, fetch, etc.)
-        luaBinaries = pkgs.runCommand "lua-binaries" {} ''
-          mkdir -p $out
+        # Pre-built Lua binaries (luasocket, luasec/ssl, cjson, etc.)
+        luaBinaries = pkgs.fetchzip {
+          url = "https://github.com/ASEAN-Motor-Club/MTDediMod/releases/download/v/shared.zip";
+          hash = "sha256-GXfXlaHpjBNG/9xP4jUg/OjtZZPmZTvdIG9t4zzXP0E=";
+          stripRoot = false;
+        };
+
+        # Custom fetch library (native DLL for HTTPS requests)
+        fetchLib = pkgs.runCommand "fetch-lib" {} ''
+          mkdir -p $out/fetch
           ${pkgs.unzip}/bin/unzip -q ${./deps/fetch.zip} -d $out/
         '';
 
@@ -276,6 +283,12 @@
                           if [ -d "${luaBinaries}/shared" ]; then
                             cp --no-preserve=mode,ownership -rn "${luaBinaries}/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
                             echo "✓ Injected Lua binary dependencies (socket, ssl, cjson, etc)"
+                          fi
+
+                          # Copy custom fetch library
+                          if [ -d "${fetchLib}/fetch" ]; then
+                            cp --no-preserve=mode,ownership -rn "${fetchLib}/fetch" "$PACKAGE_DIR/ue4ss/Mods/shared/"
+                            echo "✓ Injected fetch library"
                           fi
 
                           # Create mods.txt
@@ -524,6 +537,12 @@
                           if [ -d "${luaBinaries}/shared" ]; then
                             cp --no-preserve=mode,ownership -rn "${luaBinaries}/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
                             echo "✓ Injected Lua binary dependencies (socket, ssl, cjson, etc)"
+                          fi
+
+                          # Copy custom fetch library
+                          if [ -d "${fetchLib}/fetch" ]; then
+                            cp --no-preserve=mode,ownership -rn "${fetchLib}/fetch" "$PACKAGE_DIR/ue4ss/Mods/shared/"
+                            echo "✓ Injected fetch library"
                           fi
 
                           # Create mods.txt
