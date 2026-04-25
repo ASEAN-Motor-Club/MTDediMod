@@ -12,7 +12,12 @@
     ue4ss = {
       type = "git";
       url = "https://github.com/UE4SS-RE/RE-UE4SS.git";
-      submodules = true;
+      submodules = false;
+      flake = false;
+    };
+
+    ue4ss-prebuilt = {
+      url = "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip";
       flake = false;
     };
   };
@@ -20,6 +25,7 @@
   outputs = inputs @ {
     flake-parts,
     ue4ss,
+    ue4ss-prebuilt,
     fenix,
     ...
   }:
@@ -88,10 +94,17 @@
         buildType = "Game__Shipping__Win64";
         proxyPath = "C:\\Windows\\System32\\version.dll";
 
-        # Legacy v0.30.0 release used to extract pre-built Lua binaries (luasocket, cjson, etc.)
+        # Pre-built Lua binaries (luasocket, luasec/ssl, cjson, etc.)
         luaBinaries = pkgs.fetchzip {
-          url = "https://github.com/ASEAN-Motor-Club/MTDediMod/releases/download/v0.30.0/MotorTownMods_v0.30.0.zip";
-          hash = "sha256-YEQMtij/WoSEAVVVYgdA4kP5zkzhkHc2gTc3hKbyHCQ=";
+          url = "https://github.com/ASEAN-Motor-Club/MTDediMod/releases/download/v/shared.zip";
+          hash = "sha256-GXfXlaHpjBNG/9xP4jUg/OjtZZPmZTvdIG9t4zzXP0E=";
+          stripRoot = false;
+        };
+
+        # Pre-built UE4SS release binaries (fallback when cross-compile fails)
+        ue4ssPrebuilt = pkgs.fetchzip {
+          url = "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip";
+          hash = "sha256-QcY8A2ItZXEVzOsaurWvILqKdwjdZWrZea2aG0X2wzI=";
           stripRoot = false;
         };
 
@@ -260,12 +273,10 @@
                             echo "✓ Copied project shared Lua libraries from $SHARED_LUA_DIR"
                           fi
 
-                          # Copy legacy Lua binaries (socket, mime, cjson, etc.) from HTTP download
-                          if [ -d "${luaBinaries}/ue4ss/Mods/shared" ]; then
-                            # Copying selectively replacing only missing binaries/scripts to avoid overwriting newer MTHelpers
-                            # (actually just copying socket, mime, cjson, ltn12, json2lua, lua2json)
-                            cp --no-preserve=mode,ownership -rn "${luaBinaries}/ue4ss/Mods/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
-                            echo "✓ Injected legacy Lua binary dependencies (socket, cjson, etc) from HTTP download"
+                          # Copy pre-built Lua binaries (socket, ssl/luasec, mime, cjson, etc.)
+                          if [ -d "${luaBinaries}/shared" ]; then
+                            cp --no-preserve=mode,ownership -rn "${luaBinaries}/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
+                            echo "✓ Injected Lua binary dependencies (socket, ssl, cjson, etc)"
                           fi
 
                           # Create mods.txt
@@ -370,6 +381,7 @@
                           LUA_SCRIPTS_DIR="./ClientScripts"
                           SHARED_LUA_DIR="./shared"
                           UE4SS_SETTINGS_SRC="${patchedUE4SS}/assets/UE4SS-settings.ini"
+                          UE4SS_PREBUILT_DIR="${ue4ssPrebuilt}"
 
                           echo "=========================================="
                           echo "Packaging $MOD_NAME (client mod) for distribution"
@@ -381,48 +393,78 @@
                             exit 1
                           fi
 
-                          # Verify cross-compiled binaries exist
-                          if [ ! -d "$BUILD_DIR" ]; then
-                            echo "Error: $BUILD_DIR directory not found. Please run 'nix run .#configure-client' and 'nix run .#build-client' first."
-                            exit 1
+                          # Determine source of C++ binaries
+                          USE_PREBUILT=false
+                          if [ -d "$BUILD_DIR" ] && [ -f "$BUILD_DIR/$BUILD_TYPE/bin/UE4SS.dll" ]; then
+                            echo "Using cross-compiled binaries from $BUILD_DIR"
+                          else
+                            echo "Cross-compiled binaries not found — using prebuilt UE4SS v3.0.1"
+                            USE_PREBUILT=true
                           fi
 
-                          # Find proxy DLL (should be dwmapi.dll)
+                          # Find proxy DLL
                           PROXY_DLL=""
-                          for proxy in "dwmapi.dll" "version.dll"; do
-                            if [ -f "$BUILD_DIR/$BUILD_TYPE/bin/$proxy" ]; then
-                              PROXY_DLL="$proxy"
-                              break
+                          if [ "$USE_PREBUILT" = "true" ]; then
+                            if [ -f "$UE4SS_PREBUILT_DIR/dwmapi.dll" ]; then
+                              PROXY_DLL="dwmapi.dll"
+                            elif [ -f "$UE4SS_PREBUILT_DIR/version.dll" ]; then
+                              PROXY_DLL="version.dll"
                             fi
-                          done
+                          else
+                            for proxy in "dwmapi.dll" "version.dll"; do
+                              if [ -f "$BUILD_DIR/$BUILD_TYPE/bin/$proxy" ]; then
+                                PROXY_DLL="$proxy"
+                                break
+                              fi
+                            done
+                          fi
 
                           if [ -z "$PROXY_DLL" ]; then
-                            echo "Error: No proxy DLL found in $BUILD_DIR/$BUILD_TYPE/bin/"
-                            echo "Please run 'nix run .#build-client' first."
+                            echo "Error: No proxy DLL found"
                             exit 1
                           fi
 
-                          if [ ! -f "$BUILD_DIR/$BUILD_TYPE/bin/UE4SS.dll" ]; then
-                            echo "Error: UE4SS.dll not found in $BUILD_DIR/$BUILD_TYPE/bin/"
-                            exit 1
+                          # Verify UE4SS.dll exists
+                          if [ "$USE_PREBUILT" = "true" ]; then
+                            if [ ! -f "$UE4SS_PREBUILT_DIR/UE4SS.dll" ]; then
+                              echo "Error: UE4SS.dll not found in prebuilt release"
+                              exit 1
+                            fi
+                          else
+                            if [ ! -f "$BUILD_DIR/$BUILD_TYPE/bin/UE4SS.dll" ]; then
+                              echo "Error: UE4SS.dll not found in $BUILD_DIR/$BUILD_TYPE/bin/"
+                              exit 1
+                            fi
                           fi
 
                           echo "Creating package structure..."
 
                           # Clean and create package directory
-                          rm -rf "$PACKAGE_DIR"
+                          if [ -d "$PACKAGE_DIR" ]; then
+                            chmod -R +w "$PACKAGE_DIR" 2>/dev/null || true
+                            rm -rf "$PACKAGE_DIR"
+                          fi
                           mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts"
 
-                          # Copy cross-compiled proxy DLL
-                          cp "$BUILD_DIR/$BUILD_TYPE/bin/$PROXY_DLL" "$PACKAGE_DIR/"
-                          echo "✓ Copied $PROXY_DLL (cross-compiled proxy)"
+                          # Copy proxy DLL
+                          if [ "$USE_PREBUILT" = "true" ]; then
+                            cp "$UE4SS_PREBUILT_DIR/$PROXY_DLL" "$PACKAGE_DIR/"
+                            echo "✓ Copied $PROXY_DLL (prebuilt UE4SS v3.0.1)"
+                          else
+                            cp "$BUILD_DIR/$BUILD_TYPE/bin/$PROXY_DLL" "$PACKAGE_DIR/"
+                            echo "✓ Copied $PROXY_DLL (cross-compiled proxy)"
+                          fi
 
-                          # Copy cross-compiled UE4SS.dll
-                          cp "$BUILD_DIR/$BUILD_TYPE/bin/UE4SS.dll" "$PACKAGE_DIR/ue4ss/"
-                          echo "✓ Copied UE4SS.dll (cross-compiled)"
+                          # Copy UE4SS.dll
+                          if [ "$USE_PREBUILT" = "true" ]; then
+                            cp "$UE4SS_PREBUILT_DIR/UE4SS.dll" "$PACKAGE_DIR/ue4ss/"
+                            echo "✓ Copied UE4SS.dll (prebuilt v3.0.1)"
+                          else
+                            cp "$BUILD_DIR/$BUILD_TYPE/bin/UE4SS.dll" "$PACKAGE_DIR/ue4ss/"
+                            echo "✓ Copied UE4SS.dll (cross-compiled)"
+                          fi
 
                           # Copy UE4SS settings (patched for client use)
-                          # NOTE: shipped for new installs — use non-clobbering extraction on the player side
                           if [ -f "$UE4SS_SETTINGS_SRC" ]; then
                             cp --no-preserve=mode,ownership "$UE4SS_SETTINGS_SRC" "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
                             sed -i 's/^ConsoleEnabled\s*=.*/ConsoleEnabled = 1/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
@@ -430,8 +472,15 @@
                             sed -i 's/^GuiConsoleVisible\s*=.*/GuiConsoleVisible = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
                             sed -i 's/^EnableHotReloadSystem\s*=.*/EnableHotReloadSystem = 1/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
                             echo "✓ Copied and patched UE4SS-settings.ini for client (hot reload enabled)"
+                          elif [ -f "$UE4SS_PREBUILT_DIR/UE4SS-settings.ini" ]; then
+                            cp --no-preserve=mode,ownership "$UE4SS_PREBUILT_DIR/UE4SS-settings.ini" "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                            sed -i 's/^ConsoleEnabled\s*=.*/ConsoleEnabled = 1/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                            sed -i 's/^GuiConsoleEnabled\s*=.*/GuiConsoleEnabled = 1/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                            sed -i 's/^GuiConsoleVisible\s*=.*/GuiConsoleVisible = 0/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                            sed -i 's/^EnableHotReloadSystem\s*=.*/EnableHotReloadSystem = 1/' "$PACKAGE_DIR/ue4ss/UE4SS-settings.ini"
+                            echo "✓ Copied and patched UE4SS-settings.ini from prebuilt (hot reload enabled)"
                           else
-                            echo "⚠ Warning: UE4SS-settings.ini not found at $UE4SS_SETTINGS_SRC"
+                            echo "⚠ Warning: UE4SS-settings.ini not found"
                           fi
 
                           # Copy UE4SS_Signatures for Motor Town
@@ -444,7 +493,6 @@
 
                           # Copy client Lua scripts
                           cp -r "$LUA_SCRIPTS_DIR"/* "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts/"
-                          # Remove enabled.txt from Scripts if it ended up there
                           rm -f "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts/enabled.txt"
                           SCRIPT_COUNT=$(find "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts" -name "*.lua" | wc -l)
                           echo "✓ Copied $SCRIPT_COUNT client Lua scripts"
@@ -462,6 +510,9 @@
                           if [ -d "$UE4SS_SHARED_SRC" ]; then
                             cp --no-preserve=mode,ownership -r "$UE4SS_SHARED_SRC" "$PACKAGE_DIR/ue4ss/Mods/"
                             echo "✓ Copied shared folder (UEHelpers, Types.lua, etc.)"
+                          elif [ -d "$UE4SS_PREBUILT_DIR/Mods/shared" ]; then
+                            cp --no-preserve=mode,ownership -r "$UE4SS_PREBUILT_DIR/Mods/shared" "$PACKAGE_DIR/ue4ss/Mods/"
+                            echo "✓ Copied shared folder from prebuilt (UEHelpers, Types.lua, etc.)"
                           fi
 
                           # Copy project-local shared Lua libraries (MTHelpers)
@@ -470,14 +521,13 @@
                             echo "✓ Copied project shared Lua libraries"
                           fi
 
-                          # Copy legacy Lua binaries (socket, mime, etc.)
-                          if [ -d "${luaBinaries}/ue4ss/Mods/shared" ]; then
-                            cp --no-preserve=mode,ownership -rn "${luaBinaries}/ue4ss/Mods/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
-                            echo "✓ Injected legacy Lua binary dependencies (socket, etc)"
+                          # Copy pre-built Lua binaries (socket, ssl/luasec, mime, cjson, etc.)
+                          if [ -d "${luaBinaries}/shared" ]; then
+                            cp --no-preserve=mode,ownership -rn "${luaBinaries}/shared"/* "$PACKAGE_DIR/ue4ss/Mods/shared/" || true
+                            echo "✓ Injected Lua binary dependencies (socket, ssl, cjson, etc)"
                           fi
 
                           # Create mods.txt
-                          # BPModLoaderMod + BPML_GenericFunctions required for Blueprint pak mods in LogicMods/
                           cat > "$PACKAGE_DIR/ue4ss/Mods/mods.txt" << MODSTXT
             $MOD_NAME : 1
             BPML_GenericFunctions : 1
@@ -485,21 +535,21 @@
             MODSTXT
                           echo "✓ Created mods.txt"
 
-                          # Copy BPModLoaderMod and BPML_GenericFunctions from UE4SS v3 release
-                          UE4SS_RELEASE_MODS="$HOME/Downloads/UE4SS_v3.0.1-946-g265115c0/ue4ss/Mods"
-                          if [ -d "$UE4SS_RELEASE_MODS/BPModLoaderMod" ]; then
-                            cp -r "$UE4SS_RELEASE_MODS/BPModLoaderMod" "$PACKAGE_DIR/ue4ss/Mods/"
+                          # Copy BPModLoaderMod and BPML_GenericFunctions
+                          if [ -d "$UE4SS_PREBUILT_DIR/Mods/BPModLoaderMod" ]; then
+                            cp --no-preserve=mode,ownership -r "$UE4SS_PREBUILT_DIR/Mods/BPModLoaderMod" "$PACKAGE_DIR/ue4ss/Mods/"
                             touch "$PACKAGE_DIR/ue4ss/Mods/BPModLoaderMod/enabled.txt"
-                            echo "✓ Copied BPModLoaderMod (Scripts + load_order.txt + enabled.txt)"
+                            echo "✓ Copied BPModLoaderMod (prebuilt)"
                           else
-                            echo "⚠ Warning: BPModLoaderMod not found at $UE4SS_RELEASE_MODS/BPModLoaderMod"
+                            echo "⚠ Warning: BPModLoaderMod not found"
                           fi
-                          if [ -d "$UE4SS_RELEASE_MODS/BPML_GenericFunctions" ]; then
-                            cp -r "$UE4SS_RELEASE_MODS/BPML_GenericFunctions" "$PACKAGE_DIR/ue4ss/Mods/"
+
+                          if [ -d "$UE4SS_PREBUILT_DIR/Mods/BPML_GenericFunctions" ]; then
+                            cp --no-preserve=mode,ownership -r "$UE4SS_PREBUILT_DIR/Mods/BPML_GenericFunctions" "$PACKAGE_DIR/ue4ss/Mods/"
                             touch "$PACKAGE_DIR/ue4ss/Mods/BPML_GenericFunctions/enabled.txt"
-                            echo "✓ Copied BPML_GenericFunctions (Scripts + enabled.txt)"
+                            echo "✓ Copied BPML_GenericFunctions (prebuilt)"
                           else
-                            echo "⚠ Warning: BPML_GenericFunctions not found at $UE4SS_RELEASE_MODS/BPML_GenericFunctions"
+                            echo "⚠ Warning: BPML_GenericFunctions not found"
                           fi
 
                           # Create mods.json

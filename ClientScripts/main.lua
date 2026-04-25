@@ -14,11 +14,6 @@ LogOutput = logging.logOutput
 local config = require("ModConfig")
 local viewportManager = require("ViewportManager")
 local commands = require("Commands")
-local shortcuts = require("Shortcuts")
-local satnav = require("SatNav")
-local integrityChecker = require("IntegrityChecker")
-local modManager = require("ModManager")
-local roadsideServiceFilter = require("RoadsideServiceFilter")
+local teleportWidget = require("TeleportWidget")
 
-ExecuteConsoleCommand("r.ViewDistanceScale 100")
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)
