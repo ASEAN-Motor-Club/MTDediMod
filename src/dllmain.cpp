@@ -136,102 +136,16 @@ auto MotorTownMods::on_unreal_init() -> void
 		}
 	);
 
-	// ServerLoadCargo: post-hook to avoid racing with FAsyncLoadingThread.
-	// Previously a pre-hook, which caused EXCEPTION_ACCESS_VIOLATION when two cargo loads
-	// arrived ~95ms apart (crash hash 49693C391E78AB2A79B10F68E0C919823E80BAF3).
-	// Post-hook runs after the engine completes ServerLoadCargo, so async asset loading
-	// is finished and the cargo object is in a stable state.
-	HookManager::RegisterPlayerEventPostHook(
-		STR("/Script/MotorTown.MotorTownPlayerController:ServerLoadCargo"),
-		"ServerLoadCargo",
-		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
-			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
-				? Context.TheStack.CurrentNativeFunction()
-				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
-			if (!FunctionBeingExecuted) return false;
-
-			// --- Extract Cargo (AMTCargo) from function params ---
-			auto CargoProp = static_cast<FObjectProperty*>(
-				FunctionBeingExecuted->GetPropertyByNameInChain(STR("Cargo")));
-			if (!CargoProp) {
-				Output::send<LogLevel::Warning>(STR("ServerLoadCargo: Cargo property not found\n"));
-				return false;
-			}
-
-			const auto& CargoPtr = CargoProp->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
-			if (CargoPtr == nullptr || *CargoPtr == nullptr) {
-				Output::send<LogLevel::Warning>(STR("ServerLoadCargo: Cargo object is null\n"));
-				return false;
-			}
-			auto cargo = *CargoPtr;
-
-			// --- Safety: validate cargo UObject is in a stable state ---
-			// Skip if the object is mid-destruction or still needs loading/post-load
-			if (cargo->HasAnyFlags(static_cast<EObjectFlags>(RF_BeginDestroyed | RF_FinishDestroyed | RF_NeedLoad | RF_NeedPostLoad))) {
-				Output::send<LogLevel::Warning>(STR("ServerLoadCargo: Cargo object in unsafe state (ObjectFlags)\n"));
-				return false;
-			}
-			// Skip if the object is pending kill or still being async-loaded
-			if (cargo->HasAnyInternalFlags(EInternalObjectFlags::PendingKill | EInternalObjectFlags::AsyncLoading)) {
-				Output::send<LogLevel::Warning>(STR("ServerLoadCargo: Cargo object in unsafe state (InternalFlags)\n"));
-				return false;
-			}
-
-			// --- Extract bReposition ---
-			auto bRepositionProp = FunctionBeingExecuted->GetPropertyByName(STR("bReposition"));
-			if (bRepositionProp) {
-				auto bReposition = bRepositionProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
-				if (bReposition) event_data["bReposition"] = *bReposition;
-			}
-
-			// --- Extract cargo properties (same as ServerCargoArrived) ---
-			const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
-			const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
-			const auto& Weight = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Weight"));
-			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
-			const auto& DeliveryId = cargo->GetValuePtrByPropertyNameInChain<int32>(STR("Net_DeliveryId"));
-			const auto& DestinationLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
-			const auto& SenderAbsoluteLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_SenderAbsoluteLocation"));
-			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
-			if (!PaymentProperty) return false;
-
-			auto TopLevelPayment = PaymentProperty->GetStruct();
-			auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
-			if (Payment == nullptr) return false;
-
-			auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
-			if (!BaseValueProperty) return false;
-
-			auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
-
-			if (!CargoKey || !Damage || !Weight || !TimeLeftSeconds || !DeliveryId || !DestinationLocation || !SenderAbsoluteLocation || !BasePayment) {
-				Output::send<LogLevel::Warning>(STR("ServerLoadCargo: missing cargo property\n"));
-				return false;
-			}
-
-			json::object destination_location_obj;
-			destination_location_obj["X"] = static_cast<int>(std::round(DestinationLocation->X()));
-			destination_location_obj["Y"] = static_cast<int>(std::round(DestinationLocation->Y()));
-			destination_location_obj["Z"] = static_cast<int>(std::round(DestinationLocation->Z()));
-			json::object sender_location_obj;
-			sender_location_obj["X"] = static_cast<int>(std::round(SenderAbsoluteLocation->X()));
-			sender_location_obj["Y"] = static_cast<int>(std::round(SenderAbsoluteLocation->Y()));
-			sender_location_obj["Z"] = static_cast<int>(std::round(SenderAbsoluteLocation->Z()));
-
-			json::object cargo_obj;
-			cargo_obj["Net_CargoKey"] = json::string(to_string(CargoKey->ToString()));
-			cargo_obj["Net_DeliveryId"] = *DeliveryId;
-			cargo_obj["Net_Payment"] = *BasePayment;
-			cargo_obj["Net_Damage"] = *Damage;
-			cargo_obj["Net_Weight"] = *Weight;
-			cargo_obj["Net_TimeLeftSeconds"] = *TimeLeftSeconds;
-			cargo_obj["Net_DestinationLocation"] = destination_location_obj;
-			cargo_obj["Net_SenderAbsoluteLocation"] = sender_location_obj;
-
-			event_data["Cargo"] = cargo_obj;
-			return true;
-		}
-	);
+	// ServerLoadCargo: DISABLED — replaced by Lua hook in CargoManager.lua.
+	// The C++ post-hook had multiple safety checks (ObjectFlags, InternalFlags, null,
+	// missing properties) that silently returned false, causing the event to never reach
+	// the backend. The Lua hook runs on the game thread with stable object references
+	// and does not suffer from FAsyncLoadingThread race conditions.
+	//
+	// Previously a pre-hook (crash hash 49693C391E78AB2A79B10F68E0C919823E80BAF3),
+	// then a post-hook with safety guards that silently dropped events.
+	// See CHANGELOG: server/v0.35.0-rc2 (disabled), rc3 (re-enabled as post-hook),
+	// and now replaced by Lua hook.
 
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerPickupCargo"),

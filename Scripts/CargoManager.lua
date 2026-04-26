@@ -525,6 +525,43 @@ webhook.RegisterEventHook2(
   end
 )
 
+-- ServerLoadCargo: DISABLED — hook registers but callback never fires (neither
+-- pre-hook nor post-hook).  The C++ post-hook on production also silently drops
+-- all events (null cargo / data extraction failure).  Needs investigation — the
+-- Unreal function may not be called in the current game version, or UE4SS hook
+-- dispatch is broken for this specific UFunction.
+-- RegisterHook(
+--   "/Script/MotorTown.MotorTownPlayerController:ServerLoadCargo",
+--   function() end,
+--   function(PC, cargoParam, cargoSpaceParam, bRepositionParam)
+--     LogOutput("INFO", "ServerLoadCargo POST-hook CALLBACK INVOKED")
+--
+--     local playerController = PC:get()
+--     if not playerController or not playerController:IsValid() then
+--       LogOutput("WARN", "ServerLoadCargo: playerController invalid")
+--       return
+--     end
+--
+--     local cargo = cargoParam:get()
+--     if cargo == nil or not cargo:IsValid() then
+--       LogOutput("WARN", "ServerLoadCargo: cargo invalid, cargoParam type=%s", type(cargoParam))
+--       return
+--     end
+--
+--     local characterGuid = GetPlayerGuid(playerController)
+--     local playerId = GetPlayerUniqueId(playerController)
+--     local cargoKey = cargo.Net_CargoKey:ToString()
+--
+--     LogOutput("INFO", "ServerLoadCargo: player=%s cargo=%s guid=%s", playerId, cargoKey, characterGuid)
+--
+--     EnqueueWebhookEvent("ServerLoadCargo", {
+--       PlayerId = playerId,
+--       CharacterGuid = characterGuid,
+--       Cargo = CargoToTableSummary(cargo),
+--     })
+--   end
+-- )
+
 webhook.RegisterEventHook(
   "ServerCargoDumped",
   function (PC, cargo)
