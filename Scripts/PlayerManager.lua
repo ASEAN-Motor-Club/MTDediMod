@@ -801,7 +801,7 @@ local function HandleClearPlayerSuspect(session)
     if asc and asc:IsValid() and geClass and geClass:IsValid() then
       -- (GEClass, InstigatorASC=nil matches any, StacksToRemove=-1 means "all stacks")
       local removed = asc:RemoveActiveGameplayEffectBySourceEffect(geClass, nil, -1)
-      result.removed = removed
+      result.removed = tonumber(removed) or removed
       result.status = "ok"
     else
       result.status = "asc_or_ge_invalid"
