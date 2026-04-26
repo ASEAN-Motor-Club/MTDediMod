@@ -357,6 +357,193 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", funct
   end
 end)
 
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSetCustomizationParts", function(PC, CustomizationParts)
+  local playerController = PC:get()
+  if not playerController:IsValid() then return end
+  local playerState = playerController.PlayerState
+  if not playerState:IsValid() then return end
+
+  local uniqueId = GetUniqueNetIdAsString(playerState)
+  local characterGuid = GuidToString(playerState.CharacterGuid)
+
+  -- Build a lookup of the character's CURRENT slots so we can diff.
+  -- The hook fires *before* the server applies the RPC, so reading the
+  -- character's Net_CustomizationParts here yields the old state.
+  local currentSlots = {}   -- [slotEnum] = partKeyString
+  local costumeBodyKey, costumeItemKey
+  pcall(function()
+    local character = playerController.Net_MyDrivingCharacter
+    if not character or not character:IsValid() then
+      character = playerController:K2_GetPawn()
+    end
+    if character and character:IsValid() then
+      character.Net_CustomizationParts.Slots:ForEach(function(_, element)
+        local entry = element:get()
+        local ok_pk, val_pk = pcall(function() return entry.PartKey:ToString() end)
+        currentSlots[entry.Slot] = ok_pk and val_pk or ""
+      end)
+      local custom = character.Net_Customization
+      if custom then
+        local ok_cbk, val_cbk = pcall(function() return custom.CostumeBodyKey:ToString() end)
+        costumeBodyKey = ok_cbk and val_cbk or nil
+        local ok_cik, val_cik = pcall(function() return custom.CostumeItemKey:ToString() end)
+        costumeItemKey = ok_cik and val_cik or nil
+      end
+    end
+  end)
+
+  -- Collect the incoming slots into a lookup for diffing
+  local newSlotsBySlot = {}   -- [slotEnum] = partKeyString
+  pcall(function()
+    local parts = CustomizationParts:get()
+    if parts then
+      parts.Slots:ForEach(function(_, element)
+        local entry = element:get()
+        local ok_pk, val_pk = pcall(function() return entry.PartKey:ToString() end)
+        newSlotsBySlot[entry.Slot] = ok_pk and val_pk or ""
+      end)
+    end
+  end)
+
+  -- Diff: added = in new but not in current (or different PartKey);
+  --       removed = in current but not in new (or different PartKey).
+  local added, removed = {}, {}
+  for slot, newKey in pairs(newSlotsBySlot) do
+    local oldKey = currentSlots[slot]
+    if oldKey ~= newKey then
+      if newKey ~= "" then
+        table.insert(added, { Slot = slot, PartKey = newKey })
+      end
+      if oldKey and oldKey ~= "" then
+        table.insert(removed, { Slot = slot, PartKey = oldKey })
+      end
+    end
+  end
+  for slot, oldKey in pairs(currentSlots) do
+    if newSlotsBySlot[slot] == nil and oldKey ~= "" then
+      table.insert(removed, { Slot = slot, PartKey = oldKey })
+    end
+  end
+
+  -- Skip emitting if nothing actually changed (RPC may fire for no-op applies)
+  if #added == 0 and #removed == 0 then return end
+
+  LogOutput("INFO",
+    "ServerSetCustomizationParts: player=%s guid=%s added=%d removed=%d",
+    uniqueId, characterGuid, #added, #removed)
+
+  EnqueueWebhookEvent("ServerSetCustomizationParts", {
+    UniqueID = uniqueId,
+    CharacterGuid = characterGuid,
+    Added = added,             -- parts put on
+    Removed = removed,         -- parts taken off
+    CostumeBodyKey = costumeBodyKey,
+    CostumeItemKey = costumeItemKey,
+  })
+end)
+
+RegisterHook("/Script/MotorTown.MTCharacter:ServerHideCostume", function(Character, bHideCostume)
+  local character = Character:get()
+  if not character:IsValid() then return end
+
+  local hide = bHideCostume:get()
+  local playerState = character.Net_MTPlayerState
+  if not playerState:IsValid() then return end
+
+  local uniqueId = GetUniqueNetIdAsString(playerState)
+  local characterGuid = GuidToString(playerState.CharacterGuid)
+
+  LogOutput("INFO", "ServerHideCostume: player=%s guid=%s hide=%s", uniqueId, characterGuid, tostring(hide))
+
+  EnqueueWebhookEvent("ServerHideCostume", {
+    UniqueID = uniqueId,
+    CharacterGuid = characterGuid,
+    HideCostume = hide,
+  })
+end)
+
+-- ServerSetEquipmentInventory fires when a player equips/unequips a hat, glasses,
+-- beard, or costume. We iterate the incoming inventory explicitly (per AGENTS.md:
+-- avoid whole-struct conversion — safe since we only read field primitives).
+-- The hook fires BEFORE the server applies the change, so reading the character's
+-- current Net_EquipmentInventory gives us the OLD state for a clean per-slot diff.
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSetEquipmentInventory", function(PC, EquipmentInventory)
+  local playerController = PC:get()
+  if not playerController:IsValid() then return end
+  local playerState = playerController.PlayerState
+  if not playerState:IsValid() then return end
+
+  local uniqueId = GetUniqueNetIdAsString(playerState)
+  local characterGuid = GuidToString(playerState.CharacterGuid)
+
+  -- Current equipment on the character (pre-apply)
+  local currentBySlot = {}   -- [slotEnum] = itemKey string ("" if unset)
+  pcall(function()
+    local character = playerController.Net_MyDrivingCharacter
+    if not character or not character:IsValid() then
+      character = playerController:K2_GetPawn()
+    end
+    if character and character:IsValid() then
+      character.Net_EquipmentInventory.EquipmentSlots:ForEach(function(_, element)
+        local entry = element:get()
+        local ok_ik, val_ik = pcall(function() return entry.ItemKey:ToString() end)
+        local key = ok_ik and val_ik or ""
+        if key == "None" then key = "" end
+        currentBySlot[entry.Slot] = key
+      end)
+    end
+  end)
+
+  -- Incoming equipment (what the player is REQUESTING to wear)
+  local newBySlot = {}
+  pcall(function()
+    local inv = EquipmentInventory:get()
+    if inv then
+      inv.EquipmentSlots:ForEach(function(_, element)
+        local entry = element:get()
+        local ok_ik, val_ik = pcall(function() return entry.ItemKey:ToString() end)
+        local key = ok_ik and val_ik or ""
+        if key == "None" then key = "" end
+        newBySlot[entry.Slot] = key
+      end)
+    end
+  end)
+
+  -- Diff: Equipped = slots where a new item appears or replaces a different one;
+  --       Unequipped = slots cleared or replaced by a different item.
+  local equipped, unequipped = {}, {}
+  for slot, newKey in pairs(newBySlot) do
+    local oldKey = currentBySlot[slot] or ""
+    if oldKey ~= newKey then
+      if newKey ~= "" then
+        table.insert(equipped, { Slot = slot, ItemKey = newKey })
+      end
+      if oldKey ~= "" then
+        table.insert(unequipped, { Slot = slot, ItemKey = oldKey })
+      end
+    end
+  end
+  for slot, oldKey in pairs(currentBySlot) do
+    if newBySlot[slot] == nil and oldKey ~= "" then
+      table.insert(unequipped, { Slot = slot, ItemKey = oldKey })
+    end
+  end
+
+  -- Skip no-op applies
+  if #equipped == 0 and #unequipped == 0 then return end
+
+  LogOutput("INFO",
+    "ServerSetEquipmentInventory: player=%s guid=%s equipped=%d unequipped=%d",
+    uniqueId, characterGuid, #equipped, #unequipped)
+
+  EnqueueWebhookEvent("ServerSetEquipmentInventory", {
+    UniqueID = uniqueId,
+    CharacterGuid = characterGuid,
+    Equipped = equipped,       -- items put on
+    Unequipped = unequipped,   -- items taken off
+  })
+end)
+
 local function HandleMutePlayer(session)
   local playerId = session.pathComponents[2]
   if not playerId then
@@ -776,6 +963,136 @@ local function HandleExperimentalSpectate(session)
   return { status = resultMsg }, nil, 200
 end
 
+---Collect current costume/customization snapshot for a player's character.
+---
+---Data model (what actually works in UE4SS):
+---  - Net_CustomizationParts.Slots: per-slot hair/body customization
+---    (EMTCharacterCustomizationSlot: Hair=1, Body=2).
+---  - Net_EquipmentInventory.EquipmentSlots: equipped items with FName ItemKey
+---    (EMTEquipmentSlot: Hat=1, Glasses=2, Beard=3, Costume=4).
+---  - Mesh.GetSkeletalMeshAsset(): the actively rendered body mesh. When a costume
+---    is worn it replaces the main character mesh (e.g. SK_Chr_Scarecrow_01), so
+---    this is the ground truth for what's currently being rendered.
+---
+---Note: the FMTCharacterCustomization struct (BodyKey/CostumeBodyKey/CostumeItemKey)
+---is not reliably readable via UE4SS — direct struct-field FName access returns null
+---UObject proxies. We rely on EquipmentInventory + rendered mesh instead.
+---@param character AMTCharacter
+---@return table
+local function CharacterCustomizationToTable(character)
+  local data = {
+    Slots = {},
+    Equipment = {},
+    Costume = nil,
+    MeshAsset = nil,
+    bHideCostume = nil,
+  }
+  if not character or not character:IsValid() then return data end
+
+  -- Per-slot customization (Hair / Body)
+  pcall(function()
+    character.Net_CustomizationParts.Slots:ForEach(function(_, element)
+      local entry = element:get()
+      local ok_pk, val_pk = pcall(function() return entry.PartKey:ToString() end)
+      table.insert(data.Slots, {
+        Slot = entry.Slot,
+        PartKey = ok_pk and val_pk and val_pk ~= "None" and val_pk or nil,
+      })
+    end)
+  end)
+
+  -- Equipment slots (Hat=1, Glasses=2, Beard=3, Costume=4).
+  -- EMTEquipmentSlot.Costume = 4 — this is the currently-worn costume key.
+  pcall(function()
+    character.Net_EquipmentInventory.EquipmentSlots:ForEach(function(_, element)
+      local entry = element:get()
+      local ok_ik, val_ik = pcall(function() return entry.ItemKey:ToString() end)
+      local itemKey = ok_ik and val_ik and val_ik ~= "None" and val_ik or nil
+      table.insert(data.Equipment, { Slot = entry.Slot, ItemKey = itemKey })
+      if entry.Slot == 4 then
+        data.Costume = itemKey
+      end
+    end)
+  end)
+
+  -- Rendered body mesh (ground truth for what's visually worn; costume replaces body).
+  pcall(function()
+    local mesh = character.Mesh
+    if mesh and mesh:IsValid() then
+      local ok_a, asset = pcall(function() return mesh:GetSkeletalMeshAsset() end)
+      if ok_a and asset and asset:IsValid() then
+        local ok_n, name = pcall(function() return asset:GetFullName() end)
+        if ok_n then data.MeshAsset = name end
+      end
+    end
+  end)
+
+  -- Hide-costume flag (EMTCharacterFlags.HideCostume = 16)
+  pcall(function()
+    local flags = character.Net_CharacterFlags
+    if flags ~= nil then
+      data.bHideCostume = (flags & 16) ~= 0
+    end
+  end)
+
+  return data
+end
+
+---Handle GET /players/{character_guid}/customization
+---Returns the current costume/customization snapshot for the player's character.
+---player_id is the character GUID (matches /players/*/suspect, /players/*/destination,
+---/players/*/experimental/hide_costume conventions).
+---@type RequestPathHandler
+local function HandleGetPlayerCustomization(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return { error = "Missing character GUID" }, nil, 400
+  end
+
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = string.format("Player %s not found", characterGuid) }, nil, 404
+  end
+
+  local character = PC:K2_GetPawn()
+  local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+  if not character:IsValid() or not character:IsA(charClass) then
+    character = PC.Net_MyDrivingCharacter
+  end
+  if not character or not character:IsValid() then
+    return { error = "Character not available" }, nil, 404
+  end
+  ---@cast character AMTCharacter
+
+  local ps = PC.PlayerState
+  local data = CharacterCustomizationToTable(character)
+  data.UniqueID = ps:IsValid() and GetUniqueNetIdAsString(ps) or nil
+  data.CharacterGuid = ps:IsValid() and GuidToString(ps.CharacterGuid) or nil
+
+  return { data = data }, nil, 200
+end
+
+local function HandleSetCustomDestination(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return { error = "Missing character GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if not data or not data.Location then
+    return { error = "Invalid payload: Location required" }, nil, 400
+  end
+
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = string.format("Player %s not found", characterGuid) }, nil, 404
+  end
+
+  local location = { X = data.Location.X, Y = data.Location.Y, Z = data.Location.Z }
+  PC:ServerSetCustomDestination(location)
+  return nil, nil, 204
+end
+
 return {
   HandleGetPlayerStates = HandleGetPlayerStates,
   GetMyCurrentTransform = GetMyCurrentTransform,
@@ -794,4 +1111,6 @@ return {
   HandleExperimentalHideCostume = HandleExperimentalHideCostume,
   HandleExperimentalGhostFlag = HandleExperimentalGhostFlag,
   HandleExperimentalSpectate = HandleExperimentalSpectate,
+  HandleSetCustomDestination = HandleSetCustomDestination,
+  HandleGetPlayerCustomization = HandleGetPlayerCustomization,
 }

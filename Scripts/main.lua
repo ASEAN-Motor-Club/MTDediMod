@@ -63,6 +63,8 @@ local function LoadWebserver()
     server.registerHandler("/players/*/mute", "DELETE", playerManager.HandleUnmutePlayer)
     server.registerHandler("/players/muted", "GET", playerManager.HandleGetMutedPlayers)
     server.registerHandler("/players/*/name", "PUT", playerManager.HandleSetPlayerName)
+    server.registerHandler("/players/*/destination", "POST", playerManager.HandleSetCustomDestination)
+    server.registerHandler("/players/*/customization", "GET", playerManager.HandleGetPlayerCustomization)
     server.registerHandler("/players/*/suspect", "POST", playerManager.HandleMakePlayerSuspect)
     
     -- Experimental

@@ -6,6 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.39.0-rc6] — 2026-04-26
+
+#### Added
+- `GET /players/*/customization` endpoint — returns the current costume/customization snapshot for a player's character. Payload:
+  - `Costume`: `FName` of the currently-worn costume (e.g. `Costume_Police_01`), derived from `Net_EquipmentInventory.EquipmentSlots[Slot=Costume]`
+  - `MeshAsset`: the active rendered skeletal mesh (e.g. `SK_Character_Male_Police`) — ground truth for what's being rendered, since wearing a costume replaces the character's main body mesh
+  - `Equipment[]`: all 4 equipment slots (Hat=1, Glasses=2, Beard=3, Costume=4) with `ItemKey`
+  - `Slots[]`: per-slot `Net_CustomizationParts` entries (Hair/Body)
+  - `bHideCostume`: derived from `Net_CharacterFlags & EMTCharacterFlags.HideCostume`
+  - `UniqueID`, `CharacterGuid`
+  Path param is CharacterGuid. Falls back to `Net_MyDrivingCharacter` when the player is in a vehicle.
+- `ServerSetEquipmentInventory` webhook — fires when a player equips/unequips a hat, glasses, beard, or costume. Emits `{UniqueID, CharacterGuid, Equipped[], Unequipped[]}` per-slot diffs (skips no-op applies). This is the authoritative signal for costume changes — slot 4 (`EMTEquipmentSlot.Costume`) is the worn costume.
+- Spawned static mesh actors now call `MarkRenderStateDirty` after scale changes and disable `bAllowCullDistanceVolume` to prevent level Cull Distance Volumes from overriding the 500m draw distance.
+
+#### Changed
+- **`ServerSetCustomizationParts` webhook shape (breaking)** — the event payload now carries `Added` and `Removed` diffs instead of the full `Slots` array, so consumers can distinguish *wear* from *take-off* per slot. Also includes `CostumeBodyKey` / `CostumeItemKey` for additional context (may be nil on characters where UE4SS cannot read the FMTCharacterCustomization struct fields — the authoritative costume lives on the character's equipment inventory / rendered mesh, exposed by the new endpoint). The hook snapshots the character's pre-apply slots, diffs against the incoming RPC arg, and skips emitting when the diff is empty (no-op applies).
+
 ### [server/v0.39.0-rc3] — 2026-04-23
 
 #### Changed

@@ -85,10 +85,15 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
               Y = scale and scale.Y or 1,
               Z = scale and scale.Z or 1,
             })
+            -- Push scale change to render thread so bounds are correct
+            actor.StaticMeshComponent:MarkRenderStateDirty()
           end
           actor.StaticMeshComponent:SetIsReplicated(true)
           -- Increase render distance so mesh is visible from afar (~500m)
           actor.StaticMeshComponent:SetCullDistance(50000)
+          -- Prevent level Cull Distance Volumes from overriding our draw distance
+          actor.StaticMeshComponent.bAllowCullDistanceVolume = false
+          actor.StaticMeshComponent:MarkRenderStateDirty()
         else
           error("Failed to set " .. object:GetFullName())
         end
