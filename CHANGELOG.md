@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.39.0-rc8] — 2026-04-27
+
+#### Changed
+- ServerLoadCargo: disabled both C++ post-hook and Lua hook. The C++ hook had multiple safety checks that silently returned false, causing the event to never reach the backend. The Lua hook also failed to fire (neither pre-hook nor post-hook callback was invoked). The Unreal function may not be called in the current game version, or UE4SS hook dispatch is broken for this specific UFunction. Both hooks are commented out pending investigation.
+
+### [server/v0.39.0-rc7] — 2026-04-26
+
+#### Added
+- `DELETE /players/*/suspect` endpoint — clears a player's police suspect status by removing every active `UGE_PoliceSuspect_C` gameplay effect via `UAbilitySystemComponent:RemoveActiveGameplayEffectBySourceEffect`. The GE's on-remove lifecycle drops the `Net_Suspects` entry and strips the granted suspect GameplayTags automatically, clearing the blue overlay. Returns diagnostic JSON (`{status, removed, asc_valid, ge_class_valid}`) mirroring the existing `POST /players/*/suspect` handler. Safe to call on a non-suspect — the GAS remove-by-source API is a no-op when no matching GE is active. Resolves `Net_MyDrivingCharacter` first with `K2_GetPawn()` fallback so the correct pawn is targeted regardless of vehicle state.
+
 ### [server/v0.39.0-rc6] — 2026-04-26
 
 #### Added
