@@ -753,6 +753,68 @@ local function HandleMakePlayerSuspect(session)
   return result, nil, 200
 end
 
+---Handle request to clear a player's suspect status.
+---Removes every active UGE_PoliceSuspect_C gameplay effect, which drives the
+---engine's on-remove path to drop the Net_Suspects entry and strip the granted
+---suspect GameplayTags from the character.
+---Safe to call on a non-suspect — the GAS API returns 0 when nothing matches.
+---@type RequestPathHandler
+local function HandleClearPlayerSuspect(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return { error = "Missing character GUID" }, nil, 400
+  end
+
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = string.format("Player %s not found", characterGuid) }, nil, 404
+  end
+
+  local result = {}
+  local ok, err = pcall(function()
+    if not PC:IsValid() then result.status = "pc_invalid"; return end
+
+    local character = PC.Net_MyDrivingCharacter
+    if not character or not character:IsValid() then
+      character = PC:K2_GetPawn()
+    end
+    if not character or not character:IsValid() then result.status = "char_not_found"; return end
+
+    local gameInstance = UEHelpers.GetGameInstance()
+    if not gameInstance or not gameInstance:IsValid() then
+      result.status = "game_instance_invalid"
+      return
+    end
+
+    local gameResource = gameInstance.GameResource
+    if not gameResource or not gameResource:IsValid() then
+      result.status = "game_resource_invalid"
+      return
+    end
+
+    local asc = character.AbilityComponent
+    result.asc_valid = asc and asc:IsValid() or false
+
+    local geClass = gameResource.PoliceSuspectGE
+    result.ge_class_valid = geClass and geClass:IsValid() or false
+
+    if asc and asc:IsValid() and geClass and geClass:IsValid() then
+      -- (GEClass, InstigatorASC=nil matches any, StacksToRemove=-1 means "all stacks")
+      local removed = asc:RemoveActiveGameplayEffectBySourceEffect(geClass, nil, -1)
+      result.removed = removed
+      result.status = "ok"
+    else
+      result.status = "asc_or_ge_invalid"
+    end
+  end)
+  if not ok then
+    result.status = "error"
+    result.error = tostring(err)
+  end
+
+  return result, nil, 200
+end
+
 ---Diagnostic: peek into Net_Suspects, character tags, and police state
 ---@type RequestHandler
 local function HandleGetPoliceState()
@@ -1106,6 +1168,7 @@ return {
   HandleGetMutedPlayers = HandleGetMutedPlayers,
   HandleGetParties = HandleGetParties,
   HandleMakePlayerSuspect = HandleMakePlayerSuspect,
+  HandleClearPlayerSuspect = HandleClearPlayerSuspect,
   HandleGetPoliceState = HandleGetPoliceState,
   HandleExperimentalHideActor = HandleExperimentalHideActor,
   HandleExperimentalHideCostume = HandleExperimentalHideCostume,
