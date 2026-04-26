@@ -123,11 +123,11 @@ local function TransferMoneyToCharacter(characterGuid, amount, message)
 end
 
 
-local function PlayerSendChat(uniqueId, message)
+local function PlayerSendChat(uniqueId, message, category)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
   LogOutput("INFO", "PlayerSendChat")
   if PC:IsValid() then
-    PC:ServerSendChat(message, 0)
+    PC:ServerSendChat(message, category or 0)
   end
   return true
 end
@@ -230,7 +230,7 @@ local function HandlePlayerSendChat(session)
 
   local data = json.parse(session.content)
   if data and data.Message then
-    PlayerSendChat(playerId, data.Message)
+    PlayerSendChat(playerId, data.Message, data.Category)
     return nil, nil, 204
   end
   return { error = "Invalid payload" }, nil, 400
