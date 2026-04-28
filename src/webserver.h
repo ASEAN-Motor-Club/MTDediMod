@@ -32,6 +32,11 @@ class Webserver
 	std::atomic<int> m_sse_count{0};
 	static constexpr int MAX_SSE_CONNECTIONS = 2;
 
+	// Location SSE subscribers use a separate counter + cap so a flood
+	// of /players/locations/stream clients cannot starve /events/stream.
+	std::atomic<int> m_location_sse_count{0};
+	int m_max_location_sse_connections = 8;
+
 public:
 	Webserver();
 	~Webserver();
@@ -54,4 +59,9 @@ private:
 
 	// Handle SSE stream connection (blocks until client disconnects or shutdown)
 	void handle_sse_connection(tcp::socket& socket, http::request<http::string_body>& req);
+
+	// Handle SSE stream for /players/locations/stream — mirrors handle_sse_connection
+	// but reads from LocationBroadcaster instead of EventManager and emits one
+	// snapshot per new seq.
+	void handle_locations_sse_connection(tcp::socket& socket, http::request<http::string_body>& req);
 };

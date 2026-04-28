@@ -695,7 +695,9 @@ local function HandleGetParties(session)
 end
 
 ---Handle request to make a player a suspect
----Applies UGE_PoliceSuspect_C gameplay effect and appends suspect tags
+---Applies UGE_PoliceSuspect_C gameplay effect with controllable duration via
+---spec-based approach (MakeOutgoingSpec + SetDuration + BP_ApplyGameplayEffectSpecToSelf).
+---Reads DurationSeconds from request body JSON (default 86400 = 24h).
 ---@type RequestPathHandler
 local function HandleMakePlayerSuspect(session)
   local characterGuid = session.pathComponents[2]
@@ -708,25 +710,40 @@ local function HandleMakePlayerSuspect(session)
     return { error = string.format("Player %s not found", characterGuid) }, nil, 404
   end
 
+  local durationSeconds = 86400
+  local data = json.parse(session.content)
+  if data and data.DurationSeconds then
+    durationSeconds = tonumber(data.DurationSeconds) or 86400
+  end
+
   local result = {}
+  local earlyReturnStatus = nil
   local ok, err = pcall(function()
-    if not PC:IsValid() then result.status = "pc_invalid"; return end
+    if not PC:IsValid() then
+      LogOutput("WARN", "HandleMakePlayerSuspect: PC invalid for %s", characterGuid)
+      earlyReturnStatus = "pc_invalid"; return
+    end
 
     local character = PC.Net_MyDrivingCharacter
     if not character or not character:IsValid() then
       character = PC:K2_GetPawn()
     end
-    if not character or not character:IsValid() then result.status = "char_not_found"; return end
+    if not character or not character:IsValid() then
+      LogOutput("WARN", "HandleMakePlayerSuspect: character not found for %s", characterGuid)
+      earlyReturnStatus = "char_not_found"; return
+    end
 
     local gameInstance = UEHelpers.GetGameInstance()
     if not gameInstance or not gameInstance:IsValid() then
-      result.status = "game_instance_invalid"
+      LogOutput("WARN", "HandleMakePlayerSuspect: game instance invalid")
+      earlyReturnStatus = "game_instance_invalid"
       return
     end
 
     local gameResource = gameInstance.GameResource
     if not gameResource or not gameResource:IsValid() then
-      result.status = "game_resource_invalid"
+      LogOutput("WARN", "HandleMakePlayerSuspect: game resource invalid")
+      earlyReturnStatus = "game_resource_invalid"
       return
     end
 
@@ -737,9 +754,18 @@ local function HandleMakePlayerSuspect(session)
     result.ge_class_valid = geClass and geClass:IsValid() or false
 
     if asc and asc:IsValid() and geClass and geClass:IsValid() then
-      asc:BP_ApplyGameplayEffectToSelf(geClass, 1.0, {})
+      local specHandle = asc:MakeOutgoingSpec(geClass, 1.0, {})
+      local bpLib = StaticFindObject("/Script/GameplayAbilities.AbilitySystemBlueprintLibrary")
+      bpLib:SetDuration(specHandle, durationSeconds)
+      local activeHandle = asc:BP_ApplyGameplayEffectSpecToSelf(specHandle)
       result.ge_applied = true
+      result.active_handle = tonumber(activeHandle) or activeHandle
+      result.duration_seconds = durationSeconds
+      LogOutput("INFO", "HandleMakePlayerSuspect: applied GE to %s duration=%d activeHandle=%s",
+        characterGuid, durationSeconds, tostring(activeHandle))
     else
+      LogOutput("WARN", "HandleMakePlayerSuspect: asc or geClass invalid for %s", characterGuid)
+      earlyReturnStatus = "asc_or_ge_invalid"
       result.ge_applied = false
     end
 
@@ -748,9 +774,19 @@ local function HandleMakePlayerSuspect(session)
   if not ok then
     result.status = "error"
     result.error = tostring(err)
+    LogOutput("ERROR", "HandleMakePlayerSuspect: pcall error for %s: %s", characterGuid, tostring(err))
+    return result, nil, 500
   end
 
-  return result, nil, 200
+  if earlyReturnStatus then
+    result.status = earlyReturnStatus
+    return result, nil, 409
+  end
+
+  if result.ge_applied then
+    return result, nil, 200
+  end
+  return result, nil, 409
 end
 
 ---Handle request to clear a player's suspect status.
@@ -771,24 +807,33 @@ local function HandleClearPlayerSuspect(session)
   end
 
   local result = {}
+  local earlyReturnStatus = nil
   local ok, err = pcall(function()
-    if not PC:IsValid() then result.status = "pc_invalid"; return end
+    if not PC:IsValid() then
+      LogOutput("WARN", "HandleClearPlayerSuspect: PC invalid for %s", characterGuid)
+      earlyReturnStatus = "pc_invalid"; return
+    end
 
     local character = PC.Net_MyDrivingCharacter
     if not character or not character:IsValid() then
       character = PC:K2_GetPawn()
     end
-    if not character or not character:IsValid() then result.status = "char_not_found"; return end
+    if not character or not character:IsValid() then
+      LogOutput("WARN", "HandleClearPlayerSuspect: character not found for %s", characterGuid)
+      earlyReturnStatus = "char_not_found"; return
+    end
 
     local gameInstance = UEHelpers.GetGameInstance()
     if not gameInstance or not gameInstance:IsValid() then
-      result.status = "game_instance_invalid"
+      LogOutput("WARN", "HandleClearPlayerSuspect: game instance invalid")
+      earlyReturnStatus = "game_instance_invalid"
       return
     end
 
     local gameResource = gameInstance.GameResource
     if not gameResource or not gameResource:IsValid() then
-      result.status = "game_resource_invalid"
+      LogOutput("WARN", "HandleClearPlayerSuspect: game resource invalid")
+      earlyReturnStatus = "game_resource_invalid"
       return
     end
 
@@ -799,17 +844,26 @@ local function HandleClearPlayerSuspect(session)
     result.ge_class_valid = geClass and geClass:IsValid() or false
 
     if asc and asc:IsValid() and geClass and geClass:IsValid() then
-      -- (GEClass, InstigatorASC=nil matches any, StacksToRemove=-1 means "all stacks")
       local removed = asc:RemoveActiveGameplayEffectBySourceEffect(geClass, nil, -1)
       result.removed = tonumber(removed) or removed
       result.status = "ok"
+      LogOutput("INFO", "HandleClearPlayerSuspect: removed %s GEs from %s",
+        tostring(result.removed), characterGuid)
     else
-      result.status = "asc_or_ge_invalid"
+      LogOutput("WARN", "HandleClearPlayerSuspect: asc or geClass invalid for %s", characterGuid)
+      earlyReturnStatus = "asc_or_ge_invalid"
     end
   end)
   if not ok then
     result.status = "error"
     result.error = tostring(err)
+    LogOutput("ERROR", "HandleClearPlayerSuspect: pcall error for %s: %s", characterGuid, tostring(err))
+    return result, nil, 500
+  end
+
+  if earlyReturnStatus then
+    result.status = earlyReturnStatus
+    return result, nil, 409
   end
 
   return result, nil, 200

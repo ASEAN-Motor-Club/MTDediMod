@@ -17,7 +17,7 @@ local function IsRPPlayer()
     end)
     if not ok then return false end
 
-    return name and string.find(name, "%[RP%]") ~= nil
+    return name and string.find(name, "%[R[%]%u%d%*]*%]") ~= nil
 end
 
 local function GetMyVehicle()

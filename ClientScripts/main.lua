@@ -3,7 +3,6 @@ package.cpath = package.cpath .. ";" .. dir .. "/ue4ss/Mods/shared/?/core.dll"
 package.cpath = package.cpath .. ";" .. dir .. "/ue4ss/Mods/shared/?.dll"
 
 require("Helpers")
-local json = require("JsonParser")
 local logging = require("Debugging/Logging")
 local statics = require("Statics")
 
@@ -11,14 +10,13 @@ local statics = require("Statics")
 LogMsg = logging.logMsg
 LogOutput = logging.logOutput
 
-local config = require("ModConfig")
-local viewportManager = require("ViewportManager")
-local commands = require("Commands")
-local shortcuts = require("Shortcuts")
-local satnav = require("SatNav")
-local integrityChecker = require("IntegrityChecker")
-local modManager = require("ModManager")
-local rpRestrictions = require("RPRestrictions")
+require("ModConfig")
+require("ViewportManager")
+require("Commands")
+require("Shortcuts")
+require("IntegrityChecker")
+require("ModManager")
+require("RPRestrictions")
 
 ExecuteConsoleCommand("r.ViewDistanceScale 100")
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)

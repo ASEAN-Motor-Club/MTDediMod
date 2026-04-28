@@ -1,6 +1,5 @@
 local vehicleManager = require("VehicleManager")
 local teleportManager = require("TeleportManager")
-local satNav = require("SatNav")
 local integrityChecker = require("IntegrityChecker")
 local vehicleSaveSpawn = require("VehicleSaveSpawn")
 local UEHelpers = require("UEHelpers")
@@ -43,12 +42,6 @@ Commands["/teleport"] = function(PC, args)
 end
 
 Commands["/tp"] = Commands["/teleport"]
-
-Commands["/satnav"] = function(PC, args)
-  satNav.Toggle()
-end
-
-Commands["/nav"] = Commands["/satnav"]
 
 Commands["/check"] = function(PC, args)
   integrityChecker.RunCheck()

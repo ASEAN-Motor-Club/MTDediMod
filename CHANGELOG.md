@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.40.0-rc1] — 2026-04-28
+
+#### Added
+- `LocationSampler` + `LocationBroadcaster` C++ subsystem that snapshots every player's `CharacterGuid`, `Location`, `yaw`, and `VehicleKey` on a game-thread tick. Default sample rate is 2 Hz; overridable via `MOD_LOCATION_SNAPSHOT_HZ` (clamped to `[0.5, 10]`). Property offsets are cached on first resolution; GameState is re-resolved each sample to survive map transitions. Zero Lua involvement; projected <50 µs/s game-thread cost at 60 players.
+- `GET /players/locations` — latest snapshot as JSON (`seq`, `timestamp_ms`, `boot_epoch`, `count`, `entries[]`).
+- `GET /players/locations/stream` — SSE channel delivering one batched snapshot per tick. Uses the same `epoch:seq` `Last-Event-ID` format as `/events/stream` with independent connection cap (`MOD_LOCATION_SSE_MAX_CONNS`, default 8) so location subscribers do not starve the events channel.
+
 ### [server/v0.39.0-rc8] — 2026-04-27
 
 #### Changed

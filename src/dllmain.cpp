@@ -19,6 +19,7 @@
 #include "LuaHttpServer.h"
 #include "statics.h"
 #include "HookManager.h"
+#include "LocationSampler.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -39,6 +40,9 @@ MotorTownMods::MotorTownMods()
 
 MotorTownMods::~MotorTownMods()
 {
+	// Unregister the location tick hook before the generic UnregisterAllHooks
+	// sweep so its FCallback is released cleanly.
+	LocationSampler::Get().Stop();
 	HookManager::UnregisterAllHooks();
 }
 
@@ -70,6 +74,17 @@ auto MotorTownMods::on_unreal_init() -> void
 		lua_port = atoi(val);
 	}
 	LuaHttpServer::Get()->Start(lua_port);
+
+	// Start the player-location sampler. Default 2 Hz; MOD_LOCATION_SNAPSHOT_HZ
+	// overrides. Values outside [0.5, 10] are clamped inside Start().
+	float loc_hz = 2.0f;
+	if (const char* val = getenv("MOD_LOCATION_SNAPSHOT_HZ"))
+	{
+		float parsed = static_cast<float>(atof(val));
+		if (parsed > 0.0f) loc_hz = parsed;
+	}
+	LocationSampler::Get().Start(loc_hz);
+
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived"),
 		"ServerCargoArrived",

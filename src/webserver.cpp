@@ -6,6 +6,8 @@
 #include "statics.h"
 #include "EventsRoute.h"
 #include "EventManager.h"
+#include "LocationsRoute.h"
+#include "LocationBroadcaster.h"
 
 // Workaround against multiple check definitions
 #pragma push_macro("check")
@@ -29,6 +31,14 @@ Webserver::Webserver() {
 	}
 
 	responses.push_back(std::make_shared<EventsRoute>());
+	responses.push_back(std::make_shared<LocationsRoute>());
+
+	// Separate SSE connection cap for /players/locations/stream, overridable.
+	if (const char* val = getenv("MOD_LOCATION_SSE_MAX_CONNS"))
+	{
+		int parsed = atoi(val);
+		if (parsed > 0) m_max_location_sse_connections = parsed;
+	}
 
 	serverThread = boost::thread(&Webserver::run_server, this, Port);
 	serverThread.detach();
@@ -39,6 +49,7 @@ Webserver::Webserver() {
 Webserver::~Webserver() {
 	// Signal SSE threads to stop (they'll wake and exit)
 	EventManager::Get().Shutdown();
+	LocationBroadcaster::Get().Shutdown();
 
 	// Wait for all pool threads to finish
 	m_pool.join();
@@ -129,6 +140,31 @@ void Webserver::handle_connection(tcp::socket socket)
 				handle_sse_connection(socket, req);
 			} catch (...) {}
 			m_sse_count--;
+			return;
+		}
+
+		// Separate SSE channel: /players/locations/stream
+		if (req.method() == http::verb::get && req.target() == "/players/locations/stream")
+		{
+			if (m_location_sse_count >= m_max_location_sse_connections)
+			{
+				Output::send<LogLevel::Warning>(
+					STR("[{}] Location SSE connection rejected: {} active (max {})\n"),
+					ModName, m_location_sse_count.load(), m_max_location_sse_connections);
+				http::response<http::string_body> err_res;
+				err_res.result(http::status::service_unavailable);
+				err_res.set(http::field::content_type, "text/plain");
+				err_res.body() = "Too many location SSE connections";
+				err_res.prepare_payload();
+				http::write(socket, err_res);
+				return;
+			}
+
+			m_location_sse_count++;
+			try {
+				handle_locations_sse_connection(socket, req);
+			} catch (...) {}
+			m_location_sse_count--;
 			return;
 		}
 
@@ -291,6 +327,104 @@ void Webserver::handle_sse_connection(tcp::socket& socket, http::request<http::s
 			}
 			last_seq = entry.seq;
 		}
+	}
+}
+
+// Handle /players/locations/stream SSE — blocks until client disconnects or shutdown.
+// Mirrors handle_sse_connection but pulls from LocationBroadcaster (latest-only,
+// no ring buffer) and emits one frame per new snapshot seq.
+void Webserver::handle_locations_sse_connection(tcp::socket& socket, http::request<http::string_body>& req)
+{
+	Output::send<LogLevel::Verbose>(STR("[{}] Location SSE client connected\n"), ModName);
+
+	http::response<http::empty_body> res;
+	res.result(http::status::ok);
+	res.set(http::field::content_type, "text/event-stream");
+	res.set(http::field::cache_control, "no-cache");
+	res.set(http::field::connection, "keep-alive");
+	res.set("X-Accel-Buffering", "no");
+	res.keep_alive(true);
+
+	http::response_serializer<http::empty_body> sr{res};
+	http::write_header(socket, sr);
+
+	auto boot_epoch = LocationBroadcaster::Get().GetBootEpoch();
+
+	// Parse Last-Event-ID ("epoch:seq"); epoch mismatch resets seq to 0.
+	uint64_t last_seq = 0;
+	uint64_t request_epoch = 0;
+	auto it = req.find("Last-Event-ID");
+	if (it != req.end())
+	{
+		try
+		{
+			auto val = std::string(it->value());
+			auto colon = val.find(':');
+			if (colon != std::string::npos)
+			{
+				request_epoch = std::stoull(val.substr(0, colon));
+				last_seq = std::stoull(val.substr(colon + 1));
+			}
+			else
+			{
+				last_seq = std::stoull(val);
+			}
+		}
+		catch (...)
+		{
+			last_seq = 0;
+		}
+	}
+	if (request_epoch > 0 && request_epoch != boot_epoch)
+	{
+		Output::send<LogLevel::Verbose>(
+			STR("[{}] Location SSE client epoch mismatch. Expected {}, got {}. Resetting.\n"),
+			ModName, boot_epoch, request_epoch);
+		last_seq = 0;
+	}
+
+	// Main loop. Snapshots are idempotent — no replay buffer needed; each
+	// new seq completely supersedes the previous one.
+	while (true)
+	{
+		auto snap = LocationBroadcaster::Get().WaitForNewer(
+			last_seq, std::chrono::milliseconds(30000));
+
+		if (LocationBroadcaster::Get().IsShutdown())
+		{
+			Output::send<LogLevel::Verbose>(
+				STR("[{}] Location SSE connection closing (shutdown)\n"), ModName);
+			return;
+		}
+
+		if (!snap || snap->seq <= last_seq)
+		{
+			// Timeout (or spurious wake) — heartbeat to keep the socket alive.
+			std::string heartbeat = ": heartbeat\n\n";
+			boost::system::error_code ec;
+			asio::write(socket, asio::buffer(heartbeat), ec);
+			if (ec)
+			{
+				Output::send<LogLevel::Verbose>(
+					STR("[{}] Location SSE client disconnected during heartbeat\n"), ModName);
+				return;
+			}
+			continue;
+		}
+
+		std::string payload = json::serialize(LocationSnapshotToJson(*snap));
+		std::string sse_frame = std::format("id: {}:{}\ndata: {}\n\n",
+			boot_epoch, snap->seq, payload);
+
+		boost::system::error_code ec;
+		asio::write(socket, asio::buffer(sse_frame), ec);
+		if (ec)
+		{
+			Output::send<LogLevel::Verbose>(
+				STR("[{}] Location SSE client disconnected\n"), ModName);
+			return;
+		}
+		last_seq = snap->seq;
 	}
 }
 
