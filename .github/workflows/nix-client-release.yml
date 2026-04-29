@@ -1,0 +1,108 @@
+name: Nix Client Build and Release
+
+on:
+  push:
+    tags:
+      - 'client/v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-client-mod:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+          submodules: false
+          persist-credentials: false
+
+      - name: Get UE4SS locked revision
+        id: ue4ss-rev
+        run: echo "rev=$(jq -r '.nodes.ue4ss.locked.rev' flake.lock)" >> $GITHUB_OUTPUT
+
+      - name: Fetch UE4SS source with submodules
+        uses: actions/checkout@v4
+        with:
+          repository: UE4SS-RE/RE-UE4SS
+          ref: ${{ steps.ue4ss-rev.outputs.rev }}
+          path: .ue4ss-src
+          submodules: recursive
+          token: ${{ secrets.UEPSEUDO_PAT }}
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            access-tokens = github.com=${{ secrets.UEPSEUDO_PAT }}
+
+      - name: Setup Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Cache xwin
+        uses: actions/cache@v4
+        with:
+          path: .xwin-cache
+          key: xwin-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-keys: xwin-${{ runner.os }}-
+
+      - name: Configure client
+        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#configure-client
+
+      - name: Build client
+        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-client
+
+      - name: Package client
+        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package-client
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#client/v}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Upload client artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-mod-package
+          path: MotorTownClientMod-package.zip
+          retention-days: 30
+
+  create-release:
+    needs: build-client-mod
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: client-mod-package
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MotorTownClientMod v${{ needs.build-client-mod.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          files: MotorTownClientMod-package.zip
+          generate_release_notes: true
+          make_latest: false

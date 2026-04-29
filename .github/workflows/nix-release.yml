@@ -3,7 +3,7 @@ name: Nix Build and Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'server/v*'
   workflow_dispatch:
     inputs:
       create_release:
@@ -145,7 +145,7 @@ jobs:
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
+            VERSION="${VERSION#server/v}"
           else
             VERSION="dev-$(git rev-parse --short HEAD)"
           fi
