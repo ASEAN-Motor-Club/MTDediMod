@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.40.0-rc3] — 2026-04-29
+
+#### Fixed
+- LocationSampler `ResolveGameState()` now caches the GameState pointer across ticks with `HasAnyFlags`/`HasAnyInternalFlags` validity checks — eliminates the O(UObject-count) `FindFirstOf` scan every 500ms that was causing ~8 FPS drop (30→22). FindFirstOf now runs only on startup and after map transitions. `PlayerArray` FProperty is also cached since it's stable across GameState instances.
+
 ### [server/v0.40.0-rc2] — 2026-04-29
 
 #### Added

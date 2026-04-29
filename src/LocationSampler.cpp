@@ -97,10 +97,23 @@ void LocationSampler::Stop()
 
 UObject* LocationSampler::ResolveGameState()
 {
-    // Re-resolve on every call: the GameState pointer changes on map
-    // transitions. FindFirstOf is O(UObject-count) but only runs once per
-    // sample tick (e.g. every 500 ms at 2 Hz).
-    return UObjectGlobals::FindFirstOf(STR("MotorTownGameState"));
+    // Fast path: check cached pointer first. Only re-resolve via FindFirstOf
+    // (O(UObject-count) scan) when the cached pointer is null or destroyed.
+    if (m_game_state)
+    {
+        // Same safety checks as IsUObjectSafe — detect objects mid-destruction.
+        if (!m_game_state->HasAnyFlags(static_cast<EObjectFlags>(RF_BeginDestroyed | RF_FinishDestroyed)) &&
+            !m_game_state->HasAnyInternalFlags(EInternalObjectFlags::PendingKill | EInternalObjectFlags::Unreachable))
+        {
+            return m_game_state;
+        }
+        // Cached pointer is stale (map transition / GC). Clear and re-resolve.
+        m_game_state = nullptr;
+        m_player_array_prop = nullptr;
+    }
+
+    m_game_state = UObjectGlobals::FindFirstOf(STR("MotorTownGameState"));
+    return m_game_state;
 }
 
 void LocationSampler::FormatGuid(const void* guid_ptr, std::string& out)
@@ -136,9 +149,14 @@ void LocationSampler::Tick()
         return;
     }
 
-    auto PlayerArrayProp = static_cast<FArrayProperty*>(
-        gameState->GetPropertyByNameInChain(STR("PlayerArray")));
-    if (!PlayerArrayProp) return;
+    auto PlayerArrayProp = static_cast<FArrayProperty*>(m_player_array_prop);
+    if (!PlayerArrayProp)
+    {
+        PlayerArrayProp = static_cast<FArrayProperty*>(
+            gameState->GetPropertyByNameInChain(STR("PlayerArray")));
+        if (!PlayerArrayProp) return;
+        m_player_array_prop = PlayerArrayProp;
+    }
 
     auto players = PlayerArrayProp->ContainerPtrToValuePtr<FScriptArray>(gameState);
     if (!players || !players->GetData()) return;

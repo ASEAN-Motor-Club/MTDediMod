@@ -66,14 +66,21 @@ private:
     // Called from the engine tick callback.
     void Tick();
 
-    // Resolve MotorTownGameState. Returns nullptr if not yet available (early
-    // startup / map transition in progress). Result not cached because the
-    // pointer can be invalidated on map changes.
+    // Resolve MotorTownGameState. Caches the pointer across ticks and only
+    // re-resolves via FindFirstOf when the cached pointer is invalid (destroyed
+    // or null). This eliminates the O(UObject-count) scan in the hot path —
+    // FindFirstOf now runs only on startup and after map transitions.
     RC::Unreal::UObject* ResolveGameState();
 
     // Format an FGuid into the 32-char uppercase hex string matching
     // Lua's GuidToString output.
     static void FormatGuid(const void* guid_ptr, std::string& out);
+
+    // Cached GameState pointer — avoids repeated FindFirstOf scans.
+    RC::Unreal::UObject* m_game_state = nullptr;
+
+    // Cached PlayerArray FProperty on the GameState class (stable across instances).
+    RC::Unreal::FProperty* m_player_array_prop = nullptr;
 
     std::atomic<bool> m_started{false};
     bool m_tick_hook_registered = false;
