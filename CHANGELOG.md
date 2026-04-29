@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.40.0-rc6] — 2026-04-29
+
+#### Added
+- `CreateEventWithoutOwner` — new function that creates events with no owner; first player to join is auto-assigned as owner via `ServerJoinEvent` post-hook.
+- `ServerLeaveEvent` post-hook — clears owner back to empty when the last player leaves.
+
+#### Changed
+- `HandleCreateNewEvent` branches on whether `OwnerCharacterId` is provided, routing to `CreateEventWithoutOwner` or `CreateNewEvent`.
+- `CreateNewEvent` and `CreateEventWithoutOwner` now initialize both `RaceSetup` and `CaptureTheFlagSetup` in the event struct, and branch on `EventType` (1=Race, 2=CTF) to populate the correct setup.
+- Fixed waypoint `Location` field not persisting — FTransform struct expects `Translation`, not `Location`.
+
 ### [server/v0.40.0-rc5] — 2026-04-29
 
 #### Changed
@@ -339,6 +350,27 @@ Re-release for test container deployment (no server-side code changes since rc5)
 ---
 
 ## Client
+
+### [client/v0.3.0] — 2026-04-29
+
+#### Added
+- `/spawn_vehicle2` (`/spv2`) command — spawns saved vehicles via native `ServerSpawnVehicle` RPC. Requires VehicleKey (re-save old configs with `/save_vehicle` to populate it).
+- `BuildSpawnParams` and `GetVehicleKeyFromAssetPath` exports in VehicleSaveSpawn module.
+- Client CI release pipeline (`nix-client-release.yml`) — automated build and GitHub release on `client/v*` tags.
+
+#### Changed
+- Removed SatNav PoC (`/satnav`, `/nav` commands, `Ctrl+Shift+N` keybind) — deleted `SatNav.lua`.
+- RP tag detection now matches `[R1]`, `[R*]`, etc. in addition to `[RP]` (RPRestrictions, RoadsideServiceFilter).
+- Vehicle serialization uses counter-based indexing instead of `table.insert` for performance.
+- Simplified main.lua requires — removed unused `json`, `config`, `viewportManager` locals.
+
+#### Fixed
+- Wrong import in main.lua: `RoadsideServiceFilter` → `RPRestrictions`.
+- Asset path parsing strips `BlueprintGeneratedClass` prefix (not just `Class`).
+- `VehicleDecalLayerToTable` uses namespaced `types.ColorToTable` / `types.Vector2DToTable` / `types.RotatorToTable`.
+- `TableToItemInventory` handles nil input and nil `Slots` safely.
+- `VehiclePartToTable` guards `IsUObjectSafe` as optional global to avoid crash when unavailable.
+- BPModLoaderMod/BPML_GenericFunctions path in `package-client` uses Nix store interpolation instead of hardcoded `$HOME/Downloads`.
 
 ### [client/v0.2.12] — 2026-04-22
 

@@ -129,12 +129,12 @@ local function CreateNewEvent(event)
   local PC = GetPlayerControllerFromUniqueId(event.OwnerCharacterId.UniqueNetId)
 
   if eventSystem:IsValid() then
-    -- Add a new event without any TArray
     local guid = StringToGuid(event.EventGuid)
+    local eventType = event.EventType or 1
     local Event = {
       EventName = event.EventName,
       EventGuid = guid,
-      EventType = event.EventType,
+      EventType = eventType,
       OwnerCharacterId = {
         CharacterGuid = StringToGuid(event.OwnerCharacterId.CharacterGuid),
         UniqueNetId = event.OwnerCharacterId.UniqueNetId
@@ -142,13 +142,18 @@ local function CreateNewEvent(event)
       Players = {},
       bInCountdown = false,
       RaceSetup = {
-        NumLaps = event.RaceSetup.NumLaps,
+        NumLaps = 0,
         EngineKeys = {},
         VehicleKeys = {},
         Route = {
           RouteName = "",
           Waypoints = {}
         }
+      },
+      CaptureTheFlagSetup = {
+        ScoreToWin = 0,
+        Route = {},
+        Slowness = 0
       },
       State = 1
     }
@@ -158,32 +163,117 @@ local function CreateNewEvent(event)
       eventSystem.Net_Events[#eventSystem.Net_Events + 1] = Event
     end
 
-    eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.Route.RouteName = event.RaceSetup.Route.RouteName
+    local last = #eventSystem.Net_Events
 
-    -- Add back TArray individually
-    eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.Route.Waypoints:Empty()
-    for index, value in ipairs(event.RaceSetup.Route.Waypoints) do
-      eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.Route.Waypoints[index] = value
+    if eventType == 1 then
+      event.RaceSetup = event.RaceSetup or {}
+      eventSystem.Net_Events[last].RaceSetup.Route.RouteName = event.RaceSetup.Route and event.RaceSetup.Route.RouteName or ""
+
+      eventSystem.Net_Events[last].RaceSetup.Route.Waypoints:Empty()
+      for index, value in ipairs(event.RaceSetup.Route and event.RaceSetup.Route.Waypoints or {}) do
+        eventSystem.Net_Events[last].RaceSetup.Route.Waypoints[index] = value
+      end
+
+      eventSystem.Net_Events[last].RaceSetup.EngineKeys:Empty()
+      for index, value in ipairs(event.RaceSetup.EngineKeys or {}) do
+        eventSystem.Net_Events[last].RaceSetup.EngineKeys[index] = FName(value)
+      end
+
+      eventSystem.Net_Events[last].RaceSetup.VehicleKeys:Empty()
+      for index, value in ipairs(event.RaceSetup.VehicleKeys or {}) do
+        eventSystem.Net_Events[last].RaceSetup.VehicleKeys[index] = FName(value)
+      end
+
+      eventSystem.Net_Events[last].RaceSetup.NumLaps = event.RaceSetup.NumLaps or 0
+      if PC:IsValid() then
+        ExecuteInGameThread(function()
+          PC:ServerSetEventRaceSetup(guid, eventSystem.Net_Events[last].RaceSetup)
+        end)
+      end
+    elseif eventType == 2 then
+      event.CaptureTheFlagSetup = event.CaptureTheFlagSetup or {}
+      eventSystem.Net_Events[last].CaptureTheFlagSetup.ScoreToWin = event.CaptureTheFlagSetup.ScoreToWin or 0
+      eventSystem.Net_Events[last].CaptureTheFlagSetup.Slowness = event.CaptureTheFlagSetup.Slowness or 0
+      if PC:IsValid() then
+        ExecuteInGameThread(function()
+          PC:ServerSetEventCaptureFlagSetup(guid, eventSystem.Net_Events[last].CaptureTheFlagSetup)
+        end)
+      end
     end
 
-    eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.EngineKeys:Empty()
-    for index, value in ipairs(event.RaceSetup.EngineKeys) do
-      eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.EngineKeys[index] = FName(value)
+    return true, GuidToString(eventSystem.Net_Events[last].EventGuid)
+  end
+  return false, nil
+end
+
+---@param event table
+---@return boolean status
+---@return string? guid
+local function CreateEventWithoutOwner(event)
+  local eventSystem = GetEventSystem()
+
+  if eventSystem:IsValid() then
+    local guid = StringToGuid(event.EventGuid)
+    local eventType = event.EventType or 1
+    local Event = {
+      EventName = event.EventName,
+      EventGuid = guid,
+      EventType = eventType,
+      OwnerCharacterId = {
+        CharacterGuid = StringToGuid(nil),
+        UniqueNetId = ""
+      },
+      Players = {},
+      bInCountdown = false,
+      RaceSetup = {
+        NumLaps = 0,
+        EngineKeys = {},
+        VehicleKeys = {},
+        Route = { RouteName = "", Waypoints = {} }
+      },
+      CaptureTheFlagSetup = {
+        ScoreToWin = 0,
+        Route = {},
+        Slowness = 0
+      },
+      State = 1
+    }
+
+    eventSystem.Net_Events[#eventSystem.Net_Events + 1] = Event
+
+    local last = #eventSystem.Net_Events
+
+    if eventType == 1 then
+      event.RaceSetup = event.RaceSetup or {}
+      eventSystem.Net_Events[last].RaceSetup.Route.RouteName = event.RaceSetup.Route and event.RaceSetup.Route.RouteName or ""
+
+      eventSystem.Net_Events[last].RaceSetup.Route.Waypoints:Empty()
+      for index, value in ipairs(event.RaceSetup.Route and event.RaceSetup.Route.Waypoints or {}) do
+        eventSystem.Net_Events[last].RaceSetup.Route.Waypoints[index] = {
+          Translation = value.Location or value.Translation,
+          Rotation = value.Rotation,
+          Scale3D = value.Scale3D
+        }
+      end
+
+      eventSystem.Net_Events[last].RaceSetup.EngineKeys:Empty()
+      for index, value in ipairs(event.RaceSetup.EngineKeys or {}) do
+        eventSystem.Net_Events[last].RaceSetup.EngineKeys[index] = FName(value)
+      end
+
+      eventSystem.Net_Events[last].RaceSetup.VehicleKeys:Empty()
+      for index, value in ipairs(event.RaceSetup.VehicleKeys or {}) do
+        eventSystem.Net_Events[last].RaceSetup.VehicleKeys[index] = FName(value)
+      end
+
+      eventSystem.Net_Events[last].RaceSetup.NumLaps = event.RaceSetup.NumLaps or 0
+    elseif eventType == 2 then
+      event.CaptureTheFlagSetup = event.CaptureTheFlagSetup or {}
+      eventSystem.Net_Events[last].CaptureTheFlagSetup.ScoreToWin = event.CaptureTheFlagSetup.ScoreToWin or 0
+      eventSystem.Net_Events[last].CaptureTheFlagSetup.Slowness = event.CaptureTheFlagSetup.Slowness or 0
     end
 
-    eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.VehicleKeys:Empty()
-    for index, value in ipairs(event.RaceSetup.VehicleKeys) do
-      eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.VehicleKeys[index] = FName(value)
-    end
-
-    eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup.NumLaps = event.RaceSetup.NumLaps
-    if PC:IsValid() then
-      ExecuteInGameThread(function()
-        PC:ServerSetEventRaceSetup(guid, eventSystem.Net_Events[#eventSystem.Net_Events].RaceSetup)
-      end)
-    end
-
-    return true, GuidToString(eventSystem.Net_Events[#eventSystem.Net_Events].EventGuid)
+    return true, GuidToString(eventSystem.Net_Events[last].EventGuid)
   end
   return false, nil
 end
@@ -409,6 +499,29 @@ RegisterHook(
     LogOutput("DEBUG", "serverJoinEvent: %s", json.stringify(data))
 
     EnqueueWebhookEvent("ServerJoinEvent", data)
+  end,
+  function(PC, eventGuid)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
+    local guid = GuidToString(eventGuid:get())
+    local eventSystem = GetEventSystem()
+    if not eventSystem:IsValid() then return end
+
+    for i = 1, #eventSystem.Net_Events do
+      local event = eventSystem.Net_Events[i]
+      if GuidToString(event.EventGuid) == guid then
+        if event.OwnerCharacterId.UniqueNetId:ToString() == "" then
+          local uniqueId = GetPlayerUniqueId(playerController)
+          local characterGuid = GetPlayerGuid(playerController)
+          if uniqueId and characterGuid then
+            event.OwnerCharacterId.UniqueNetId = uniqueId
+            event.OwnerCharacterId.CharacterGuid = StringToGuid(characterGuid)
+            LogOutput("INFO", "Event %s owner set to %s (first joiner)", guid, uniqueId)
+          end
+        end
+        break
+      end
+    end
   end
 )
 
@@ -428,6 +541,23 @@ RegisterHook(
 
     LogOutput("DEBUG", "serverLeaveEvent: %s", json.stringify(data))
     EnqueueWebhookEvent("ServerLeaveEvent", data)
+  end,
+  function(PC, eventGuid)
+    local guid = GuidToString(eventGuid:get())
+    local eventSystem = GetEventSystem()
+    if not eventSystem:IsValid() then return end
+
+    for i = 1, #eventSystem.Net_Events do
+      local event = eventSystem.Net_Events[i]
+      if GuidToString(event.EventGuid) == guid then
+        if #event.Players == 0 and event.OwnerCharacterId.UniqueNetId:ToString() ~= "" then
+          event.OwnerCharacterId.UniqueNetId = ""
+          event.OwnerCharacterId.CharacterGuid = StringToGuid(nil)
+          LogOutput("INFO", "Event %s owner cleared (last player left)", guid)
+        end
+        break
+      end
+    end
   end
 )
 
@@ -468,6 +598,15 @@ local function HandleCreateNewEvent(session)
   local content = json.parse(session.content)
 
   if content then
+    if not content.OwnerCharacterId or not content.OwnerCharacterId.UniqueNetId then
+      local status, guid = CreateEventWithoutOwner(content)
+      if status then
+        LogOutput("DEBUG", "Created new event %s (no owner)", guid)
+        return { data = GetEvents(guid) }, nil, 201
+      end
+      return nil, nil, 400
+    end
+
     ---@cast content EventTable
     local status, guid = CreateNewEvent(content)
     if status then
