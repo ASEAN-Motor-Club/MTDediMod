@@ -14,6 +14,7 @@
 #include <boost/json.hpp> 
 #include "EventManager.h"
 #include "TickProfiler.h"
+#include "PropertyCache.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -197,12 +198,16 @@ private:
             return std::nullopt;
         }
 
-        auto PlayerState = PlayerController->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
+        auto* PlayerStateProp = PropertyCache::GetObjectProp(PlayerController, STR("PlayerState"));
+        if (!PlayerStateProp) return std::nullopt;
+        auto PlayerState = PlayerStateProp->ContainerPtrToValuePtr<UObject*>(PlayerController);
         if (PlayerState == nullptr || *PlayerState == nullptr) {
             return std::nullopt;
         }
 
-        const auto& CharacterGuid = (*PlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
+        auto* CharacterGuidProp = PropertyCache::GetObjectProp(*PlayerState, STR("CharacterGuid"));
+        if (!CharacterGuidProp) return std::nullopt;
+        const auto& CharacterGuid = CharacterGuidProp->ContainerPtrToValuePtr<FGuid>(*PlayerState);
         if (CharacterGuid == nullptr) {
             return std::nullopt;
         }

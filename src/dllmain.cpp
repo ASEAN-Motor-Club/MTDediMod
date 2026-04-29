@@ -21,6 +21,7 @@
 #include "HookManager.h"
 #include "LocationSampler.h"
 #include "TickProfiler.h"
+#include "PropertyCache.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -64,6 +65,7 @@ static std::string FormatGuid(const FGuid* guid)
 auto MotorTownMods::on_unreal_init() -> void
 {
 	HookManager::UnregisterAllHooks(); // Prevent duplicate hooks on hot-reload if destructor wasn't fully processed
+	PropertyCache::Clear(); // Drop stale FProperty* pointers from previous session
 
 	// Init API server
 	auto server = Webserver::Get();
@@ -103,7 +105,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 			if (!FunctionBeingExecuted) return false;
 
-			auto CargosProperty = FunctionBeingExecuted->GetPropertyByName(STR("Cargos"));
+			auto CargosProperty = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("Cargos"));
 			const auto& cargos = CargosProperty->ContainerPtrToValuePtr<TArray<UObject*>>(Context.TheStack.Locals());
 			if (cargos == nullptr) {
 				return false;
@@ -112,21 +114,21 @@ auto MotorTownMods::on_unreal_init() -> void
 				if (cargo == nullptr) {
 					continue;
 				}
-				const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
-				const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
-				const auto& Weight = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Weight"));
-				const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
-				const auto& DeliveryId = cargo->GetValuePtrByPropertyNameInChain<int32>(STR("Net_DeliveryId"));
-				const auto& DestinationLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
-				const auto& SenderAbsoluteLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_SenderAbsoluteLocation"));
-				auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
+				const auto& CargoKey = PropertyCache::GetObjectValue<FName>(cargo, STR("Net_CargoKey"));
+				const auto& Damage = PropertyCache::GetObjectValue<float>(cargo, STR("Net_Damage"));
+				const auto& Weight = PropertyCache::GetObjectValue<float>(cargo, STR("Net_Weight"));
+				const auto& TimeLeftSeconds = PropertyCache::GetObjectValue<float>(cargo, STR("Net_TimeLeftSeconds"));
+				const auto& DeliveryId = PropertyCache::GetObjectValue<int32>(cargo, STR("Net_DeliveryId"));
+				const auto& DestinationLocation = PropertyCache::GetObjectValue<FVector>(cargo, STR("Net_DestinationLocation"));
+				const auto& SenderAbsoluteLocation = PropertyCache::GetObjectValue<FVector>(cargo, STR("Net_SenderAbsoluteLocation"));
+				auto PaymentProperty = static_cast<FStructProperty*>(PropertyCache::GetObjectProp(cargo, STR("Net_Payment")));
 				if (!PaymentProperty) continue; // Safety check
 
 				auto TopLevelPayment = PaymentProperty->GetStruct();
 				auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
 				if (Payment == nullptr) continue; // Safety check
 
-				auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
+				auto BaseValueProperty = PropertyCache::GetStructField(TopLevelPayment, STR("BaseValue"));
 				if (!BaseValueProperty) continue; // Safety check
 
 				auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
@@ -184,7 +186,7 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			// --- Extract Cargo (AMTCargo) from function params ---
 			auto CargoProp = static_cast<FObjectProperty*>(
-				FunctionBeingExecuted->GetPropertyByName(STR("Cargo")));
+				PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("Cargo")));
 			if (!CargoProp) {
 				Output::send<LogLevel::Warning>(STR("ServerPickupCargo: Cargo property not found\n"));
 				return false;
@@ -198,11 +200,11 @@ auto MotorTownMods::on_unreal_init() -> void
 			auto cargo = *CargoPtr;
 
 			// --- Extract cargo properties ---
-			const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
-			const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
-			const auto& Weight = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Weight"));
-			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
-			const auto& DeliveryId = cargo->GetValuePtrByPropertyNameInChain<int32>(STR("Net_DeliveryId"));
+			const auto& CargoKey = PropertyCache::GetObjectValue<FName>(cargo, STR("Net_CargoKey"));
+			const auto& Damage = PropertyCache::GetObjectValue<float>(cargo, STR("Net_Damage"));
+			const auto& Weight = PropertyCache::GetObjectValue<float>(cargo, STR("Net_Weight"));
+			const auto& TimeLeftSeconds = PropertyCache::GetObjectValue<float>(cargo, STR("Net_TimeLeftSeconds"));
+			const auto& DeliveryId = PropertyCache::GetObjectValue<int32>(cargo, STR("Net_DeliveryId"));
 
 			if (!CargoKey) {
 				Output::send<LogLevel::Warning>(STR("ServerPickupCargo: CargoKey is null\n"));
@@ -217,12 +219,12 @@ auto MotorTownMods::on_unreal_init() -> void
 			if (TimeLeftSeconds) cargo_obj["Net_TimeLeftSeconds"] = *TimeLeftSeconds;
 
 			// --- Extract Payment (optional) ---
-			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
+			auto PaymentProperty = static_cast<FStructProperty*>(PropertyCache::GetObjectProp(cargo, STR("Net_Payment")));
 			if (PaymentProperty) {
 				auto TopLevelPayment = PaymentProperty->GetStruct();
 				auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
 				if (Payment && TopLevelPayment) {
-					auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
+					auto BaseValueProperty = PropertyCache::GetStructField(TopLevelPayment, STR("BaseValue"));
 					if (BaseValueProperty) {
 						auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
 						if (BasePayment) {
@@ -233,7 +235,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			}
 
 			// --- Extract previous owner info (optional) ---
-			auto OwnerNameProp = cargo->GetPropertyByNameInChain(STR("Net_OwnerName"));
+			auto OwnerNameProp = PropertyCache::GetObjectProp(cargo, STR("Net_OwnerName"));
 			if (OwnerNameProp) {
 				const auto& OwnerName = OwnerNameProp->ContainerPtrToValuePtr<FString>(cargo);
 				if (OwnerName && OwnerName->GetCharArray().GetData()) {
@@ -243,13 +245,13 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			// Server_LastMovementOwnerPC -> PlayerState -> CharacterGuid (optional)
 			auto LastOwnerPCProp = static_cast<FObjectProperty*>(
-				cargo->GetPropertyByNameInChain(STR("Server_LastMovementOwnerPC")));
+				PropertyCache::GetObjectProp(cargo, STR("Server_LastMovementOwnerPC")));
 			if (LastOwnerPCProp) {
 				const auto& LastOwnerPC = LastOwnerPCProp->ContainerPtrToValuePtr<UObject*>(cargo);
 				if (LastOwnerPC && *LastOwnerPC) {
-					auto PrevPlayerState = (*LastOwnerPC)->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
+					const auto& PrevPlayerState = PropertyCache::GetObjectValue<UObject*>(*LastOwnerPC, STR("PlayerState"));
 					if (PrevPlayerState && *PrevPlayerState) {
-						const auto& PrevCharGuid = (*PrevPlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
+						const auto& PrevCharGuid = PropertyCache::GetObjectValue<FGuid>(*PrevPlayerState, STR("CharacterGuid"));
 						if (PrevCharGuid) {
 							cargo_obj["PreviousOwnerCharacterGuid"] = json::string(std::format(
 								"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
@@ -281,7 +283,7 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			// --- Extract Cargo (AMTCargo) from function params ---
 			auto CargoProp = static_cast<FObjectProperty*>(
-				FunctionBeingExecuted->GetPropertyByNameInChain(STR("Cargo")));
+				PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("Cargo")));
 			if (!CargoProp) {
 				Output::send<LogLevel::Warning>(STR("ServerDespawnCargo: Cargo property not found\n"));
 				return false;
@@ -295,21 +297,21 @@ auto MotorTownMods::on_unreal_init() -> void
 			auto cargo = *CargoPtr;
 
 			// --- Extract cargo properties ---
-			const auto& CargoKey = cargo->GetValuePtrByPropertyNameInChain<FName>(STR("Net_CargoKey"));
-			const auto& Damage = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Damage"));
-			const auto& Weight = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_Weight"));
-			const auto& TimeLeftSeconds = cargo->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLeftSeconds"));
-			const auto& DeliveryId = cargo->GetValuePtrByPropertyNameInChain<int32>(STR("Net_DeliveryId"));
-			const auto& DestinationLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
-			const auto& SenderAbsoluteLocation = cargo->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_SenderAbsoluteLocation"));
-			auto PaymentProperty = static_cast<FStructProperty*>(cargo->GetPropertyByNameInChain(STR("Net_Payment")));
+			const auto& CargoKey = PropertyCache::GetObjectValue<FName>(cargo, STR("Net_CargoKey"));
+			const auto& Damage = PropertyCache::GetObjectValue<float>(cargo, STR("Net_Damage"));
+			const auto& Weight = PropertyCache::GetObjectValue<float>(cargo, STR("Net_Weight"));
+			const auto& TimeLeftSeconds = PropertyCache::GetObjectValue<float>(cargo, STR("Net_TimeLeftSeconds"));
+			const auto& DeliveryId = PropertyCache::GetObjectValue<int32>(cargo, STR("Net_DeliveryId"));
+			const auto& DestinationLocation = PropertyCache::GetObjectValue<FVector>(cargo, STR("Net_DestinationLocation"));
+			const auto& SenderAbsoluteLocation = PropertyCache::GetObjectValue<FVector>(cargo, STR("Net_SenderAbsoluteLocation"));
+			auto PaymentProperty = static_cast<FStructProperty*>(PropertyCache::GetObjectProp(cargo, STR("Net_Payment")));
 			if (!PaymentProperty) return false;
 
 			auto TopLevelPayment = PaymentProperty->GetStruct();
 			auto Payment = PaymentProperty->ContainerPtrToValuePtr<void>(cargo);
 			if (Payment == nullptr) return false;
 
-			auto BaseValueProperty = TopLevelPayment->GetPropertyByNameInChain(STR("BaseValue"));
+			auto BaseValueProperty = PropertyCache::GetStructField(TopLevelPayment, STR("BaseValue"));
 			if (!BaseValueProperty) return false;
 
 			auto BasePayment = BaseValueProperty->ContainerPtrToValuePtr<int64>(Payment);
@@ -360,7 +362,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			if (!FunctionBeingExecuted) return false;
 
 			// --- Extract AbsoluteLocation (FVector) ---
-			auto LocationProp = FunctionBeingExecuted->GetPropertyByName(STR("AbsoluteLocation"));
+			auto LocationProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("AbsoluteLocation"));
 			if (!LocationProp) {
 				Output::send<LogLevel::Warning>(STR("ServerTeleportCharacter: AbsoluteLocation property not found\n"));
 				return false;
@@ -375,14 +377,14 @@ auto MotorTownMods::on_unreal_init() -> void
 			event_data["AbsoluteLocation"] = location_obj;
 
 			// --- Extract bCharge (bool) ---
-			auto bChargeProp = FunctionBeingExecuted->GetPropertyByName(STR("bCharge"));
+			auto bChargeProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("bCharge"));
 			if (bChargeProp) {
 				auto bCharge = bChargeProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
 				if (bCharge) event_data["bCharge"] = *bCharge;
 			}
 
 			// --- Extract bIsRespawn (bool) ---
-			auto bIsRespawnProp = FunctionBeingExecuted->GetPropertyByName(STR("bIsRespawn"));
+			auto bIsRespawnProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("bIsRespawn"));
 			if (bIsRespawnProp) {
 				auto bIsRespawn = bIsRespawnProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
 				if (bIsRespawn) event_data["bIsRespawn"] = *bIsRespawn;
@@ -402,7 +404,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			if (!FunctionBeingExecuted) return false;
 
 			// --- Extract AbsoluteLocation (FVector) ---
-			auto LocationProp = FunctionBeingExecuted->GetPropertyByName(STR("AbsoluteLocation"));
+			auto LocationProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("AbsoluteLocation"));
 			if (!LocationProp) {
 				Output::send<LogLevel::Warning>(STR("ServerTeleportVehicle: AbsoluteLocation property not found\n"));
 				return false;
@@ -430,7 +432,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			if (!FunctionBeingExecuted) return false;
 
 			// --- Extract AbsoluteLocation (FVector) ---
-			auto LocationProp = FunctionBeingExecuted->GetPropertyByName(STR("AbsoluteLocation"));
+			auto LocationProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("AbsoluteLocation"));
 			if (!LocationProp) {
 				Output::send<LogLevel::Warning>(STR("ServerRespawnCharacter: AbsoluteLocation property not found\n"));
 				return false;
@@ -455,7 +457,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 			if (!FunctionBeingExecuted) return false;
 
-			auto ContractProperty = static_cast<FStructProperty*>(FunctionBeingExecuted->GetPropertyByName(STR("Contract")));
+			auto ContractProperty = static_cast<FStructProperty*>(PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("Contract")));
 			if (!ContractProperty) {
 				Output::send<LogLevel::Verbose>(STR("ServerSignContract: Contract property not found\n"));
 				return false;
@@ -478,7 +480,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			bool has_amount = false;
 			bool has_payment = false;
 
-			const auto ItemProp = ContractStruct->GetPropertyByNameInChain(STR("Item"));
+			const auto ItemProp = PropertyCache::GetStructField(ContractStruct, STR("Item"));
 			if (ItemProp) {
 				const auto& Item = ItemProp->ContainerPtrToValuePtr<FString>(Contract);
 				if (Item && Item->GetCharArray().GetData()) {
@@ -488,7 +490,7 @@ auto MotorTownMods::on_unreal_init() -> void
 				}
 			}
 
-			const auto AmountProp = ContractStruct->GetPropertyByNameInChain(STR("Amount"));
+			const auto AmountProp = PropertyCache::GetStructField(ContractStruct, STR("Amount"));
 			if (AmountProp) {
 				const auto& Amount = AmountProp->ContainerPtrToValuePtr<float>(Contract);
 				if (Amount) {
@@ -498,12 +500,12 @@ auto MotorTownMods::on_unreal_init() -> void
 				}
 			}
 
-			const auto CompletionPaymentProp = static_cast<FStructProperty*>(ContractStruct->GetPropertyByNameInChain(STR("CompletionPayment")));
+			const auto CompletionPaymentProp = static_cast<FStructProperty*>(PropertyCache::GetStructField(ContractStruct, STR("CompletionPayment")));
 			if (CompletionPaymentProp) {
 				const auto& CompletionPayment = CompletionPaymentProp->ContainerPtrToValuePtr<void>(Contract);
 				const auto& CompletionPaymentStruct = CompletionPaymentProp->GetStruct();
 				if (CompletionPayment && CompletionPaymentStruct) {
-					const auto BaseValueProp = CompletionPaymentStruct->GetPropertyByNameInChain(STR("BaseValue"));
+					const auto BaseValueProp = PropertyCache::GetStructField(CompletionPaymentStruct, STR("BaseValue"));
 					if (BaseValueProp) {
 						const auto& BaseValue = BaseValueProp->ContainerPtrToValuePtr<int64>(CompletionPayment);
 						if (BaseValue) {
@@ -517,12 +519,12 @@ auto MotorTownMods::on_unreal_init() -> void
 				}
 			}
 
-			const auto CostProp = static_cast<FStructProperty*>(ContractStruct->GetPropertyByNameInChain(STR("Cost")));
+			const auto CostProp = static_cast<FStructProperty*>(PropertyCache::GetStructField(ContractStruct, STR("Cost")));
 			if (CostProp) {
 				const auto& Cost = CostProp->ContainerPtrToValuePtr<void>(Contract);
 				const auto& CostStruct = CostProp->GetStruct();
 				if (Cost && CostStruct) {
-					const auto BaseValueProp = CostStruct->GetPropertyByNameInChain(STR("BaseValue"));
+					const auto BaseValueProp = PropertyCache::GetStructField(CostStruct, STR("BaseValue"));
 					if (BaseValueProp) {
 						const auto& BaseValue = BaseValueProp->ContainerPtrToValuePtr<int64>(Cost);
 						if (BaseValue) {
@@ -540,9 +542,9 @@ auto MotorTownMods::on_unreal_init() -> void
 			const auto& PlayerController = Context.Context;
 			if (!PlayerController) return false;
 
-			auto CompaniesProperty = static_cast<FArrayProperty*>(PlayerController->GetPropertyByNameInChain(STR("Companies")));
+			auto CompaniesProperty = static_cast<FArrayProperty*>(PropertyCache::GetObjectProp(PlayerController, STR("Companies")));
 			if (!CompaniesProperty) {
-				CompaniesProperty = static_cast<FArrayProperty*>(PlayerController->GetPropertyByNameInChain(STR("Net_CompaniesBase")));
+				CompaniesProperty = static_cast<FArrayProperty*>(PropertyCache::GetObjectProp(PlayerController, STR("Net_CompaniesBase")));
 			}
 			if (!CompaniesProperty) return true;
 
@@ -562,7 +564,7 @@ auto MotorTownMods::on_unreal_init() -> void
 				const auto& Company = CompaniesInnerProp->ContainerPtrToValuePtr<void>(elem_ptr);
 				if (!Company) continue;
 
-				const auto CipArrayProp = static_cast<FArrayProperty*>(CompanyStruct->GetPropertyByNameInChain(STR("ContractsInProgress")));
+				const auto CipArrayProp = static_cast<FArrayProperty*>(PropertyCache::GetStructField(CompanyStruct, STR("ContractsInProgress")));
 				if (!CipArrayProp) continue;
 				const auto& CipArray = CipArrayProp->ContainerPtrToValuePtr<FScriptArray>(Company);
 				if (!CipArray || !CipArray->GetData()) continue;
@@ -579,7 +581,7 @@ auto MotorTownMods::on_unreal_init() -> void
 					auto ContractInProgress = CipInnerProp->ContainerPtrToValuePtr<void>(cip_ptr);
 					if (!ContractInProgress) continue;
 
-					const auto CipContractProp = static_cast<FStructProperty*>(CipStruct->GetPropertyByNameInChain(STR("Contract")));
+					const auto CipContractProp = static_cast<FStructProperty*>(PropertyCache::GetStructField(CipStruct, STR("Contract")));
 					if (!CipContractProp) continue;
 					const auto& CipContract = CipContractProp->ContainerPtrToValuePtr<void>(ContractInProgress);
 					if (!CipContract) continue;
@@ -590,7 +592,7 @@ auto MotorTownMods::on_unreal_init() -> void
 					bool amount_match = false;
 					bool payment_match = false;
 
-					const auto CipItemProp = CipContractStruct->GetPropertyByNameInChain(STR("Item"));
+					const auto CipItemProp = PropertyCache::GetStructField(CipContractStruct, STR("Item"));
 					if (CipItemProp && has_item) {
 						const auto& CipItem = CipItemProp->ContainerPtrToValuePtr<FString>(CipContract);
 						if (CipItem && CipItem->GetCharArray().GetData()) {
@@ -598,7 +600,7 @@ auto MotorTownMods::on_unreal_init() -> void
 						}
 					}
 
-					const auto CipAmountProp = CipContractStruct->GetPropertyByNameInChain(STR("Amount"));
+					const auto CipAmountProp = PropertyCache::GetStructField(CipContractStruct, STR("Amount"));
 					if (CipAmountProp && has_amount) {
 						const auto& CipAmount = CipAmountProp->ContainerPtrToValuePtr<float>(CipContract);
 						if (CipAmount) {
@@ -606,12 +608,12 @@ auto MotorTownMods::on_unreal_init() -> void
 						}
 					}
 
-					const auto CipCompletionPaymentProp = static_cast<FStructProperty*>(CipContractStruct->GetPropertyByNameInChain(STR("CompletionPayment")));
+					const auto CipCompletionPaymentProp = static_cast<FStructProperty*>(PropertyCache::GetStructField(CipContractStruct, STR("CompletionPayment")));
 					if (CipCompletionPaymentProp && has_payment) {
 						const auto& CipCompletionPayment = CipCompletionPaymentProp->ContainerPtrToValuePtr<void>(CipContract);
 						const auto& CipCompletionPaymentStruct = CipCompletionPaymentProp->GetStruct();
 						if (CipCompletionPayment && CipCompletionPaymentStruct) {
-							const auto CipBaseValueProp = CipCompletionPaymentStruct->GetPropertyByNameInChain(STR("BaseValue"));
+							const auto CipBaseValueProp = PropertyCache::GetStructField(CipCompletionPaymentStruct, STR("BaseValue"));
 							if (CipBaseValueProp) {
 								const auto& CipBaseValue = CipBaseValueProp->ContainerPtrToValuePtr<int64>(CipCompletionPayment);
 								if (CipBaseValue) {
@@ -623,7 +625,7 @@ auto MotorTownMods::on_unreal_init() -> void
 
 					if (!item_match || !amount_match || !payment_match) continue;
 
-					const auto GuidProp = CipStruct->GetPropertyByNameInChain(STR("Guid"));
+					const auto GuidProp = PropertyCache::GetStructField(CipStruct, STR("Guid"));
 					if (!GuidProp) continue;
 					const auto& Guid = GuidProp->ContainerPtrToValuePtr<FGuid>(ContractInProgress);
 					if (!Guid) continue;
@@ -655,7 +657,7 @@ auto MotorTownMods::on_unreal_init() -> void
 		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
 			// Lightweight: extract ContractGuid only, no company traversal
 			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
-			auto ContractGuidProperty = FunctionBeingExecuted->GetPropertyByName(STR("ContractGuid"));
+			auto ContractGuidProperty = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("ContractGuid"));
 			if (!ContractGuidProperty) return false;
 
 			const auto& ContractGuid = ContractGuidProperty->ContainerPtrToValuePtr<FGuid>(Context.TheStack.Locals());
@@ -680,7 +682,7 @@ auto MotorTownMods::on_unreal_init() -> void
 		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
 			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction() ? Context.TheStack.CurrentNativeFunction() : *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 
-			auto PassengerProperty = static_cast<FObjectProperty*>(FunctionBeingExecuted->GetPropertyByNameInChain(STR("PassengerComponent")));
+			auto PassengerProperty = static_cast<FObjectProperty*>(PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("PassengerComponent")));
 			if (!PassengerProperty) {
 				Output::send<LogLevel::Warning>(STR("ServerPassengerArrived: PassengerComponent property not found\n"));
 				return false;
@@ -689,17 +691,17 @@ auto MotorTownMods::on_unreal_init() -> void
 			const auto& Passenger = PassengerProperty->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
 			if (Passenger == nullptr) return false;
 			Output::send<LogLevel::Verbose>(STR("Passenger found\n"));
-			const auto& Payment = (*Passenger)->GetValuePtrByPropertyNameInChain<int64>(STR("Net_Payment"));
-			const auto& PassengerType = (*Passenger)->GetValuePtrByPropertyNameInChain<uint8>(STR("Net_PassengerType"));
-			const auto& StartLocation = (*Passenger)->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_StartLocation"));
-			const auto& DestinationLocation = (*Passenger)->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationLocation"));
-			const auto& Distance = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_Distance"));
-			const auto& PassengerFlags = (*Passenger)->GetValuePtrByPropertyNameInChain<int32>(STR("Net_PassengerFlags"));
-			const auto& LCComfortSatisfaction = (*Passenger)->GetValuePtrByPropertyNameInChain<int32>(STR("Net_LCComfortSatisfaction"));
-			const auto& TimeLimitPoint = (*Passenger)->GetValuePtrByPropertyNameInChain<int32>(STR("Net_TimeLimitPoint"));
-			const auto& TimeLimitToDestination = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLimitToDestination"));
-			const auto& TimeLimitToDestinationFromStart = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_TimeLimitToDestinationFromStart"));
-			const auto& SearchAndRescueRadiusRatio = (*Passenger)->GetValuePtrByPropertyNameInChain<float>(STR("Net_SearchAndRescueRadiusRatio"));
+			const auto& Payment = PropertyCache::GetObjectValue<int64>(*Passenger, STR("Net_Payment"));
+			const auto& PassengerType = PropertyCache::GetObjectValue<uint8>(*Passenger, STR("Net_PassengerType"));
+			const auto& StartLocation = PropertyCache::GetObjectValue<FVector>(*Passenger, STR("Net_StartLocation"));
+			const auto& DestinationLocation = PropertyCache::GetObjectValue<FVector>(*Passenger, STR("Net_DestinationLocation"));
+			const auto& Distance = PropertyCache::GetObjectValue<float>(*Passenger, STR("Net_Distance"));
+			const auto& PassengerFlags = PropertyCache::GetObjectValue<int32>(*Passenger, STR("Net_PassengerFlags"));
+			const auto& LCComfortSatisfaction = PropertyCache::GetObjectValue<int32>(*Passenger, STR("Net_LCComfortSatisfaction"));
+			const auto& TimeLimitPoint = PropertyCache::GetObjectValue<int32>(*Passenger, STR("Net_TimeLimitPoint"));
+			const auto& TimeLimitToDestination = PropertyCache::GetObjectValue<float>(*Passenger, STR("Net_TimeLimitToDestination"));
+			const auto& TimeLimitToDestinationFromStart = PropertyCache::GetObjectValue<float>(*Passenger, STR("Net_TimeLimitToDestinationFromStart"));
+			const auto& SearchAndRescueRadiusRatio = PropertyCache::GetObjectValue<float>(*Passenger, STR("Net_SearchAndRescueRadiusRatio"));
 
 			if (!Payment || !PassengerType || !Distance || !PassengerFlags || !LCComfortSatisfaction || !TimeLimitPoint || !TimeLimitToDestination || !TimeLimitToDestinationFromStart
 				|| !StartLocation || !DestinationLocation) {
@@ -744,7 +746,7 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			// --- Step 1: Get TowRequestComponent from function params ---
 			auto TowRequestComponentProp = static_cast<FObjectProperty*>(
-				FunctionBeingExecuted->GetPropertyByNameInChain(STR("TowRequestComponent")));
+				PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("TowRequestComponent")));
 			if (!TowRequestComponentProp) {
 				Output::send<LogLevel::Warning>(STR("ServerTowRequestArrived: TowRequestComponent property not found on function\n"));
 				return false;
@@ -764,10 +766,10 @@ auto MotorTownMods::on_unreal_init() -> void
 			Output::send<LogLevel::Verbose>(STR("ServerTowRequestArrived: got TowRequestComponent object\n"));
 
 			// --- Step 2-5: Extract direct properties from TowRequestComponent ---
-			const auto& Payment = (*TowRequestComponent)->GetValuePtrByPropertyNameInChain<int64>(STR("Net_Payment"));
-			const auto& StartLocation = (*TowRequestComponent)->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_StartLocation"));
-			const auto& DestLocation = (*TowRequestComponent)->GetValuePtrByPropertyNameInChain<FVector>(STR("Net_DestinationAbsoluteLocation"));
-			const auto& TowRequestFlags = (*TowRequestComponent)->GetValuePtrByPropertyNameInChain<int32>(STR("Net_TowRequestFlags"));
+			const auto& Payment = PropertyCache::GetObjectValue<int64>(*TowRequestComponent, STR("Net_Payment"));
+			const auto& StartLocation = PropertyCache::GetObjectValue<FVector>(*TowRequestComponent, STR("Net_StartLocation"));
+			const auto& DestLocation = PropertyCache::GetObjectValue<FVector>(*TowRequestComponent, STR("Net_DestinationAbsoluteLocation"));
+			const auto& TowRequestFlags = PropertyCache::GetObjectValue<int32>(*TowRequestComponent, STR("Net_TowRequestFlags"));
 
 			Output::send<LogLevel::Verbose>(STR("ServerTowRequestArrived: Payment={} StartLoc={} DestLoc={} Flags={}\n"),
 				Payment ? 1 : 0, StartLocation ? 1 : 0, DestLocation ? 1 : 0, TowRequestFlags ? 1 : 0);
@@ -804,7 +806,7 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			// --- Step 7: Extract Body Damage from Vehicle->Net_Parts ---
 			auto PartsProp = static_cast<FArrayProperty*>(
-				Vehicle->GetPropertyByNameInChain(STR("Net_Parts")));
+				PropertyCache::GetObjectProp(Vehicle, STR("Net_Parts")));
 			if (PartsProp) {
 				auto Parts = PartsProp->ContainerPtrToValuePtr<FScriptArray>(Vehicle);
 				if (Parts && Parts->GetData()) {
@@ -819,12 +821,12 @@ auto MotorTownMods::on_unreal_init() -> void
 								auto partContainer = PartsInnerProp->ContainerPtrToValuePtr<void>(partPtr);
 								if (!partContainer) continue;
 
-								auto SlotProp = PartsStruct->GetPropertyByNameInChain(STR("Slot"));
+								auto SlotProp = PropertyCache::GetStructField(PartsStruct, STR("Slot"));
 								if (!SlotProp) continue;
 								auto Slot = SlotProp->ContainerPtrToValuePtr<uint8>(partContainer);
 								if (!Slot || *Slot != 1) continue; // 1 = EMTVehiclePartSlot::Body
 
-								auto DamageProp = PartsStruct->GetPropertyByNameInChain(STR("Damage"));
+								auto DamageProp = PropertyCache::GetStructField(PartsStruct, STR("Damage"));
 								if (DamageProp) {
 									auto Damage = DamageProp->ContainerPtrToValuePtr<float>(partContainer);
 									if (Damage) {
@@ -860,7 +862,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			}
 
 			// --- Extract PatrolPointId ---
-			auto PatrolPointIdProp = FunctionBeingExecuted->GetPropertyByName(STR("PatrolPointId"));
+			auto PatrolPointIdProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("PatrolPointId"));
 			if (!PatrolPointIdProp) {
 				Output::send<LogLevel::Warning>(STR("ServerArrivedAtPolicePatrolPoint: PatrolPointId property not found\n"));
 				return false;
@@ -892,7 +894,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			}
 
 			// --- Extract bWarningOnly ---
-			auto bWarningOnlyProp = FunctionBeingExecuted->GetPropertyByName(STR("bWarningOnly"));
+			auto bWarningOnlyProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("bWarningOnly"));
 			if (!bWarningOnlyProp) {
 				Output::send<LogLevel::Warning>(STR("ServerSelectPolicePullOverPenaltyResponse: bWarningOnly property not found\n"));
 				return false;
@@ -908,35 +910,35 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			// --- Extract SuspectCharacter (AMTCharacter) ---
 			auto SuspectCharacterProp = static_cast<FObjectProperty*>(
-				FunctionBeingExecuted->GetPropertyByName(STR("SuspectCharacter")));
+				PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("SuspectCharacter")));
 			if (SuspectCharacterProp) {
 				const auto& SuspectCharPtr = SuspectCharacterProp->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
 				if (SuspectCharPtr && *SuspectCharPtr) {
 					auto SuspectChar = *SuspectCharPtr;
 					json::object suspect_obj;
 
-					auto ResidentKey = SuspectChar->GetValuePtrByPropertyNameInChain<FName>(STR("Net_ResidentKey"));
+					auto ResidentKey = PropertyCache::GetObjectValue<FName>(SuspectChar, STR("Net_ResidentKey"));
 					if (ResidentKey) {
 						suspect_obj["Net_ResidentKey"] = json::string(to_string(ResidentKey->ToString()));
 					}
 
 					auto PlayerStateProp = static_cast<FObjectProperty*>(
-						SuspectChar->GetPropertyByNameInChain(STR("Net_MTPlayerState")));
+						PropertyCache::GetObjectProp(SuspectChar, STR("Net_MTPlayerState")));
 					if (PlayerStateProp) {
 						const auto& PlayerStatePtr = PlayerStateProp->ContainerPtrToValuePtr<UObject*>(SuspectChar);
 						if (PlayerStatePtr && *PlayerStatePtr) {
-							auto CharGuid = (*PlayerStatePtr)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
+							auto CharGuid = PropertyCache::GetObjectValue<FGuid>(*PlayerStatePtr, STR("CharacterGuid"));
 							if (CharGuid) {
 								suspect_obj["CharacterGuid"] = json::string(FormatGuid(CharGuid));
 							}
-							auto PlayerName = (*PlayerStatePtr)->GetValuePtrByPropertyNameInChain<FString>(STR("Net_AccountNickname"));
+							auto PlayerName = PropertyCache::GetObjectValue<FString>(*PlayerStatePtr, STR("Net_AccountNickname"));
 							if (PlayerName && PlayerName->GetCharArray().GetData()) {
 								suspect_obj["AccountNickname"] = json::string(to_string(PlayerName->GetCharArray().GetData()));
 							}
 						}
 					}
 
-					auto CharFlags = SuspectChar->GetValuePtrByPropertyNameInChain<uint32>(STR("Net_CharacterFlags"));
+					auto CharFlags = PropertyCache::GetObjectValue<uint32>(SuspectChar, STR("Net_CharacterFlags"));
 					if (CharFlags) {
 						suspect_obj["Net_CharacterFlags"] = *CharFlags;
 					}
@@ -972,7 +974,7 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			// --- Extract Vehicle (AMTVehicle) from function params ---
 			auto VehicleProp = static_cast<FObjectProperty*>(
-				FunctionBeingExecuted->GetPropertyByName(STR("Vehicle")));
+				PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("Vehicle")));
 			if (!VehicleProp) {
 				Output::send<LogLevel::Warning>(STR("ServerEnterVehicle: Vehicle property not found\n"));
 				return false;
@@ -985,21 +987,21 @@ auto MotorTownMods::on_unreal_init() -> void
 			auto Vehicle = *VehiclePtr;
 
 			// --- Extract SeatType (uint8 enum) ---
-			auto SeatTypeProp = FunctionBeingExecuted->GetPropertyByName(STR("SeatType"));
+			auto SeatTypeProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("SeatType"));
 			if (SeatTypeProp) {
 				auto SeatType = SeatTypeProp->ContainerPtrToValuePtr<uint8>(Context.TheStack.Locals());
 				if (SeatType) event_data["SeatType"] = *SeatType;
 			}
 
 			// --- Extract SeatIndex (int32) ---
-			auto SeatIndexProp = FunctionBeingExecuted->GetPropertyByName(STR("SeatIndex"));
+			auto SeatIndexProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("SeatIndex"));
 			if (SeatIndexProp) {
 				auto SeatIndex = SeatIndexProp->ContainerPtrToValuePtr<int32>(Context.TheStack.Locals());
 				if (SeatIndex) event_data["SeatIndex"] = *SeatIndex;
 			}
 
 			// --- Extract bSteal (bool) ---
-			auto bStealProp = FunctionBeingExecuted->GetPropertyByName(STR("bSteal"));
+			auto bStealProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("bSteal"));
 			if (bStealProp) {
 				auto bSteal = bStealProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
 				if (bSteal) event_data["bSteal"] = *bSteal;
@@ -1007,7 +1009,7 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			// --- Extract current driver's CharacterGuid from Vehicle -> Net_Seats ---
 			auto SeatsProp = static_cast<FArrayProperty*>(
-				Vehicle->GetPropertyByNameInChain(STR("Net_Seats")));
+				PropertyCache::GetObjectProp(Vehicle, STR("Net_Seats")));
 			if (SeatsProp) {
 				auto SeatsArray = SeatsProp->ContainerPtrToValuePtr<FScriptArray>(Vehicle);
 				if (SeatsArray && SeatsArray->GetData()) {
@@ -1023,23 +1025,23 @@ auto MotorTownMods::on_unreal_init() -> void
 								if (!seatContainer) continue;
 
 								// Check bHasCharacter
-								auto bHasCharProp = SeatsStruct->GetPropertyByNameInChain(STR("bHasCharacter"));
+								auto bHasCharProp = PropertyCache::GetStructField(SeatsStruct, STR("bHasCharacter"));
 								if (!bHasCharProp) continue;
 								auto bHasChar = bHasCharProp->ContainerPtrToValuePtr<bool>(seatContainer);
 								if (!bHasChar || !*bHasChar) continue;
 
 								// Get Character object
 								auto CharProp = static_cast<FObjectProperty*>(
-									SeatsStruct->GetPropertyByNameInChain(STR("Character")));
+									PropertyCache::GetStructField(SeatsStruct, STR("Character")));
 								if (!CharProp) continue;
 								auto CharPtr = CharProp->ContainerPtrToValuePtr<UObject*>(seatContainer);
 								if (!CharPtr || !*CharPtr) continue;
 
 								// Character (APawn) -> PlayerState -> CharacterGuid
-								auto DriverPlayerState = (*CharPtr)->GetValuePtrByPropertyNameInChain<UObject*>(STR("PlayerState"));
+								const auto& DriverPlayerState = PropertyCache::GetObjectValue<UObject*>(*CharPtr, STR("PlayerState"));
 								if (!DriverPlayerState || !*DriverPlayerState) continue;
 
-								auto DriverCharGuid = (*DriverPlayerState)->GetValuePtrByPropertyName<FGuid>(STR("CharacterGuid"));
+								const auto& DriverCharGuid = PropertyCache::GetObjectValue<FGuid>(*DriverPlayerState, STR("CharacterGuid"));
 								if (!DriverCharGuid) continue;
 
 								event_data["DriverCharacterGuid"] = json::string(std::format(
@@ -1183,7 +1185,7 @@ auto MotorTownMods::on_lua_start(
 		auto ptr = object.get_remote_cpp_object();
 		if (ptr)
 		{
-			auto uniqueIdProp = static_cast<FStructProperty*>(ptr->GetPropertyByNameInChain(to_wstring(propName).c_str()));
+			auto uniqueIdProp = static_cast<FStructProperty*>(PropertyCache::GetObjectProp(ptr, to_wstring(propName).c_str()));
 			if (uniqueIdProp)
 			{
 				auto uniqueIdStruct = uniqueIdProp->GetStruct();
@@ -1262,7 +1264,7 @@ auto MotorTownMods::on_lua_start(
 		}
 
 		// Find Net_Suspects TArray property
-		auto suspectsProp = static_cast<FArrayProperty*>(police->GetPropertyByNameInChain(STR("Net_Suspects")));
+		auto suspectsProp = static_cast<FArrayProperty*>(PropertyCache::GetObjectProp(police, STR("Net_Suspects")));
 		if (!suspectsProp) {
 			Output::send<LogLevel::Warning>(STR("AddPoliceSuspect: Net_Suspects property not found\n"));
 			lua_net.set_bool(false);
@@ -1324,7 +1326,7 @@ auto MotorTownMods::on_lua_start(
 		}
 
 		// Set Character field (UObject pointer)
-		auto charProp = innerStruct->GetPropertyByNameInChain(STR("Character"));
+		auto charProp = PropertyCache::GetStructField(innerStruct, STR("Character"));
 		if (charProp) {
 			auto* charPtr = charProp->ContainerPtrToValuePtr<UObject*>(newElem);
 			if (charPtr) {
@@ -1334,10 +1336,10 @@ auto MotorTownMods::on_lua_start(
 		}
 
 		// Set LastSeenLocation from character's current location
-		auto charLocationProp = character->GetPropertyByNameInChain(STR("RelativeLocation"));
+		auto charLocationProp = PropertyCache::GetObjectProp(character, STR("RelativeLocation"));
 		if (charLocationProp) {
 			auto* charLoc = charLocationProp->ContainerPtrToValuePtr<FVector>(character);
-			auto locProp = innerStruct->GetPropertyByNameInChain(STR("LastSeenLocation"));
+			auto locProp = PropertyCache::GetStructField(innerStruct, STR("LastSeenLocation"));
 			if (charLoc && locProp) {
 				auto* locPtr = locProp->ContainerPtrToValuePtr<FVector>(newElem);
 				if (locPtr) {
