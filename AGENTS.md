@@ -190,6 +190,32 @@ This copies `symbols/` and `symbols-client/` into `symbols-archive/<git-tag>/` a
 
 ---
 
+## Important: Never use `LoopAsync`
+
+`LoopAsync` runs its callback on a **background thread**. Accessing UObject properties from a non-game thread causes undefined behavior and crashes the engine.
+
+**Always use `LoopInGameThreadWithDelay` instead** — it runs on the game thread directly:
+
+```lua
+-- WRONG — runs on background thread, will crash
+LoopAsync(200, function()
+    ExecuteInGameThread(function()
+        -- UObject access here is unsafe because LoopAsync already ran off-thread
+        local vehicle = GetMyVehicle()
+    end)
+    return false
+end)
+
+-- CORRECT — runs on game thread
+LoopInGameThreadWithDelay(200, function()
+    local vehicle = GetMyVehicle()
+end)
+```
+
+For one-shot delays, use `ExecuteInGameThreadWithDelay(ms, callback)`. See the [UE4SS Delayed Actions API](https://docs.ue4ss.com/dev/lua-api/global-functions/delayedactions.html).
+
+---
+
 ## Known Issues
 
 ### lld-link PE debug directory bug
