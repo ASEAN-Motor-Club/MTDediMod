@@ -527,14 +527,14 @@
                           # Copy BPModLoaderMod and BPML_GenericFunctions from UE4SS source
                           UE4SS_RELEASE_MODS="${patchedUE4SS}/assets/Mods"
                           if [ -d "$UE4SS_RELEASE_MODS/BPModLoaderMod" ]; then
-                            cp -r "$UE4SS_RELEASE_MODS/BPModLoaderMod" "$PACKAGE_DIR/ue4ss/Mods/"
+                            cp --no-preserve=mode,ownership -r "$UE4SS_RELEASE_MODS/BPModLoaderMod" "$PACKAGE_DIR/ue4ss/Mods/"
                             touch "$PACKAGE_DIR/ue4ss/Mods/BPModLoaderMod/enabled.txt"
                             echo "✓ Copied BPModLoaderMod (Scripts + load_order.txt + enabled.txt)"
                           else
                             echo "⚠ Warning: BPModLoaderMod not found at $UE4SS_RELEASE_MODS/BPModLoaderMod"
                           fi
                           if [ -d "$UE4SS_RELEASE_MODS/BPML_GenericFunctions" ]; then
-                            cp -r "$UE4SS_RELEASE_MODS/BPML_GenericFunctions" "$PACKAGE_DIR/ue4ss/Mods/"
+                            cp --no-preserve=mode,ownership -r "$UE4SS_RELEASE_MODS/BPML_GenericFunctions" "$PACKAGE_DIR/ue4ss/Mods/"
                             touch "$PACKAGE_DIR/ue4ss/Mods/BPML_GenericFunctions/enabled.txt"
                             echo "✓ Copied BPML_GenericFunctions (Scripts + enabled.txt)"
                           else
