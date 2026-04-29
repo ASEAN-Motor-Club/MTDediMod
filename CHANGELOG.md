@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.40.0-rc5] — 2026-04-29
+
+#### Changed
+- HTTP response JSON serialization moved from Lua to C++. Handlers now return raw Lua tables; `__CppDispatchRequest` passes the table through to C++ which converts it via `lua_table_to_json_value` (same algorithm as `EnqueueWebhookEvent`). Eliminates the Lua-side `json.stringify` / `cjson.encode` call and its intermediate Lua string allocation from the game thread.
+
 ### [server/v0.40.0-rc4] — 2026-04-29
 
 #### Added

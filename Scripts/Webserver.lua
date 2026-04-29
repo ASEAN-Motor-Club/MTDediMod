@@ -156,18 +156,16 @@ _G.__CppDispatchRequest = function(method, path, query_json, headers_json, body)
 
         local ok, content, mime, code = pcall(h.handler, session)
         if ok then
-            local response_body = content
             if type(content) == "table" then
-                local strOk, strResult = pcall(json.stringify, content)
-                if strOk then
-                    response_body = strResult
-                else
-                    return 500, json.stringify({error = "JSON stringify failed"}), "application/json"
-                end
+                -- Return the raw table — C++ will convert to JSON via
+                -- lua_table_to_json_value (avoids Lua-side json.stringify
+                -- and the intermediate Lua string allocation).
+                return code or 200, content, mime or "application/json"
             elseif content == nil then
-                response_body = ""
+                return code or 200, "", mime or "application/json"
+            else
+                return code or 200, content, mime or "application/json"
             end
-            return code or 200, response_body, mime or "application/json"
         else
             local errMsg = content or "Unknown error"
             LogOutput("ERROR", "Handler error: %s", errMsg)
