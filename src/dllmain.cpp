@@ -78,13 +78,22 @@ auto MotorTownMods::on_unreal_init() -> void
 
 	// Start the player-location sampler. Default 2 Hz; MOD_LOCATION_SNAPSHOT_HZ
 	// overrides. Values outside [0.5, 10] are clamped inside Start().
-	float loc_hz = 2.0f;
-	if (const char* val = getenv("MOD_LOCATION_SNAPSHOT_HZ"))
+	// Set MOD_LOCATION_SAMPLER_ENABLE=0 to disable entirely (for FPS comparison).
+	bool loc_sampler_enabled = true;
+	if (const char* val = getenv("MOD_LOCATION_SAMPLER_ENABLE"))
 	{
-		float parsed = static_cast<float>(atof(val));
-		if (parsed > 0.0f) loc_hz = parsed;
+		if (val[0] == '0' && val[1] == '\0') loc_sampler_enabled = false;
 	}
-	LocationSampler::Get().Start(loc_hz);
+	if (loc_sampler_enabled)
+	{
+		float loc_hz = 2.0f;
+		if (const char* val = getenv("MOD_LOCATION_SNAPSHOT_HZ"))
+		{
+			float parsed = static_cast<float>(atof(val));
+			if (parsed > 0.0f) loc_hz = parsed;
+		}
+		LocationSampler::Get().Start(loc_hz);
+	}
 
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerCargoArrived"),
@@ -1149,7 +1158,17 @@ auto MotorTownMods::on_lua_start(
 {
 	LuaHttpServer::Get()->SetLuaState(main_lua.get_lua_state());
 	LuaHttpServer::Get()->RegisterEngineTickHook();
-	TickProfiler::Get().Start();
+
+	// Set MOD_TICK_PROFILER_ENABLE=0 to disable tick profiler (for FPS comparison).
+	bool tick_profiler_enabled = true;
+	if (const char* val = getenv("MOD_TICK_PROFILER_ENABLE"))
+	{
+		if (val[0] == '0' && val[1] == '\0') tick_profiler_enabled = false;
+	}
+	if (tick_profiler_enabled)
+	{
+		TickProfiler::Get().Start();
+	}
 
 	lua.register_function("ExportStructAsText", [](const LuaMadeSimple::Lua& lua_net) -> int {
 		int32_t stack_size = lua_net.get_stack_size();

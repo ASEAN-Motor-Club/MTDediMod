@@ -6,10 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.40.0-rc4] — 2026-04-29
+
+#### Added
+- `MOD_LOCATION_SAMPLER_ENABLE` env var — set to `0` to disable LocationSampler (default: enabled). For FPS comparison testing.
+- `MOD_TICK_PROFILER_ENABLE` env var — set to `0` to disable TickProfiler (default: enabled). For FPS comparison testing.
+
 ### [server/v0.40.0-rc3] — 2026-04-29
 
 #### Fixed
-- LocationSampler `ResolveGameState()` now caches the GameState pointer across ticks with `HasAnyFlags`/`HasAnyInternalFlags` validity checks — eliminates the O(UObject-count) `FindFirstOf` scan every 500ms that was causing ~8 FPS drop (30→22). FindFirstOf now runs only on startup and after map transitions. `PlayerArray` FProperty is also cached since it's stable across GameState instances.
+- LocationSampler `ResolveGameState()` now caches the GameState pointer across ticks with `HasAnyFlags`/`HasAnyInternalFlags` validity checks — eliminates the O(UObject-count) `FindFirstOf` scan every 500ms. FindFirstOf now runs only on startup and after map transitions. `PlayerArray` FProperty is also cached since it's stable across GameState instances.
 
 ### [server/v0.40.0-rc2] — 2026-04-29
 
