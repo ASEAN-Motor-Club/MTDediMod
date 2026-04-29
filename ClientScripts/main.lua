@@ -20,6 +20,7 @@ local integrityChecker = require("IntegrityChecker")
 local modManager = require("ModManager")
 local roadsideServiceFilter = require("RoadsideServiceFilter")
 local teleportWidget = require("TeleportWidget")
+local mapDumper = require("MapDumper")
 
 ExecuteConsoleCommand("r.ViewDistanceScale 100")
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)
