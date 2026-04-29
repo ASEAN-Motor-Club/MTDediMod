@@ -524,8 +524,8 @@
             MODSTXT
                           echo "✓ Created mods.txt"
 
-                          # Copy BPModLoaderMod and BPML_GenericFunctions from UE4SS v3 release
-                          UE4SS_RELEASE_MODS="$HOME/Downloads/UE4SS_v3.0.1-946-g265115c0/ue4ss/Mods"
+                          # Copy BPModLoaderMod and BPML_GenericFunctions from UE4SS source
+                          UE4SS_RELEASE_MODS="${patchedUE4SS}/assets/Mods"
                           if [ -d "$UE4SS_RELEASE_MODS/BPModLoaderMod" ]; then
                             cp -r "$UE4SS_RELEASE_MODS/BPModLoaderMod" "$PACKAGE_DIR/ue4ss/Mods/"
                             touch "$PACKAGE_DIR/ue4ss/Mods/BPModLoaderMod/enabled.txt"
