@@ -4,6 +4,9 @@ local WIDGET_FULL_PATH = "/Game/UI/InGame/Vehicle/W_RoadSideService.W_RoadSideSe
 local VIS_COLLAPSED = 1
 local HUD_CLASS_PATH = "/Script/MotorTown.MotorTownInGameHUD"
 
+local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+local hudClass = StaticFindObject(HUD_CLASS_PATH)
+
 local function IsRPPlayer()
     local PC = GetMyPlayerController()
     if not PC or not PC:IsValid() then return false end
@@ -25,7 +28,6 @@ local function GetMyVehicle()
     if not PC or not PC:IsValid() then return nil end
     local pawn = PC:K2_GetPawn()
     if not pawn or not pawn:IsValid() then return nil end
-    local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
     if not vehicleClass or not vehicleClass:IsValid() then return nil end
     if pawn:IsA(vehicleClass) then return pawn end
     return nil
@@ -36,7 +38,6 @@ local function GetHudWidget()
     if not PC or not PC:IsValid() then return nil end
     local HUD = PC:GetHUD()
     if not HUD or not HUD:IsValid() then return nil end
-    local hudClass = StaticFindObject(HUD_CLASS_PATH)
     if not hudClass or not hudClass:IsValid() then return nil end
     if not HUD:IsA(hudClass) then return nil end
     local hudWidget = HUD.HUDWidget
@@ -54,10 +55,15 @@ NotifyOnNewObject(WIDGET_FULL_PATH, function(widget)
     end)
 end)
 
-local existing = FindFirstOf("W_RoadSideService_C")
-if existing and existing:IsValid() and IsRPPlayer() then
-    existing:RemoveFromParent()
-end
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerVehicleExControl", function(Context, Vehicle, Control)
+    if not IsRPPlayer() then return end
+    local EMTVehicleExControl_RoadsideService = 2
+    local controlVal = Control:get()
+    if controlVal == EMTVehicleExControl_RoadsideService then
+        LogOutput("INFO", "[RPRestrictions] Blocked RoadsideService ex control")
+        return
+    end
+end)
 
 local function DisableAutoPilotWidgets()
     if not IsRPPlayer() then return end
@@ -67,15 +73,21 @@ local function DisableAutoPilotWidgets()
     if not drivingHUD or not drivingHUD:IsValid() then return end
 
     local ap = drivingHUD.AutoPilotWidget
-    if ap and ap:IsValid() and ap.Visibility ~= VIS_COLLAPSED then
-        ap:SetVisibility(VIS_COLLAPSED)
-        LogOutput("INFO", "[RPRestrictions] Hidden AutoPilotWidget")
+    if ap and ap:IsValid() then
+        if ap.Visibility ~= VIS_COLLAPSED then
+            ap:SetVisibility(VIS_COLLAPSED)
+            LogOutput("INFO", "[RPRestrictions] Hidden AutoPilotWidget")
+        end
+        pcall(function() ap:SetIsEnabled(false) end)
     end
 
     local ai = drivingHUD.ToggleAIWidget
-    if ai and ai:IsValid() and ai.Visibility ~= VIS_COLLAPSED then
-        ai:SetVisibility(VIS_COLLAPSED)
-        LogOutput("INFO", "[RPRestrictions] Hidden ToggleAIWidget")
+    if ai and ai:IsValid() then
+        if ai.Visibility ~= VIS_COLLAPSED then
+            ai:SetVisibility(VIS_COLLAPSED)
+            LogOutput("INFO", "[RPRestrictions] Hidden ToggleAIWidget")
+        end
+        pcall(function() ai:SetIsEnabled(false) end)
     end
 end
 
@@ -90,28 +102,36 @@ RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Context
     end
 end)
 
-local function ForceDisableAutoPilot()
+local function SuppressAutoPilot()
     if not IsRPPlayer() then return end
+    local PC = GetMyPlayerController()
+    if not PC or not PC:IsValid() then return end
     local vehicle = GetMyVehicle()
     if not vehicle then return end
 
     local ok, coldState = pcall(function() return vehicle.NetLC_ColdState end)
-    if not ok or not coldState then return end
-
-    local ok2, bAIDriving = pcall(function() return coldState.bIsAIDriving end)
-    if not ok2 or not bAIDriving then return end
-
-    LogOutput("INFO", "[RPRestrictions] AutoPilot active — forcing disable via ServerSyncColdState")
+    if ok and coldState then
+        local ok2, bAIDriving = pcall(function() return coldState.bIsAIDriving end)
+        if ok2 and bAIDriving then
+            pcall(function() coldState.bIsAIDriving = false end)
+            pcall(function() vehicle:ServerSyncColdState(coldState, true) end)
+            LogOutput("INFO", "[RPRestrictions] Suppressed bIsAIDriving")
+        end
+    end
 
     pcall(function()
-        coldState.bIsAIDriving = false
-        vehicle:ServerSyncColdState(coldState, true)
+        if PC.DrivingAI and PC.DrivingAI:IsValid() then
+            PC.DrivingAI.Vehicle = nil
+            PC.DrivingAI = nil
+            LogOutput("INFO", "[RPRestrictions] Destroyed DrivingAI")
+        end
     end)
 end
 
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
     ExecuteInGameThread(function()
         DisableAutoPilotWidgets()
+        SuppressAutoPilot()
     end)
 end)
 
@@ -170,13 +190,10 @@ end
 
 BlockTeleportHooks()
 
-LoopAsync(2000, function()
-    ExecuteInGameThread(function()
-        DisableAutoPilotWidgets()
-        ForceDisableAutoPilot()
-        ClearTeleportPoints()
-    end)
-    return false
+LoopInGameThreadWithDelay(1000, function()
+    DisableAutoPilotWidgets()
+    SuppressAutoPilot()
+    ClearTeleportPoints()
 end)
 
 LogOutput("INFO", "[RPRestrictions] Loaded (v%s)", statics.ModVersion)
