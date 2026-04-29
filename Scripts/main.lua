@@ -93,9 +93,12 @@ local function LoadWebserver()
     -- Properties management
     server.registerHandler("/houses", "GET", propertyManager.HandleGetHouses)
     server.registerHandler("/houses/spawn", "POST", propertyManager.HandleSpawnHouse)
+    server.registerHandler("/houses/*/buy", "POST", propertyManager.HandleBuyHouse)
     server.registerHandler("/houses/*/transfer/direct", "POST", propertyManager.HandleTransferHouseDirect)
     server.registerHandler("/houses/*/transfer/direct_extend", "POST", propertyManager.HandleTransferHouseDirectExtend)
+    server.registerHandler("/houses/*/terminate", "POST", propertyManager.HandleTerminateHouseOwnership)
     server.registerHandler("/houses/*/rent/extend", "POST", propertyManager.HandleExtendHouseRent)
+    server.registerHandler("/houses/*/rent/set", "POST", propertyManager.HandleSetHouseRentExpiry)
 
     -- Cargo management
     server.registerHandler("/delivery/points", "GET", cargoManager.HandleGetDeliveryPoints)

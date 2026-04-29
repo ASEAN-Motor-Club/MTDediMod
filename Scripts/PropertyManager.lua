@@ -174,6 +174,12 @@ local function HandleTransferHouseDirect(session)
     house.Net_OwnerCharacterGuid = newCharGuid
     house.Net_OwnerName = newName
 
+    if data.RentLeftTimeSeconds then
+      house.Net_RentLeftTimeSeconds = data.RentLeftTimeSeconds
+    elseif data.ExtendSeconds then
+      house.Net_RentLeftTimeSeconds = house.Net_RentLeftTimeSeconds + data.ExtendSeconds
+    end
+
     resultMsg = "success"
   end)
   if not ok then resultMsg = "error: " .. tostring(err) end
@@ -218,10 +224,76 @@ local function HandleTransferHouseDirectExtend(session)
     house.Net_OwnerCharacterGuid = newCharGuid
     house.Net_OwnerName = newName
 
-    if rentLeft > 0 then
-      newOwnerPC:ServerRentExtendHouse(house, 0, rentLeft)
+    if data.RentLeftTimeSeconds then
+      house.Net_RentLeftTimeSeconds = data.RentLeftTimeSeconds
+    elseif data.ExtendSeconds then
+      house.Net_RentLeftTimeSeconds = house.Net_RentLeftTimeSeconds + data.ExtendSeconds
+    elseif rentLeft > 0 then
+      house.Net_RentLeftTimeSeconds = house.Net_RentLeftTimeSeconds + rentLeft
     end
 
+    resultMsg = "success"
+  end)
+  if not ok then resultMsg = "error: " .. tostring(err) end
+
+  return { status = resultMsg }, nil, 200
+end
+
+local function HandleBuyHouse(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then
+    return { error = "Missing house GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if not data or not data.CharacterGuid then
+    return { error = "Missing CharacterGuid in payload" }, nil, 400
+  end
+
+  local resultMsg = "not_executed"
+  local ok, err = pcall(function()
+    local house = FindHouseByGuid(houseGuid)
+    if not house then resultMsg = "house_not_found"; return end
+
+    local pc = FindOnlinePCByCharacterGuid(data.CharacterGuid)
+    if not pc or not pc:IsValid() then
+      resultMsg = "player_offline"; return
+    end
+
+    pc:ServerBuyHouse(house)
+    resultMsg = "success"
+  end)
+  if not ok then resultMsg = "error: " .. tostring(err) end
+
+  return { status = resultMsg }, nil, 200
+end
+
+local function HandleTerminateHouseOwnership(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then
+    return { error = "Missing house GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content) or {}
+
+  local resultMsg = "not_executed"
+  local ok, err = pcall(function()
+    local house = FindHouseByGuid(houseGuid)
+    if not house then resultMsg = "house_not_found"; return end
+
+    if data.CharacterGuid then
+      local pc = FindOnlinePCByCharacterGuid(data.CharacterGuid)
+      if pc and pc:IsValid() then
+        pc:ServerTerminateHouseOwnership(house)
+        resultMsg = "success"
+        return
+      end
+    end
+
+    house.Net_OwnerUniqueNetId = ""
+    house.Net_OwnerCharacterGuid = StringToGuid("00000000-0000-0000-0000-000000000000")
+    house.Net_OwnerName = ""
+    house.Net_RentLeftTimeSeconds = 0
     resultMsg = "success"
   end)
   if not ok then resultMsg = "error: " .. tostring(err) end
@@ -253,10 +325,146 @@ local function HandleExtendHouseRent(session)
   return { status = resultMsg }, nil, 200
 end
 
+local function HandleSetHouseRentExpiry(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then
+    return { error = "Missing house GUID" }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if not data or data.Seconds == nil then
+    return { error = "Missing Seconds in payload" }, nil, 400
+  end
+
+  local resultMsg = "not_executed"
+  local ok, err = pcall(function()
+    local house = FindHouseByGuid(houseGuid)
+    if not house then resultMsg = "house_not_found"; return end
+
+    house.Net_RentLeftTimeSeconds = data.Seconds
+    resultMsg = "success"
+  end)
+  if not ok then resultMsg = "error: " .. tostring(err) end
+
+  return { status = resultMsg }, nil, 200
+end
+
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerBuyHouse",
+  function(PC, House)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
+
+    local house = House:get()
+    if not house or not house:IsValid() then return end
+
+    local playerState = playerController.PlayerState
+    if not playerState:IsValid() then return end
+
+    local uniqueId = GetUniqueNetIdAsString(playerState)
+    local characterGuid = GuidToString(playerState.CharacterGuid)
+    local houseGuid = GuidToString(house.HouseGuid)
+
+    LogOutput("INFO", "ServerBuyHouse: player=%s guid=%s house=%s", uniqueId, characterGuid, houseGuid)
+
+    EnqueueWebhookEvent("ServerBuyHouse", {
+      CharacterGuid = characterGuid,
+      PlayerId = uniqueId,
+      HouseGuid = houseGuid,
+    })
+  end
+)
+
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerRentHouse",
+  function(PC, House)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
+
+    local house = House:get()
+    if not house or not house:IsValid() then return end
+
+    local playerState = playerController.PlayerState
+    if not playerState:IsValid() then return end
+
+    local uniqueId = GetUniqueNetIdAsString(playerState)
+    local characterGuid = GuidToString(playerState.CharacterGuid)
+    local houseGuid = GuidToString(house.HouseGuid)
+
+    LogOutput("INFO", "ServerRentHouse: player=%s guid=%s house=%s", uniqueId, characterGuid, houseGuid)
+
+    EnqueueWebhookEvent("ServerRentHouse", {
+      CharacterGuid = characterGuid,
+      PlayerId = uniqueId,
+      HouseGuid = houseGuid,
+    })
+  end
+)
+
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerRentExtendHouse",
+  function(PC, House, Money, Seconds)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
+
+    local house = House:get()
+    if not house or not house:IsValid() then return end
+
+    local playerState = playerController.PlayerState
+    if not playerState:IsValid() then return end
+
+    local uniqueId = GetUniqueNetIdAsString(playerState)
+    local characterGuid = GuidToString(playerState.CharacterGuid)
+    local houseGuid = GuidToString(house.HouseGuid)
+    local money = Money:get()
+    local seconds = Seconds:get()
+
+    LogOutput("INFO", "ServerRentExtendHouse: player=%s guid=%s house=%s money=%d seconds=%.1f",
+      uniqueId, characterGuid, houseGuid, money, seconds)
+
+    EnqueueWebhookEvent("ServerRentExtendHouse", {
+      CharacterGuid = characterGuid,
+      PlayerId = uniqueId,
+      HouseGuid = houseGuid,
+      Money = money,
+      Seconds = seconds,
+    })
+  end
+)
+
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerTerminateHouseOwnership",
+  function(PC, House)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
+
+    local house = House:get()
+    if not house or not house:IsValid() then return end
+
+    local playerState = playerController.PlayerState
+    if not playerState:IsValid() then return end
+
+    local uniqueId = GetUniqueNetIdAsString(playerState)
+    local characterGuid = GuidToString(playerState.CharacterGuid)
+    local houseGuid = GuidToString(house.HouseGuid)
+
+    LogOutput("INFO", "ServerTerminateHouseOwnership: player=%s guid=%s house=%s", uniqueId, characterGuid, houseGuid)
+
+    EnqueueWebhookEvent("ServerTerminateHouseOwnership", {
+      CharacterGuid = characterGuid,
+      PlayerId = uniqueId,
+      HouseGuid = houseGuid,
+    })
+  end
+)
+
 return {
   HandleGetHouses = HandleGetHouses,
   HandleSpawnHouse = HandleSpawnHouse,
+  HandleBuyHouse = HandleBuyHouse,
   HandleTransferHouseDirect = HandleTransferHouseDirect,
   HandleTransferHouseDirectExtend = HandleTransferHouseDirectExtend,
-  HandleExtendHouseRent = HandleExtendHouseRent
+  HandleTerminateHouseOwnership = HandleTerminateHouseOwnership,
+  HandleExtendHouseRent = HandleExtendHouseRent,
+  HandleSetHouseRentExpiry = HandleSetHouseRentExpiry
 }
