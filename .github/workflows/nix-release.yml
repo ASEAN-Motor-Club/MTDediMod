@@ -102,12 +102,18 @@ jobs:
           submodules: false
           persist-credentials: false
 
-      - name: Configure Git Auth
-        run: |
-          TOKEN="${{ secrets.UEPSEUDO_PAT }}"
-          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "git@github.com:"
-          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "ssh://git@github.com/"
-          sudo git config --system url."https://x-access-token:$TOKEN@github.com/".insteadOf "https://github.com/"
+      - name: Get UE4SS locked revision
+        id: ue4ss-rev
+        run: echo "rev=$(jq -r '.nodes.ue4ss.locked.rev' flake.lock)" >> $GITHUB_OUTPUT
+
+      - name: Fetch UE4SS source with submodules
+        uses: actions/checkout@v4
+        with:
+          repository: UE4SS-RE/RE-UE4SS
+          ref: ${{ steps.ue4ss-rev.outputs.rev }}
+          path: .ue4ss-src
+          submodules: recursive
+          token: ${{ secrets.UEPSEUDO_PAT }}
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -126,13 +132,13 @@ jobs:
           restore-keys: xwin-${{ runner.os }}-
 
       - name: Configure
-        run: nix run --no-update-lock-file .#configure
+        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#configure
 
       - name: Build
-        run: nix run --no-update-lock-file .#build
+        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build
 
       - name: Package
-        run: nix run --no-update-lock-file .#package
+        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package
 
       - name: Extract version
         id: version
