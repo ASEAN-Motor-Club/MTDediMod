@@ -1,4 +1,5 @@
 #include "LuaHttpServer.h"
+#include "TickProfiler.h"
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <Helpers/String.hpp>
 #include <Unreal/Hooks/Hooks.hpp>
@@ -317,7 +318,8 @@ void LuaHttpServer::DispatchOnGameThread()
 	// Serialize with all other UE4SS Lua operations on the game thread.
 	std::lock_guard<std::recursive_mutex> guard{LuaMod::m_thread_actions_mutex};
 
-	auto tick_start = std::chrono::steady_clock::now();
+	auto func_start = std::chrono::steady_clock::now();
+	auto tick_start = func_start;
 	for (size_t i = 0; i < local_pending.size(); ++i)
 	{
 		auto& req = local_pending[i];
@@ -407,4 +409,9 @@ void LuaHttpServer::DispatchOnGameThread()
 				elapsed_ms);
 		}
 	}
+
+	auto func_elapsed = std::chrono::steady_clock::now() - func_start;
+	TickProfiler::Get().ReportModTime(
+		TickProfiler::COMP_HTTP,
+		std::chrono::duration_cast<std::chrono::microseconds>(func_elapsed).count());
 }

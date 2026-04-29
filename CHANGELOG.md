@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.40.0-rc2] — 2026-04-29
+
+#### Added
+- `TickProfiler` C++ subsystem — lightweight game-thread tick profiler that measures wall-clock tick time and per-component mod cost (LuaHttp, LocationSampler, UFunction hooks). Registers pre/post engine tick hooks; logs a summary every 300 ticks (~10 s at 30 Hz) with avg/max tick time, over-budget count, and component breakdown. All state is game-thread-only (no locks). `ScopedTimer` RAII helper added to `HookManager.h` pre/post hooks for automatic per-hook timing.
+
 ### [server/v0.40.0-rc1] — 2026-04-28
 
 #### Added

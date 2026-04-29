@@ -1,6 +1,8 @@
 #include "LocationSampler.h"
 #include "LocationBroadcaster.h"
+#include "TickProfiler.h"
 
+#include <chrono>
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <Helpers/String.hpp>
 #include <Unreal/FProperty.hpp>
@@ -124,6 +126,8 @@ void LocationSampler::Tick()
     // Cheap skip: run the sample body once per m_tick_divisor engine ticks.
     if (++m_tick_counter < m_tick_divisor) return;
     m_tick_counter = 0;
+
+    auto t0 = std::chrono::steady_clock::now();
 
     UObject* gameState = ResolveGameState();
     if (!gameState)
@@ -354,4 +358,9 @@ void LocationSampler::Tick()
     }
 
     LocationBroadcaster::Get().Publish(std::move(snap));
+
+    auto elapsed = std::chrono::steady_clock::now() - t0;
+    TickProfiler::Get().ReportModTime(
+        TickProfiler::COMP_LOCATION,
+        std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
 }

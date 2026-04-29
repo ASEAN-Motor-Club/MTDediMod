@@ -6,12 +6,14 @@
 #include <format>
 #include <vector>
 #include <utility>
+#include <chrono>
 #include <Unreal/UObjectGlobals.hpp>
 #include <Unreal/UObject.hpp>
 #include <Unreal/UnrealCoreStructs.hpp>
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <boost/json.hpp> 
 #include "EventManager.h"
+#include "TickProfiler.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -46,6 +48,7 @@ public:
     )
     {
         auto pre_hook = [event_name, data_extractor_fn](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+            TickProfiler::ScopedTimer timer(TickProfiler::COMP_UFUNCTION);
             Output::send<LogLevel::Verbose>(STR("Start of hook {}"), to_wstring(event_name));
 
             // 1. Get Base Player Info (now encapsulated)
@@ -113,6 +116,7 @@ public:
     )
     {
         auto post_hook = [event_name, data_extractor_fn](UnrealScriptFunctionCallableContext& Context, void* CustomData) {
+            TickProfiler::ScopedTimer timer(TickProfiler::COMP_UFUNCTION);
             Output::send<LogLevel::Verbose>(STR("Start of post-hook {}"), to_wstring(event_name));
 
             // 1. Get Base Player Info

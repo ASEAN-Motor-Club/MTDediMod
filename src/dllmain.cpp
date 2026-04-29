@@ -20,6 +20,7 @@
 #include "statics.h"
 #include "HookManager.h"
 #include "LocationSampler.h"
+#include "TickProfiler.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -1148,6 +1149,7 @@ auto MotorTownMods::on_lua_start(
 {
 	LuaHttpServer::Get()->SetLuaState(main_lua.get_lua_state());
 	LuaHttpServer::Get()->RegisterEngineTickHook();
+	TickProfiler::Get().Start();
 
 	lua.register_function("ExportStructAsText", [](const LuaMadeSimple::Lua& lua_net) -> int {
 		int32_t stack_size = lua_net.get_stack_size();

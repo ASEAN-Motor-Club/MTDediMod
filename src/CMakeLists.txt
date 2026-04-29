@@ -41,6 +41,7 @@ set(SRC_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/LocationsRoute.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/LuaHttpServer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/statics.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/TickProfiler.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/webroute.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/webserver.cpp"
 )
@@ -55,6 +56,7 @@ set(HDR_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/LocationsRoute.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/LuaHttpServer.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/statics.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/TickProfiler.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/webroute.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/webserver.h"
 )
