@@ -123,6 +123,28 @@ local function TransferMoneyToCharacter(characterGuid, amount, message)
 end
 
 
+local function TransferExpToPlayer(uniqueId, levelType, exp, message)
+  local PC = GetPlayerControllerFromUniqueId(uniqueId)
+  if PC == nil or not PC:IsValid() then return false end
+  LogOutput("INFO", "TransferExpToPlayer")
+  if PC:IsValid() then
+    ---@diagnostic disable-next-line: param-type-mismatch
+    PC:ClientAddExp('', levelType, exp, FText(message or ''))
+  end
+  return true
+end
+
+local function TransferExpToCharacter(characterGuid, levelType, exp, message)
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if PC == nil or not PC:IsValid() then return false end
+  LogOutput("INFO", "TransferExpToCharacter")
+  if PC:IsValid() then
+    ---@diagnostic disable-next-line: param-type-mismatch
+    PC:ClientAddExp('', levelType, exp, FText(message or ''))
+  end
+  return true
+end
+
 local function PlayerSendChat(uniqueId, message, category)
   local PC = GetPlayerControllerFromUniqueId(uniqueId)
   LogOutput("INFO", "PlayerSendChat")
@@ -198,6 +220,30 @@ local function HandleTransferMoneyToPlayer(session)
     return nil, nil, 200
   end
   return { error = "Invalid payload" }, nil, 400
+end
+
+---@type RequestPathHandler
+local function HandleTransferExpToPlayer(session)
+  local playerId = session.pathComponents[2]
+  if not playerId then
+    return { error = string.format("Invalid player ID %s", playerId) }, nil, 400
+  end
+
+  local data = json.parse(session.content)
+  if data and data.LevelType ~= nil and data.Exp then
+    local levelType = tonumber(data.LevelType)
+    local exp = tonumber(data.Exp)
+    if not levelType or not exp then
+      return { error = "LevelType and Exp must be numbers" }, nil, 400
+    end
+    if data.CharacterGuid then
+      TransferExpToCharacter(data.CharacterGuid, levelType, exp, data.Message or '')
+    else
+      TransferExpToPlayer(playerId, levelType, exp, data.Message or '')
+    end
+    return nil, nil, 200
+  end
+  return { error = "Invalid payload: LevelType and Exp required" }, nil, 400
 end
 
 local function HandleSetPlayerName(session)
@@ -1215,6 +1261,7 @@ return {
   PlayerStateToTable = PlayerStateToTable,
   HandleTeleportPlayer = HandleTeleportPlayer,
   HandleTransferMoneyToPlayer = HandleTransferMoneyToPlayer,
+  HandleTransferExpToPlayer = HandleTransferExpToPlayer,
   HandleSetPlayerName = HandleSetPlayerName,
   HandlePlayerSendChat = HandlePlayerSendChat,
   HandleMutePlayer = HandleMutePlayer,
