@@ -70,19 +70,31 @@ local function findHandlerIndex(path, method)
 end
 
 ---Find a handler by path and methods
+---Prefers exact matches over wildcard matches.
 ---@param path string Request path
 ---@param method? RequestMethod
 ---@return RequestPathHandlerTable|nil
 local function findHandler(path, method)
+    -- First pass: try exact path match (no wildcards).
     for i, h in ipairs(handlers) do
-        local base = string.gsub(h.path, "%*", "[^/]*")
-        local pat = string.format("^%s$", base)
-        if string.find(path, pat) == 1 then
+        if not string.find(h.path, "%*") and path == h.path then
             if method == nil or h.method == "*" or method == h.method then
-                if enableDebug then
-                    LogOutput("DEBUG", "Match for %s", h.path)
-                end
                 return h
+            end
+        end
+    end
+    -- Second pass: try wildcard/pattern matches.
+    for i, h in ipairs(handlers) do
+        if string.find(h.path, "%*") then
+            local base = string.gsub(h.path, "%*", "[^/]*")
+            local pat = string.format("^%s$", base)
+            if string.find(path, pat) == 1 then
+                if method == nil or h.method == "*" or method == h.method then
+                    if enableDebug then
+                        LogOutput("DEBUG", "Match for %s", h.path)
+                    end
+                    return h
+                end
             end
         end
     end
@@ -154,7 +166,16 @@ _G.__CppDispatchRequest = function(method, path, query_json, headers_json, body)
             return 401, "", "application/json"
         end
 
+        local t0 = os.clock()
         local ok, content, mime, code = pcall(h.handler, session)
+        local elapsed_s = os.clock() - t0
+        local elapsed_ms = elapsed_s * 1000
+
+        -- Log slow handlers (>5ms) with the matched route pattern.
+        if elapsed_ms > 5 then
+            LogOutput("WARN", "[LuaHTTP] %s %s took %.1f ms", method, h.path, elapsed_ms)
+        end
+
         if ok then
             if type(content) == "table" then
                 -- Return the raw table — C++ will convert to JSON via
