@@ -1,3 +1,8 @@
+---@deprecated This module is deprecated. Use `EnqueueWebhookEvent` (C++ function) instead
+---for event emission. The Lua webhook HTTP pipeline (LoopAsync-based dispatch) has been removed.
+---Remaining uses: `CreateServerRequest` for direct HTTP calls, `HandleGetWebhooks` for the
+---/webhook GET endpoint (drains the requests queue on-demand), and `RegisterEventHook` which
+---still inserts into the requests queue but nothing drains it automatically.
 local json = require("JsonParser")
 local statics = require("Statics")
 local socket = RequireSafe("socket") ---@type Socket?
@@ -126,40 +131,15 @@ local function CreateEventWebhook(event, data, callback)
         table.insert(requests, { payload, callback })
 
         -- Do not let webhooks grow indefinitely
-        if #table > 1000 then
+        if #requests > 1000 then
           table.remove(requests, 1)
         end
     end
 end
 
--- Get the amount of delay in between async loop (ms).
--- This will slot in between webserver loops.
-local delay = (tonumber(os.getenv("MOD_SERVER_PROCESS_AMOUNT")) or 5) * 100
-if delay > 0 and webhookEvents[1] ~= "none" and webhookUrl then
-    LoopAsync(delay, function()
-        if #requests > 0 then
-            local payloads = {} ---@type table[]
-            local callbacks = {} ---@type fun(status: boolean)[]
-
-            -- Return the payload in order
-            -- This also takes into account possible table insertion while processing data
-            while #requests ~= 0 do
-                local payload, callback = table.unpack(table.remove(requests, 1))
-                table.insert(payloads, payload)
-                table.insert(callbacks, callback)
-            end
-
-            local payload = json.stringify(payloads)
-            LogOutput("DEBUG", "Sending webhook content:\n%s", payload)
-            -- Silently send the webhook request without raising any error
-            local status = pcall(__createWebhookRequest, webhookUrl, payload)
-
-            for _, value in ipairs(callbacks) do
-                value(status)
-            end
-        end
-    end)
-end
+-- Webhook HTTP dispatch loop removed. Use EnqueueWebhookEvent (C++ function) instead.
+-- Events inserted via CreateEventWebhook accumulate in `requests` and can be drained
+-- on-demand via the GET /webhook endpoint (HandleGetWebhooks).
 
 local function HandleGetWebhooks(session)
   local payloads = {} ---@type table[]

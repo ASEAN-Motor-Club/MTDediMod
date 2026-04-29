@@ -97,39 +97,43 @@ local function GetServerFps()
     return -1
 end
 
-local npcAmount = 100
----Change the current traffic density
----@param amount number New density in %
+local npcAmount = 1.0
+---Adjust NPC traffic spawn settings at runtime.
+---NOTE: This modifies MaxCount/bUseNPCVehicleDensity on the AIVehicleSpawnSystem
+---but the game does NOT pick up these changes at runtime — existing traffic
+---continues unchanged and new traffic still uses the original DedicatedServerConfig values.
+---To actually change NPC traffic density, update NPCVehicleDensity in DedicatedServerConfig.json
+---and restart the server. This function is effectively a no-op at runtime.
+---@param amount number New density (0.0–1.0)
 local function AdjustTrafficDensity(amount)
     if amount ~= npcAmount then
-        LogOutput("INFO", "Changing traffic amount from %.1f%% to %.1f%%", npcAmount, amount)
+        LogOutput("INFO", "Changing traffic amount from %.0f%% to %.0f%%", npcAmount * 100, amount * 100)
         npcAmount = amount
     end
     local gameState = GetMotorTownGameState()
-    if (gameState:IsValid() and gameState.AIVehicleSpawnSystem:IsValid()) then
-        local settings = gameState.AIVehicleSpawnSystem.SpawnSettings
-        local densities = {
-            Small = { MinAmount = -1, MaxAmount = 250 },
-            Special = { MinAmount = -1, MaxAmount = 5 },
-            Truck = { MinAmount = -1, MaxAmount = 50 },
-            Bus = { MinAmount = -1, MaxAmount = 50 },
-            -- Police = { MinAmount = -1, MaxAmount = 1 },
-            -- Tow_Ld = { MinAmount = 1, MaxAmount = 2 },
-            -- Tow = { MinAmount = 3, MaxAmount = 6 },
-            -- Tow_Heavy = { MinAmount = 1, MaxAmount = 2 },
-            -- Rescue = { MinAmount = 3, MaxAmount = 4 },
-            -- HeavyRescue = { MinAmount = 3, MaxAmount = 5 },
-            -- VehicleDelivery = { MinAmount = 4, MaxAmount = 8 },
-            -- VehicleDeliveryHeavy = { MinAmount = 5, MaxAmount = 8 },
-            -- Getaway = { MinAmount = -1, MaxAmount = 1 },
-        }
-        for i = 1, #settings, 1 do
-            local setting = settings[1] ---@cast setting FMTAIVehicleSpawnSetting
-            local density = densities[setting.SettingKey]
-            if density then
-                setting.bUseNPCVehicleDensity = false
-                setting.MaxCount = density.MaxAmount * amount
-            end
+    if not gameState:IsValid() then
+        LogOutput("WARN", "AdjustTrafficDensity: gameState not valid")
+        return
+    end
+    if not gameState.AIVehicleSpawnSystem:IsValid() then
+        LogOutput("WARN", "AdjustTrafficDensity: AIVehicleSpawnSystem not valid")
+        return
+    end
+    local settings = gameState.AIVehicleSpawnSystem.SpawnSettings
+    LogOutput("INFO", "AdjustTrafficDensity: #settings=%i", #settings)
+    local densities = {
+        Small = { MaxAmount = 250 },
+        Special = { MaxAmount = 5 },
+        Truck = { MaxAmount = 50 },
+        Bus = { MaxAmount = 50 },
+    }
+    for i = 1, #settings, 1 do
+        local setting = settings[i] ---@cast setting FMTAIVehicleSpawnSetting
+        local key = setting.SettingKey:ToString()
+        local density = densities[key]
+        if density then
+            setting.bUseNPCVehicleDensity = false
+            setting.MaxCount = math.floor(density.MaxAmount * amount)
         end
     end
 end
@@ -171,9 +175,8 @@ local function AutoAdjustServerCaps(override)
 end
 
 if os.getenv("MOD_AUTO_FPS_ENABLE") then
-    LoopAsync(60 * 1000 / pollPerMin, function()
+    LoopInGameThreadWithDelay(60 * 1000 / pollPerMin, function()
         AutoAdjustServerCaps()
-        return false
     end)
 end
 
@@ -187,8 +190,12 @@ end)
 RegisterConsoleCommandHandler("setnpctraffic", function(Cmd, CommandParts, Ar)
     local density = tonumber(CommandParts[1]) or 1.0
     npcVehicleDensity = density
-    AutoAdjustServerCaps(true)
-    LogOutput("INFO", "Set NPC traffic density to %.1f", density * 100)
+    local gameState = GetMotorTownGameState()
+    if gameState:IsValid() then
+        gameState.Net_ServerConfig.MaxVehiclePerPlayer = maxVehiclePerPlayer
+        AdjustTrafficDensity(npcVehicleDensity)
+    end
+    LogOutput("INFO", "Set NPC traffic density to %.1f%%", density * 100)
     return true
 end)
 
@@ -227,7 +234,11 @@ local function HandleUpdateNpcTraffic(session)
         if maxV then
             maxVehiclePerPlayer = maxV
         end
-        AutoAdjustServerCaps(true)
+        local gameState = GetMotorTownGameState()
+        if gameState:IsValid() then
+            gameState.Net_ServerConfig.MaxVehiclePerPlayer = maxVehiclePerPlayer
+            AdjustTrafficDensity(npcVehicleDensity)
+        end
         return { status = "ok" }
     end
     return nil, nil, 400
