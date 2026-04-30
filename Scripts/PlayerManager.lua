@@ -741,9 +741,12 @@ local function HandleGetParties(session)
 end
 
 ---Handle request to make a player a suspect
----Applies UGE_PoliceSuspect_C gameplay effect with controllable duration via
----spec-based approach (MakeOutgoingSpec + SetDuration + BP_ApplyGameplayEffectSpecToSelf).
----Reads DurationSeconds from request body JSON (default 86400 = 24h).
+---Applies UGE_PoliceSuspect_C gameplay effect via BP_ApplyGameplayEffectToSelf.
+---Note: DurationSeconds is accepted in the payload but cannot be enforced at
+---apply-time because UE4SS cannot call UAbilitySystemBlueprintLibrary::SetDuration
+---(StaticFindObject returns nullptr for UBlueprintFunctionLibrary classes, and
+---FGameplayEffectSpecHandle.Data is a TSharedPtr not dereferenceable from Lua).
+---The GE uses whatever duration is configured in its GameplayEffect blueprint.
 ---@type RequestPathHandler
 local function HandleMakePlayerSuspect(session)
   local characterGuid = session.pathComponents[2]
@@ -754,12 +757,6 @@ local function HandleMakePlayerSuspect(session)
   local PC = GetPlayerControllerFromGuid(characterGuid)
   if not PC:IsValid() then
     return { error = string.format("Player %s not found", characterGuid) }, nil, 404
-  end
-
-  local durationSeconds = 86400
-  local data = json.parse(session.content)
-  if data and data.DurationSeconds then
-    durationSeconds = tonumber(data.DurationSeconds) or 86400
   end
 
   local result = {}
@@ -800,15 +797,11 @@ local function HandleMakePlayerSuspect(session)
     result.ge_class_valid = geClass and geClass:IsValid() or false
 
     if asc and asc:IsValid() and geClass and geClass:IsValid() then
-      local specHandle = asc:MakeOutgoingSpec(geClass, 1.0, {})
-      local bpLib = StaticFindObject("/Script/GameplayAbilities.AbilitySystemBlueprintLibrary")
-      bpLib:SetDuration(specHandle, durationSeconds)
-      local activeHandle = asc:BP_ApplyGameplayEffectSpecToSelf(specHandle)
+      local activeHandle = asc:BP_ApplyGameplayEffectToSelf(geClass, 1.0, {})
       result.ge_applied = true
       result.active_handle = tonumber(activeHandle) or activeHandle
-      result.duration_seconds = durationSeconds
-      LogOutput("INFO", "HandleMakePlayerSuspect: applied GE to %s duration=%d activeHandle=%s",
-        characterGuid, durationSeconds, tostring(activeHandle))
+      LogOutput("INFO", "HandleMakePlayerSuspect: applied GE to %s activeHandle=%s",
+        characterGuid, tostring(activeHandle))
     else
       LogOutput("WARN", "HandleMakePlayerSuspect: asc or geClass invalid for %s", characterGuid)
       earlyReturnStatus = "asc_or_ge_invalid"
