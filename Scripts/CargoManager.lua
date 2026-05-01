@@ -642,6 +642,43 @@ webhook.RegisterEventHook(
   end
 )
 
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerAcceptPassenger",
+  function(PC, Vehicle, PassengerCharacter)
+    local playerController = PC:get()
+    if not playerController:IsValid() then return end
+
+    local vehicle = Vehicle:get()
+    local passengerChar = PassengerCharacter:get()
+
+    local vehicleId = nil
+    if vehicle ~= nil and vehicle:IsValid() then
+      vehicleId = vehicle.Net_VehicleId
+    end
+
+    local passengerCharGuid = nil
+    if passengerChar ~= nil and passengerChar:IsValid() and passengerChar.Net_MTPlayerState:IsValid() then
+      passengerCharGuid = GuidToString(passengerChar.Net_MTPlayerState.CharacterGuid)
+    end
+
+    local passengerData = nil
+    if passengerChar ~= nil and passengerChar:IsValid() then
+      local passengerComp = passengerChar.Passenger
+      if passengerComp ~= nil and passengerComp:IsValid() then
+        passengerData = PassengerToTable(passengerComp)
+      end
+    end
+
+    EnqueueWebhookEvent("ServerAcceptPassenger", {
+      PlayerId = GetPlayerUniqueId(playerController),
+      CharacterGuid = GetPlayerGuid(playerController),
+      VehicleId = vehicleId,
+      PassengerCharacterGuid = passengerCharGuid,
+      Passenger = passengerData,
+    })
+  end
+)
+
 webhook.RegisterEventHook(
   "ServerPassengerArrived",
   function (PC, passenger)
