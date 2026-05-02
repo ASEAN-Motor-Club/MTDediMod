@@ -305,6 +305,142 @@ local function VehiclePartRowToTable(row)
   return data
 end
 
+---Convert FVehicleRow to JSON serializable table.
+---Lightweight by default: only the catalog/economy-relevant fields needed by
+---external services (e.g. property tax / valuation lookups). Intentionally
+---excludes the heavy nested struct fields such as Parts/PartValues/Queries
+---that would balloon the response.
+---@param row FVehicleRow
+---@return table
+local function VehicleRowToTable(row)
+  local data = {}
+
+  data.VehicleName = row.VehicleName:ToString()
+
+  data.VehicleName2 = {}
+  data.VehicleName2.Texts = {}
+  if row.VehicleName2 and row.VehicleName2.Texts then
+    row.VehicleName2.Texts:ForEach(function(index, element)
+      table.insert(data.VehicleName2.Texts, element:get():ToString())
+    end)
+  end
+
+  data.VehicleType = row.VehicleType
+  data.TruckClass = row.TruckClass
+  data.VehicleTypeFlags = row.VehicleTypeFlags
+
+  data.VehicleClassFullName = json.null
+  if row.VehicleClass and row.VehicleClass:IsValid() then
+    data.VehicleClassFullName = row.VehicleClass:GetFullName()
+  end
+
+  data.GameplayTags = GameplayTagContainerToString(row.GameplayTags)
+  data.GarageGameplayTagQuery = GameplayTagQueryToTable(row.GarageGameplayTagQuery)
+
+  data.bHidden = row.bHidden
+  data.bDisabled = row.bDisabled
+  data.bShowRequirementsNotMet = row.bShowRequirementsNotMet
+  data.bShowCargoSpaceAtTheGarage = row.bShowCargoSpaceAtTheGarage
+
+  -- Economy / payment fields. Cost is the dealer purchase price (in-game
+  -- currency, int32). DeliveryBasePayment is int64 and used by the delivery
+  -- system as the base reward multiplier input.
+  data.Cost = row.Cost
+  data.DeliveryBasePayment = row.DeliveryBasePayment
+  data.DeliveryPaymentMultiplier = row.DeliveryPaymentMultiplier
+  data.NPCSpawnPrabability = row.NPCSpawnPrabability
+  data.CompanyAIRunningCostMultiplier = row.CompanyAIRunningCostMultiplier
+  data.CompanyAIConditionUsageMultiplier = row.CompanyAIConditionUsageMultiplier
+  data.CompanyAIConditionUsageMultiplierOffroad = row.CompanyAIConditionUsageMultiplierOffroad
+
+  data.bIsTaxiable = row.bIsTaxiable
+  data.bIsLimoable = row.bIsLimoable
+  data.bIsBusable = row.bIsBusable
+  data.bIsRaceCar = row.bIsRaceCar
+  data.bTrailerHauling = row.bTrailerHauling
+  data.bHasFuelPump = row.bHasFuelPump
+
+  data.ExhaustBlackSmokeDensity = row.ExhaustBlackSmokeDensity
+  data.BodyDamageThreshold = row.BodyDamageThreshold
+  data.Comport = row.Comport
+  data.CurbWeight = row.CurbWeight
+
+  data.LevelRequirementToDrive = {}
+  if row.LevelRequirementToDrive then
+    row.LevelRequirementToDrive:ForEach(function(key, value)
+      data.LevelRequirementToDrive[key:get()] = value:get()
+    end)
+  end
+
+  return data
+end
+
+---Iterate the global Vehicles UDataTable from UMTGameResource and serialize
+---every FVehicleRow keyed by its row name (FName).
+---@return table<string, table> rows map of rowName -> serialized FVehicleRow
+---@return string? error
+local function GetVehicleRows()
+  local gameInstance = UEHelpers.GetGameInstance()
+  if not gameInstance or not gameInstance:IsValid() then
+    return {}, "Invalid game instance"
+  end
+
+  local gameResource = gameInstance.GameResource
+  if not gameResource or not gameResource:IsValid() then
+    return {}, "Invalid game resource"
+  end
+
+  local vehiclesDt = gameResource.Vehicles
+  if not vehiclesDt or not vehiclesDt:IsValid() then
+    return {}, "Vehicles UDataTable not loaded"
+  end
+
+  local rows = {}
+  local rowMap = vehiclesDt.RowMap
+  if not rowMap then
+    return rows, "Vehicles UDataTable has no RowMap"
+  end
+
+  rowMap:ForEach(function(key, value)
+    local rowName = key:get():ToString()
+    local rowStruct = value:get() ---@type FVehicleRow
+    local ok, serialized = pcall(VehicleRowToTable, rowStruct)
+    if ok then
+      rows[rowName] = serialized
+    else
+      LogOutput("WARN", "Failed to serialize vehicle row %s: %s", rowName, tostring(serialized))
+    end
+  end)
+
+  return rows, nil
+end
+
+---Handle GET /vehicle_rows and GET /vehicle_rows/*
+---When a row name is supplied via the second path component, only that single
+---row is returned (404 if missing). Otherwise the full catalog is returned.
+---@type RequestPathHandler
+local function HandleGetVehicleRows(session)
+  local rowName = session.pathComponents[2]
+
+  local startTime = os.clock()
+  local rows, err = GetVehicleRows()
+  LogOutput("DEBUG", "GetVehicleRows time: %fs", os.clock() - startTime)
+
+  if err then
+    return { error = err }, nil, 500
+  end
+
+  if rowName and rowName ~= "" then
+    local row = rows[rowName]
+    if not row then
+      return { error = string.format("Vehicle row %s not found", rowName) }, nil, 404
+    end
+    return { data = row, key = rowName }, nil, 200
+  end
+
+  return { data = rows }, nil, 200
+end
+
 ---Convert AMTWinch to JSON serializable table
 ---@param winch UMTWinchComponent
 local function WinchToTable(winch)
@@ -2996,6 +3132,7 @@ return {
   DespawnPlayerVehicle = DespawnPlayerVehicle,
   HandleGetVehicles = HandleGetVehicles,
   HandleGetVehiclesByTag = HandleGetVehiclesByTag,
+  HandleGetVehicleRows = HandleGetVehicleRows,
   HandleGetPlayerVehicles = HandleGetPlayerVehicles,
   HandleGetPlayerLastVehicle = HandleGetPlayerLastVehicle,
   HandleGetPlayerLastVehicleDecals = HandleGetPlayerLastVehicleDecals,
