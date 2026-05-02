@@ -306,10 +306,6 @@ local function VehiclePartRowToTable(row)
 end
 
 ---Convert FVehicleRow to JSON serializable table.
----Lightweight by default: only the catalog/economy-relevant fields needed by
----external services (e.g. property tax / valuation lookups). Intentionally
----excludes the heavy nested struct fields such as Parts/PartValues/Queries
----that would balloon the response.
 ---@param row FVehicleRow
 ---@return table
 local function VehicleRowToTable(row)
@@ -342,9 +338,6 @@ local function VehicleRowToTable(row)
   data.bShowRequirementsNotMet = row.bShowRequirementsNotMet
   data.bShowCargoSpaceAtTheGarage = row.bShowCargoSpaceAtTheGarage
 
-  -- Economy / payment fields. Cost is the dealer purchase price (in-game
-  -- currency, int32). DeliveryBasePayment is int64 and used by the delivery
-  -- system as the base reward multiplier input.
   data.Cost = row.Cost
   data.DeliveryBasePayment = row.DeliveryBasePayment
   data.DeliveryPaymentMultiplier = row.DeliveryPaymentMultiplier
@@ -375,8 +368,7 @@ local function VehicleRowToTable(row)
   return data
 end
 
----Iterate the global Vehicles UDataTable from UMTGameResource and serialize
----every FVehicleRow keyed by its row name (FName).
+---Iterate the global Vehicles UDataTable from UMTGameResource and serialize every FVehicleRow keyed by its fname
 ---@return table<string, table> rows map of rowName -> serialized FVehicleRow
 ---@return string? error
 local function GetVehicleRows()
@@ -416,8 +408,6 @@ local function GetVehicleRows()
 end
 
 ---Handle GET /vehicle_rows and GET /vehicle_rows/*
----When a row name is supplied via the second path component, only that single
----row is returned (404 if missing). Otherwise the full catalog is returned.
 ---@type RequestPathHandler
 local function HandleGetVehicleRows(session)
   local rowName = session.pathComponents[2]
