@@ -206,6 +206,13 @@ end)
 local function HandleGetServerState(session)
     local data = {}
     data = GetServerState()
+    if GetOpenFdCount then
+        local fd = GetOpenFdCount()
+        if fd >= 0 then
+            data.open_fds = fd
+            data.fd_setsize_limit = 1024
+        end
+    end
     local ok = true
     if not ok then return { error = "Game thread timeout" }, nil, 503 end
     return { data = data }
@@ -268,7 +275,15 @@ local function HandleGetServerStatus(session)
         -- Game state is not created yet
         return { status = "not ready" }, nil, 503
     end
-    return { status = "ok" }
+    local data = { status = "ok" }
+    if GetOpenFdCount then
+        local fd = GetOpenFdCount()
+        if fd >= 0 then
+            data.open_fds = fd
+            data.fd_setsize_limit = 1024
+        end
+    end
+    return data
 end
 
 ---Handle get mod version

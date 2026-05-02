@@ -8,6 +8,7 @@
 #include "EventManager.h"
 #include "LocationsRoute.h"
 #include "LocationBroadcaster.h"
+#include "TickProfiler.h"
 
 // Workaround against multiple check definitions
 #pragma push_macro("check")
@@ -445,6 +446,12 @@ std::string Webserver::handle_request(http::request<http::string_body> req, http
 
 	if (req.target() == "/status") {
 		response_json["message"] = "mods management server is running";
+		int fd_count = TickProfiler::GetOpenFdCount();
+		if (fd_count >= 0)
+		{
+			response_json["open_fds"] = fd_count;
+			response_json["fd_setsize_limit"] = 1024;
+		}
 		res.result(statusCode);
 		return json::serialize(response_json);
 	}

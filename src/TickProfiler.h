@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <string>
 
 // Lightweight game-thread tick profiler.
 //
@@ -43,6 +44,13 @@ public:
 		ScopedTimer(const ScopedTimer&) = delete;
 		ScopedTimer& operator=(const ScopedTimer&) = delete;
 	};
+
+	// Return current open fd count for this process (reads /proc/self/fd).
+	// Returns -1 on error.
+	static int GetOpenFdCount();
+
+	// Return a brief string describing the process's fd limit (from /proc/self/limits).
+	static std::string GetFdLimitString();
 
 private:
 	TickProfiler() = default;

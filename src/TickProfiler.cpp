@@ -2,12 +2,66 @@
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <Helpers/String.hpp>
 
+// Workaround against multiple check definitions
+#pragma push_macro("check")
+#undef check
+#include <windows.h>
+#pragma pop_macro("check")
+
+#include <fstream>
+#include <string>
+
 using namespace RC;
 
 TickProfiler& TickProfiler::Get()
 {
 	static TickProfiler instance;
 	return instance;
+}
+
+int TickProfiler::GetOpenFdCount()
+{
+	// Under Wine/Proton, the Linux /proc filesystem is mapped to Z:\proc.
+	// Enumerate Z:\proc\self\fd to count open file descriptors.
+	// This is critical because Wine's socket layer uses select() which
+	// aborts when fd >= FD_SETSIZE (1024).
+	int count = 0;
+	WIN32_FIND_DATAA findData;
+	HANDLE hFind = FindFirstFileA("Z:\\proc\\self\\fd\\*", &findData);
+	if (hFind == INVALID_HANDLE_VALUE)
+	{
+		// Fallback: try the Linux path directly (for native Linux builds)
+		hFind = FindFirstFileA("/proc/self/fd/*", &findData);
+		if (hFind == INVALID_HANDLE_VALUE) return -1;
+	}
+	do {
+		++count;
+	} while (FindNextFileA(hFind, &findData));
+	FindClose(hFind);
+	// Subtract . and .. directory entries
+	return count >= 2 ? count - 2 : count;
+}
+
+std::string TickProfiler::GetFdLimitString()
+{
+	// Try Wine-mapped path first, then native Linux path.
+	const char* paths[] = {"Z:\\proc\\self\\limits", "/proc/self/limits"};
+	for (const char* path : paths)
+	{
+		std::ifstream limits(path);
+		if (limits.is_open())
+		{
+			std::string line;
+			while (std::getline(limits, line))
+			{
+				if (line.find("Max open files") != std::string::npos)
+				{
+					return line;
+				}
+			}
+		}
+	}
+	return "unknown";
 }
 
 void TickProfiler::Start()
@@ -173,4 +227,44 @@ void TickProfiler::LogSummary()
 	Output::send<LogLevel::Warning>(
 		STR("[TickProfiler]   unaccounted={}ms avg={}ms/tick (engine+UE4SS)\n"),
 		ms_fmt(unaccounted_us), ms_fmt(avg_unaccounted_us));
+
+	// --- File descriptor monitoring ---
+	// Log fd count every window (~10s). Warn at 80% of FD_SETSIZE (1024).
+	// The Wine/Proton socket layer uses select() which fails at fd >= 1024.
+	int fd_count = GetOpenFdCount();
+	if (fd_count >= 0)
+	{
+		constexpr int FD_SETSIZE_WARN = 820;   // ~80% of 1024
+		constexpr int FD_SETSIZE_CRIT = 950;    // ~93% of 1024
+
+		if (fd_count >= FD_SETSIZE_CRIT)
+		{
+			Output::send<LogLevel::Error>(
+				STR("[TickProfiler]   ⚠ FD CRITICAL: {} open fds (Wine select() limit: 1024)\n"),
+				fd_count);
+		}
+		else if (fd_count >= FD_SETSIZE_WARN)
+		{
+			Output::send<LogLevel::Warning>(
+				STR("[TickProfiler]   ⚠ FD WARNING: {} open fds (Wine select() limit: 1024)\n"),
+				fd_count);
+		}
+		else
+		{
+			Output::send<LogLevel::Warning>(
+				STR("[TickProfiler]   fds={}\n"),
+				fd_count);
+		}
+	}
+
+	// Log fd limits once (first window only).
+	static bool logged_fd_limits = false;
+	if (!logged_fd_limits)
+	{
+		auto limits = GetFdLimitString();
+		Output::send<LogLevel::Warning>(
+			STR("[TickProfiler]   {}\n"),
+			to_wstring(limits));
+		logged_fd_limits = true;
+	}
 }

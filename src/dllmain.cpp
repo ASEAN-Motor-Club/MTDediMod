@@ -1354,6 +1354,12 @@ auto MotorTownMods::on_lua_start(
 		return 1;
 	});
 
+	lua.register_function("GetOpenFdCount", [](const LuaMadeSimple::Lua& lua_net) -> int {
+		int count = TickProfiler::GetOpenFdCount();
+		lua_net.set_integer(count >= 0 ? count : -1);
+		return 1;
+	});
+
 	// IsUObjectSafe(uobject) -> bool
 	// Performs extensive safety checks beyond :IsValid() to detect objects
 	// that are mid-destruction or pending kill. Use this before touching
