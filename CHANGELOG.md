@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.40.1-rc1] — 2026-05-03
+
+#### Added
+- `GET /player_vehicles/{id}/counts` — lightweight endpoint returning `spawnedVehicleCount` and `trailerCount` for a player without the overhead of full vehicle serialization.
+
 ### [server/v0.40.0-rc6] — 2026-04-29
 
 #### Added

@@ -2252,7 +2252,43 @@ local function HandleGetPlayerVehicles(session)
   return { vehicles = vehicles }, nil, 200
 end
 
+---@type RequestPathHandler
+local function HandleGetPlayerVehicleCounts(session)
+  local playerId = session.pathComponents[2]
+  local PC = GetPlayerControllerFromUniqueId(playerId)
+  if not PC:IsValid() then
+    return { error = "Invalid player controller" }, nil, 400
+  end
 
+  local spawnedCount = 0
+  if PC.Net_SpawnedVehicles:IsValid() then
+    spawnedCount = #PC.Net_SpawnedVehicles
+  end
+
+  local trailerCount = 0
+  if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() and IsUObjectSafe(PC.LastVehicle) and not PC.LastVehicle:IsActorBeingDestroyed() then
+    local curr = PC.LastVehicle
+    while curr ~= nil and curr:IsValid() and IsUObjectSafe(curr) and not curr:IsActorBeingDestroyed() and curr.Net_Hooks:IsValid() and IsUObjectSafe(curr.Net_Hooks) do
+      local nextTrailer = nil
+      curr.Net_Hooks:ForEach(function(i, val)
+        local hook = val:get()
+        if hook:IsValid() and IsUObjectSafe(hook) and hook.Trailer:IsValid() and IsUObjectSafe(hook.Trailer)
+           and not hook.Trailer:IsActorBeingDestroyed() and hook.Trailer.Net_VehicleId ~= curr.Net_VehicleId then
+          nextTrailer = hook.Trailer
+        end
+      end)
+      if nextTrailer then
+        trailerCount = trailerCount + 1
+      end
+      curr = nextTrailer
+    end
+  end
+
+  return {
+    spawnedVehicleCount = spawnedCount,
+    trailerCount = trailerCount,
+  }, nil, 200
+end
 
 ---Convert AMTVehicle to a minimal JSON table (lightweight, no nested parts/decals)
 ---@param vehicle AMTVehicle
@@ -3000,6 +3036,7 @@ return {
   HandleGetPlayerLastVehicle = HandleGetPlayerLastVehicle,
   HandleGetPlayerLastVehicleDecals = HandleGetPlayerLastVehicleDecals,
   HandleGetPlayerLastVehicleParts = HandleGetPlayerLastVehicleParts,
+  HandleGetPlayerVehicleCounts = HandleGetPlayerVehicleCounts,
   HandleGetPlayerVehicleDecal = HandleGetPlayerVehicleDecal,
   HandleSetPlayerVehicleDecal = HandleSetPlayerVehicleDecal,
   HandleSetWorldVehicleDecal = HandleSetWorldVehicleDecal,
