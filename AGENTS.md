@@ -212,7 +212,19 @@ LoopInGameThreadWithDelay(200, function()
 end)
 ```
 
-For one-shot delays, use `ExecuteInGameThreadWithDelay(ms, callback)`. See the [UE4SS Delayed Actions API](https://docs.ue4ss.com/dev/lua-api/global-functions/delayedactions.html).
+For one-shot delays, use `ExecuteInGameThreadWithDelay(ms, callback)`.
+
+> **Do NOT use `ExecuteWithDelay`** — it runs on a background thread (same problem as `LoopAsync`). Always use `ExecuteInGameThreadWithDelay` for one-shot game-thread delays, and `LoopInGameThreadWithDelay` for repeating game-thread delays. See the [UE4SS Delayed Actions API](https://docs.ue4ss.com/dev/lua-api/global-functions/delayedactions.html).
+
+### Summary of safe delayed-action APIs
+
+| API | Thread | One-shot / Repeating | Use |
+|-----|--------|---------------------|-----|
+| `ExecuteInGameThreadWithDelay(ms, fn)` | Game | One-shot | Delayed game-thread work |
+| `LoopInGameThreadWithDelay(ms, fn)` | Game | Repeating | Polling / periodic game-thread work |
+| `ExecuteInGameThread(fn)` | Game | Immediate (next tick) | Queue work on game thread now |
+| ~~`ExecuteWithDelay(ms, fn)`~~ | **Background** | One-shot | **NEVER USE** — unsafe for UObject access |
+| ~~`LoopAsync(ms, fn)`~~ | **Background** | Repeating | **NEVER USE** — unsafe for UObject access |
 
 ---
 
