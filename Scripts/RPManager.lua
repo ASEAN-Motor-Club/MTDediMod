@@ -94,6 +94,15 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt",
   end
 end)
 
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerVehicleExControl", function(PC, Vehicle, Control)
+  local playerController = PC:get()
+  if not IsRPPlayer(playerController) then return end
+  if Control:get() == 2 then
+    Control:set(0)
+    LogOutput("INFO", "[RPManager] Neutralized RoadsideService for RP player")
+  end
+end)
+
 LogOutput("INFO", "[RPManager] Loaded (v%s)", statics.ModVersion)
 
 return {}
