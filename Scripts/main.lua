@@ -131,6 +131,7 @@ local function LoadWebserver()
     server.registerHandler("/garages/spawn", "POST", vehicleManager.HandleSpawnGarage)
     -- rename to POST /vehicles
     server.registerHandler("/player_vehicles/*/despawn", "POST", vehicleManager.HandleDespawnPlayerVehicle)
+    server.registerHandler("/player_vehicles/*/despawn_spawned", "POST", vehicleManager.HandleDespawnSpawnedVehicles)
     server.registerHandler("/player_vehicles/*/exit", "GET", vehicleManager.HandlePlayerExitVehicle)
     server.registerHandler("/players/*/enter_last_vehicle", "POST", vehicleManager.HandlePlayerEnterLastVehicle)
 

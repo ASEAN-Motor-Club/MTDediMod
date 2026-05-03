@@ -2964,6 +2964,71 @@ local function DespawnPlayerVehicle(PC)
   return count
 end
 
+---Despawn all vehicles from a player's Net_SpawnedVehicles with optional filtering.
+---Filters are AND'd: a vehicle must pass all active filters to be despawned.
+---@param PC AMotorTownPlayerController
+---@param options? { companyFilter: "company"|"personal"|nil, aiFilter: boolean|nil }
+---@return number count Vehicles despawned
+local function DespawnSpawnedVehicles(PC, options)
+  local count = 0
+  if not PC:IsValid() or not IsUObjectSafe(PC) then return count end
+  if not PC.Net_SpawnedVehicles:IsValid() then return count end
+
+  local opts = options or {}
+  local vehiclesToDespawn = {}
+
+  PC.Net_SpawnedVehicles:ForEach(function(index, element)
+    local vehicle = element:get()
+    if not vehicle:IsValid() or not IsUObjectSafe(vehicle) or vehicle:IsActorBeingDestroyed() then
+      return
+    end
+
+    if opts.companyFilter ~= nil then
+      local isCompany = vehicle.Net_CompanyGuid:IsValid()
+      if opts.companyFilter == "company" and not isCompany then return end
+      if opts.companyFilter == "personal" and isCompany then return end
+    end
+
+    if opts.aiFilter ~= nil and vehicle.NetLC_ColdState:IsValid() then
+      if vehicle.NetLC_ColdState.bIsAIDriving ~= opts.aiFilter then return end
+    end
+
+    table.insert(vehiclesToDespawn, vehicle)
+  end)
+
+  for _, vehicle in ipairs(vehiclesToDespawn) do
+    if vehicle:IsValid() and IsUObjectSafe(vehicle) then
+      PC:ServerDespawnVehicle(vehicle, 0)
+      count = count + 1
+    end
+  end
+
+  return count
+end
+
+---Handle POST /player_vehicles/{playerId}/despawn_spawned
+---Body: { companyFilter?: "company"|"personal", aiFilter?: boolean }
+---@type RequestPathHandler
+local function HandleDespawnSpawnedVehicles(session)
+  local playerId = session.pathComponents[2]
+  local PC = GetPlayerControllerFromUniqueId(playerId)
+  if not PC:IsValid() then
+    return { error = "Invalid player controller" }, nil, 400
+  end
+
+  local content = json.parse(session.content) or {}
+  local options = {}
+  if content.companyFilter then options.companyFilter = content.companyFilter end
+  if content.aiFilter ~= nil then options.aiFilter = content.aiFilter end
+
+  local count = DespawnSpawnedVehicles(PC, options)
+  if count > 0 then
+    return { despawned = count }, nil, 200
+  else
+    return { error = "No matching vehicles to despawn" }, nil, 404
+  end
+end
+
 ---Handle despawning a player's current vehicle (and trailers)
 ---@type RequestPathHandler
 local function HandleDespawnPlayerVehicle(session)
@@ -3030,6 +3095,7 @@ end
 
 return {
   DespawnPlayerVehicle = DespawnPlayerVehicle,
+  DespawnSpawnedVehicles = DespawnSpawnedVehicles,
   HandleGetVehicles = HandleGetVehicles,
   HandleGetVehiclesByTag = HandleGetVehiclesByTag,
   HandleGetPlayerVehicles = HandleGetPlayerVehicles,
@@ -3042,6 +3108,7 @@ return {
   HandleSetWorldVehicleDecal = HandleSetWorldVehicleDecal,
   HandleDespawnVehicle = HandleDespawnVehicle,
   HandleDespawnPlayerVehicle = HandleDespawnPlayerVehicle,
+  HandleDespawnSpawnedVehicles = HandleDespawnSpawnedVehicles,
   HandleDetachPlayerVehicle = HandleDetachPlayerVehicle,
   HandleCreateVehicleDealerSpawnPoint = HandleCreateVehicleDealerSpawnPoint,
   HandleGetGarages = HandleGetGarages,

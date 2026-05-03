@@ -33,7 +33,21 @@ local function GenerateVerificationCode(playerName, commandName)
 end
 
 Commands["/despawn"] = function(PC, args)
-  local count = vehicleManager.DespawnPlayerVehicle(PC)
+  local mode = args[1] and string.lower(args[1]) or nil
+  local count = 0
+
+  if mode == "company" then
+    count = vehicleManager.DespawnSpawnedVehicles(PC, { companyFilter = "company" })
+  elseif mode == "personal" then
+    count = vehicleManager.DespawnSpawnedVehicles(PC, { companyFilter = "personal" })
+  elseif mode == "ai" then
+    count = vehicleManager.DespawnSpawnedVehicles(PC, { aiFilter = true })
+  elseif mode == "all" then
+    count = vehicleManager.DespawnSpawnedVehicles(PC)
+  else
+    count = vehicleManager.DespawnPlayerVehicle(PC)
+  end
+
   if count > 0 then
     LogOutput("INFO", "Despawned %d vehicle(s) for player %s", count, PC.PlayerState:GetPlayerName():ToString())
   else
