@@ -20,6 +20,7 @@ local widgetManager = require("ViewportManager")
 local companyManager = require("CompanyManager")
 local characterManager = require("CharacterManager")
 local Commands = require("Commands")
+local rpManager = require("RPManager")
 
 local function LoadWebserver()
   local status, err = pcall(function()

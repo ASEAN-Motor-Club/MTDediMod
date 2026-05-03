@@ -81,9 +81,16 @@ static bool should_block_teleport(const std::string& name)
 static std::pair<std::optional<FVector>, std::optional<std::string>> get_player_state_info(UObject* PlayerController)
 {
 	auto* PSProp = PropertyCache::GetObjectProp(PlayerController, STR("PlayerState"));
-	if (!PSProp) return {std::nullopt, std::nullopt};
+	if (!PSProp) {
+		Output::send<LogLevel::Warning>(STR("get_player_state_info: PlayerState prop not found on PC={}\n"), fmt::ptr(PlayerController));
+		return {std::nullopt, std::nullopt};
+	}
 	auto* PS = *PSProp->ContainerPtrToValuePtr<UObject*>(PlayerController);
-	if (!PS) return {std::nullopt, std::nullopt};
+	if (!PS) {
+		Output::send<LogLevel::Warning>(STR("get_player_state_info: PlayerState is null\n"));
+		return {std::nullopt, std::nullopt};
+	}
+	Output::send<LogLevel::Verbose>(STR("get_player_state_info: PS={}\n"), fmt::ptr(PS));
 
 	std::optional<FVector> loc;
 	auto* LocProp = PropertyCache::GetObjectProp(PS, STR("Location"));
@@ -91,12 +98,20 @@ static std::pair<std::optional<FVector>, std::optional<std::string>> get_player_
 		auto* loc_ptr = LocProp->ContainerPtrToValuePtr<FVector>(PS);
 		if (loc_ptr) loc = *loc_ptr;
 	}
+	Output::send<LogLevel::Verbose>(STR("get_player_state_info: Location prop={} loc={}\n"),
+		LocProp ? STR("found") : STR("null"), loc ? STR("ok") : STR("null"));
 
 	std::optional<std::string> name;
+	// Try Net_AccountNickname first (on AMTPlayerState), then PlayerNamePrivate (base APlayerState)
 	auto Name = PropertyCache::GetObjectValue<FString>(PS, STR("Net_AccountNickname"));
+	if (!Name || !Name->GetCharArray().GetData()) {
+		Name = PropertyCache::GetObjectValue<FString>(PS, STR("PlayerNamePrivate"));
+	}
 	if (Name && Name->GetCharArray().GetData()) {
 		name = to_string(Name->GetCharArray().GetData());
 	}
+	Output::send<LogLevel::Verbose>(STR("get_player_state_info: Name prop={} name={}\n"),
+		Name ? STR("found") : STR("null"), name ? to_wstring(*name) : STR("<none>"));
 
 	return {loc, name};
 }
@@ -384,6 +399,98 @@ auto MotorTownMods::on_unreal_init() -> void
 		}
 	);
 
+	// ServerResetVehicleAt: custom callback with teleport blocking DISABLED
+	// Moved to Lua (RPManager.lua). Reverting to simple event registration.
+	// C++ blocking logic preserved below for reference:
+	/*
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt"),
+		"ServerResetVehicleAt",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			// --- Extract Vehicle (AMTVehicle) from function params ---
+			auto VehicleProp = static_cast<FObjectProperty*>(
+				PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("Vehicle")));
+			if (!VehicleProp) {
+				Output::send<LogLevel::Warning>(STR("ServerResetVehicleAt: Vehicle property not found\n"));
+				return false;
+			}
+			const auto& VehiclePtr = VehicleProp->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
+			if (!VehiclePtr || !*VehiclePtr) {
+				Output::send<LogLevel::Warning>(STR("ServerResetVehicleAt: Vehicle object is null\n"));
+				return false;
+			}
+			auto Vehicle = *VehiclePtr;
+
+			// --- Extract WorldLocation (FVector) and Rotation (FRotator) ---
+			auto WorldLocationProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("WorldLocation"));
+			if (!WorldLocationProp) {
+				Output::send<LogLevel::Warning>(STR("ServerResetVehicleAt: WorldLocation property not found\n"));
+				return false;
+			}
+			auto WorldLocation = WorldLocationProp->ContainerPtrToValuePtr<FVector>(Context.TheStack.Locals());
+			if (!WorldLocation) return false;
+
+			auto RotationProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("Rotation"));
+			if (!RotationProp) {
+				Output::send<LogLevel::Warning>(STR("ServerResetVehicleAt: Rotation property not found\n"));
+				return false;
+			}
+			auto Rotation = RotationProp->ContainerPtrToValuePtr<FRotator>(Context.TheStack.Locals());
+			if (!Rotation) return false;
+
+			json::object location_obj;
+			location_obj["X"] = static_cast<int>(std::round(WorldLocation->X()));
+			location_obj["Y"] = static_cast<int>(std::round(WorldLocation->Y()));
+			location_obj["Z"] = static_cast<int>(std::round(WorldLocation->Z()));
+			event_data["WorldLocation"] = location_obj;
+
+			json::object rotation_obj;
+			rotation_obj["Pitch"] = Rotation->GetPitch();
+			rotation_obj["Yaw"] = Rotation->GetYaw();
+			rotation_obj["Roll"] = Rotation->GetRoll();
+			event_data["Rotation"] = rotation_obj;
+
+			// --- Block teleport for wanted/RP players ---
+			auto [current_loc, player_name] = get_player_state_info(Context.Context);
+			if (player_name && should_block_teleport(*player_name)) {
+				// Read vehicle's current location from RootComponent → RelativeLocation
+				auto* RootProp = PropertyCache::GetObjectProp(Vehicle, STR("RootComponent"));
+				if (RootProp) {
+					auto* Root = *RootProp->ContainerPtrToValuePtr<UObject*>(Vehicle);
+					if (Root) {
+						auto* VehLocProp = PropertyCache::GetObjectProp(Root, STR("RelativeLocation"));
+						if (VehLocProp) {
+							auto* VehLoc = VehLocProp->ContainerPtrToValuePtr<FVector>(Root);
+							if (VehLoc) *WorldLocation = *VehLoc;
+						}
+						auto* VehRotProp = PropertyCache::GetObjectProp(Root, STR("RelativeRotation"));
+						if (VehRotProp) {
+							auto* VehRot = VehRotProp->ContainerPtrToValuePtr<FRotator>(Root);
+							if (VehRot) *Rotation = *VehRot;
+						}
+					}
+				}
+				event_data["teleport_blocked"] = true;
+				location_obj["X"] = static_cast<int>(std::round(WorldLocation->X()));
+				location_obj["Y"] = static_cast<int>(std::round(WorldLocation->Y()));
+				location_obj["Z"] = static_cast<int>(std::round(WorldLocation->Z()));
+				event_data["WorldLocation"] = location_obj;
+				rotation_obj["Pitch"] = Rotation->GetPitch();
+				rotation_obj["Yaw"] = Rotation->GetYaw();
+				rotation_obj["Roll"] = Rotation->GetRoll();
+				event_data["Rotation"] = rotation_obj;
+				Output::send<LogLevel::Warning>(STR("ServerResetVehicleAt: BLOCKED teleport for '{}'\n"), to_wstring(*player_name));
+			}
+
+			return true;
+		}
+	);
+	*/
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt"),
 		"ServerResetVehicleAt"
@@ -391,6 +498,10 @@ auto MotorTownMods::on_unreal_init() -> void
 
 	// ========== Teleport / Respawn Hooks ==========
 
+	// ServerTeleportCharacter: custom callback with teleport blocking DISABLED
+	// Moved to Lua (RPManager.lua). Reverting to simple event registration.
+	// C++ blocking logic preserved below for reference:
+	/*
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter"),
 		"ServerTeleportCharacter",
@@ -400,12 +511,8 @@ auto MotorTownMods::on_unreal_init() -> void
 				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 			if (!FunctionBeingExecuted) return false;
 
-			// --- Extract AbsoluteLocation (FVector) ---
 			auto LocationProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("AbsoluteLocation"));
-			if (!LocationProp) {
-				Output::send<LogLevel::Warning>(STR("ServerTeleportCharacter: AbsoluteLocation property not found\n"));
-				return false;
-			}
+			if (!LocationProp) { Output::send<LogLevel::Warning>(STR("ServerTeleportCharacter: AbsoluteLocation property not found\n")); return false; }
 			auto Location = LocationProp->ContainerPtrToValuePtr<FVector>(Context.TheStack.Locals());
 			if (!Location) return false;
 
@@ -415,7 +522,6 @@ auto MotorTownMods::on_unreal_init() -> void
 			location_obj["Z"] = static_cast<int>(std::round(Location->Z()));
 			event_data["AbsoluteLocation"] = location_obj;
 
-			// --- Block teleport for wanted/RP players ---
 			auto [current_loc, player_name] = get_player_state_info(Context.Context);
 			if (player_name && should_block_teleport(*player_name) && current_loc) {
 				*Location = *current_loc;
@@ -426,24 +532,24 @@ auto MotorTownMods::on_unreal_init() -> void
 				event_data["AbsoluteLocation"] = location_obj;
 			}
 
-			// --- Extract bCharge (bool) ---
 			auto bChargeProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("bCharge"));
-			if (bChargeProp) {
-				auto bCharge = bChargeProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
-				if (bCharge) event_data["bCharge"] = *bCharge;
-			}
+			if (bChargeProp) { auto bCharge = bChargeProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals()); if (bCharge) event_data["bCharge"] = *bCharge; }
 
-			// --- Extract bIsRespawn (bool) ---
 			auto bIsRespawnProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("bIsRespawn"));
-			if (bIsRespawnProp) {
-				auto bIsRespawn = bIsRespawnProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals());
-				if (bIsRespawn) event_data["bIsRespawn"] = *bIsRespawn;
-			}
+			if (bIsRespawnProp) { auto bIsRespawn = bIsRespawnProp->ContainerPtrToValuePtr<bool>(Context.TheStack.Locals()); if (bIsRespawn) event_data["bIsRespawn"] = *bIsRespawn; }
 
 			return true;
 		}
 	);
+	*/
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter"),
+		"ServerTeleportCharacter"
+	);
 
+	// ServerTeleportVehicle: custom callback with teleport blocking DISABLED
+	// Moved to Lua (RPManager.lua). Reverting to simple event registration.
+	/*
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehicle"),
 		"ServerTeleportVehicle",
@@ -453,12 +559,8 @@ auto MotorTownMods::on_unreal_init() -> void
 				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 			if (!FunctionBeingExecuted) return false;
 
-			// --- Extract AbsoluteLocation (FVector) ---
 			auto LocationProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("AbsoluteLocation"));
-			if (!LocationProp) {
-				Output::send<LogLevel::Warning>(STR("ServerTeleportVehicle: AbsoluteLocation property not found\n"));
-				return false;
-			}
+			if (!LocationProp) { Output::send<LogLevel::Warning>(STR("ServerTeleportVehicle: AbsoluteLocation property not found\n")); return false; }
 			auto Location = LocationProp->ContainerPtrToValuePtr<FVector>(Context.TheStack.Locals());
 			if (!Location) return false;
 
@@ -468,7 +570,6 @@ auto MotorTownMods::on_unreal_init() -> void
 			location_obj["Z"] = static_cast<int>(std::round(Location->Z()));
 			event_data["AbsoluteLocation"] = location_obj;
 
-			// --- Block teleport for wanted/RP players ---
 			auto [current_loc, player_name] = get_player_state_info(Context.Context);
 			if (player_name && should_block_teleport(*player_name) && current_loc) {
 				*Location = *current_loc;
@@ -482,7 +583,15 @@ auto MotorTownMods::on_unreal_init() -> void
 			return true;
 		}
 	);
+	*/
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehicle"),
+		"ServerTeleportVehicle"
+	);
 
+	// ServerRespawnCharacter: custom callback with teleport blocking DISABLED
+	// Moved to Lua (RPManager.lua). Reverting to simple event registration.
+	/*
 	HookManager::RegisterPlayerEventHook(
 		STR("/Script/MotorTown.MotorTownPlayerController:ServerRespawnCharacter"),
 		"ServerRespawnCharacter",
@@ -492,12 +601,8 @@ auto MotorTownMods::on_unreal_init() -> void
 				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
 			if (!FunctionBeingExecuted) return false;
 
-			// --- Extract AbsoluteLocation (FVector) ---
 			auto LocationProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("AbsoluteLocation"));
-			if (!LocationProp) {
-				Output::send<LogLevel::Warning>(STR("ServerRespawnCharacter: AbsoluteLocation property not found\n"));
-				return false;
-			}
+			if (!LocationProp) { Output::send<LogLevel::Warning>(STR("ServerRespawnCharacter: AbsoluteLocation property not found\n")); return false; }
 			auto Location = LocationProp->ContainerPtrToValuePtr<FVector>(Context.TheStack.Locals());
 			if (!Location) return false;
 
@@ -507,7 +612,6 @@ auto MotorTownMods::on_unreal_init() -> void
 			location_obj["Z"] = static_cast<int>(std::round(Location->Z()));
 			event_data["AbsoluteLocation"] = location_obj;
 
-			// --- Block teleport for wanted/RP players ---
 			auto [current_loc, player_name] = get_player_state_info(Context.Context);
 			if (player_name && should_block_teleport(*player_name) && current_loc) {
 				*Location = *current_loc;
@@ -520,6 +624,11 @@ auto MotorTownMods::on_unreal_init() -> void
 
 			return true;
 		}
+	);
+	*/
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerRespawnCharacter"),
+		"ServerRespawnCharacter"
 	);
 
 	HookManager::RegisterPlayerEventPostHook(
