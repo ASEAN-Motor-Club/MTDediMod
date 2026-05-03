@@ -161,6 +161,12 @@ local function CreateNewEvent(event)
       PC:ServerAddEvent(Event)
     else
       eventSystem.Net_Events[#eventSystem.Net_Events + 1] = Event
+      -- PC not found: hook won't fire, emit SSE event manually so backend tracks it
+      EnqueueWebhookEvent("ServerAddEvent", {
+        CharacterGuid = event.OwnerCharacterId and event.OwnerCharacterId.CharacterGuid or "",
+        PlayerId = event.OwnerCharacterId and event.OwnerCharacterId.UniqueNetId or "",
+        Event = EventToTable(eventSystem.Net_Events[#eventSystem.Net_Events]),
+      })
     end
 
     local last = #eventSystem.Net_Events
@@ -272,6 +278,12 @@ local function CreateEventWithoutOwner(event)
       eventSystem.Net_Events[last].CaptureTheFlagSetup.ScoreToWin = event.CaptureTheFlagSetup.ScoreToWin or 0
       eventSystem.Net_Events[last].CaptureTheFlagSetup.Slowness = event.CaptureTheFlagSetup.Slowness or 0
     end
+
+    -- Emit SSE webhook event so the backend can track this ownerless event.
+    -- PC:ServerAddEvent is not called (no owner), so the C++ hook never fires.
+    EnqueueWebhookEvent("ServerAddEvent", {
+      Event = EventToTable(eventSystem.Net_Events[last]),
+    })
 
     return true, GuidToString(eventSystem.Net_Events[last].EventGuid)
   end
