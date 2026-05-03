@@ -62,6 +62,45 @@ static std::string FormatGuid(const FGuid* guid)
 	);
 }
 
+// Check if a character display name has a wanted (*) or RP-mode (R) tag.
+// Tag format from player_tags.py: [(?=[CMGPR*])[CMGPR\d*]+]\s*
+// R and * are unique to RP mode and wanted stars respectively.
+static bool should_block_teleport(const std::string& name)
+{
+	if (name.empty() || name[0] != '[') return false;
+	auto close = name.find(']');
+	if (close == std::string::npos || close < 2) return false;
+	for (size_t i = 1; i < close; ++i) {
+		if (name[i] == 'R' || name[i] == '*') return true;
+	}
+	return false;
+}
+
+// Get current world location and display name from PlayerController → PlayerState.
+// Returns {location, name} — either may be nullopt if resolution fails.
+static std::pair<std::optional<FVector>, std::optional<std::string>> get_player_state_info(UObject* PlayerController)
+{
+	auto* PSProp = PropertyCache::GetObjectProp(PlayerController, STR("PlayerState"));
+	if (!PSProp) return {std::nullopt, std::nullopt};
+	auto* PS = *PSProp->ContainerPtrToValuePtr<UObject*>(PlayerController);
+	if (!PS) return {std::nullopt, std::nullopt};
+
+	std::optional<FVector> loc;
+	auto* LocProp = PropertyCache::GetObjectProp(PS, STR("Location"));
+	if (LocProp) {
+		auto* loc_ptr = LocProp->ContainerPtrToValuePtr<FVector>(PS);
+		if (loc_ptr) loc = *loc_ptr;
+	}
+
+	std::optional<std::string> name;
+	auto Name = PropertyCache::GetObjectValue<FString>(PS, STR("Net_AccountNickname"));
+	if (Name && Name->GetCharArray().GetData()) {
+		name = to_string(Name->GetCharArray().GetData());
+	}
+
+	return {loc, name};
+}
+
 auto MotorTownMods::on_unreal_init() -> void
 {
 	HookManager::UnregisterAllHooks(); // Prevent duplicate hooks on hot-reload if destructor wasn't fully processed
@@ -376,6 +415,17 @@ auto MotorTownMods::on_unreal_init() -> void
 			location_obj["Z"] = static_cast<int>(std::round(Location->Z()));
 			event_data["AbsoluteLocation"] = location_obj;
 
+			// --- Block teleport for wanted/RP players ---
+			auto [current_loc, player_name] = get_player_state_info(Context.Context);
+			if (player_name && should_block_teleport(*player_name) && current_loc) {
+				*Location = *current_loc;
+				event_data["teleport_blocked"] = true;
+				location_obj["X"] = static_cast<int>(std::round(current_loc->X()));
+				location_obj["Y"] = static_cast<int>(std::round(current_loc->Y()));
+				location_obj["Z"] = static_cast<int>(std::round(current_loc->Z()));
+				event_data["AbsoluteLocation"] = location_obj;
+			}
+
 			// --- Extract bCharge (bool) ---
 			auto bChargeProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("bCharge"));
 			if (bChargeProp) {
@@ -418,6 +468,17 @@ auto MotorTownMods::on_unreal_init() -> void
 			location_obj["Z"] = static_cast<int>(std::round(Location->Z()));
 			event_data["AbsoluteLocation"] = location_obj;
 
+			// --- Block teleport for wanted/RP players ---
+			auto [current_loc, player_name] = get_player_state_info(Context.Context);
+			if (player_name && should_block_teleport(*player_name) && current_loc) {
+				*Location = *current_loc;
+				event_data["teleport_blocked"] = true;
+				location_obj["X"] = static_cast<int>(std::round(current_loc->X()));
+				location_obj["Y"] = static_cast<int>(std::round(current_loc->Y()));
+				location_obj["Z"] = static_cast<int>(std::round(current_loc->Z()));
+				event_data["AbsoluteLocation"] = location_obj;
+			}
+
 			return true;
 		}
 	);
@@ -445,6 +506,17 @@ auto MotorTownMods::on_unreal_init() -> void
 			location_obj["Y"] = static_cast<int>(std::round(Location->Y()));
 			location_obj["Z"] = static_cast<int>(std::round(Location->Z()));
 			event_data["AbsoluteLocation"] = location_obj;
+
+			// --- Block teleport for wanted/RP players ---
+			auto [current_loc, player_name] = get_player_state_info(Context.Context);
+			if (player_name && should_block_teleport(*player_name) && current_loc) {
+				*Location = *current_loc;
+				event_data["teleport_blocked"] = true;
+				location_obj["X"] = static_cast<int>(std::round(current_loc->X()));
+				location_obj["Y"] = static_cast<int>(std::round(current_loc->Y()));
+				location_obj["Z"] = static_cast<int>(std::round(current_loc->Z()));
+				event_data["AbsoluteLocation"] = location_obj;
+			}
 
 			return true;
 		}
