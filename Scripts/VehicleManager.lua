@@ -3046,6 +3046,44 @@ local function HandleDespawnPlayerVehicle(session)
   end
 end
 
+---Handle POST /player_vehicles/{playerId}/despawn_spawned_vehicle
+---Body: { vehicleId: number }
+---Despawns a specific vehicle from a player's Net_SpawnedVehicles by VehicleId.
+---@type RequestPathHandler
+local function HandleDespawnSpawnedVehicleById(session)
+  local playerId = session.pathComponents[2]
+  local PC = GetPlayerControllerFromUniqueId(playerId)
+  if not PC:IsValid() then
+    return { error = "Invalid player controller" }, nil, 400
+  end
+
+  local content = json.parse(session.content) or {}
+  local vehicleId = content.vehicleId
+  if not vehicleId then
+    return { error = "Missing vehicleId" }, nil, 400
+  end
+
+  if not PC.Net_SpawnedVehicles:IsValid() then
+    return { error = "No spawned vehicles" }, nil, 404
+  end
+
+  local target = nil
+  PC.Net_SpawnedVehicles:ForEach(function(index, element)
+    local vehicle = element:get()
+    if vehicle:IsValid() and IsUObjectSafe(vehicle) and not vehicle:IsActorBeingDestroyed()
+        and vehicle.Net_VehicleId == vehicleId then
+      target = vehicle
+    end
+  end)
+
+  if not target then
+    return { error = "Vehicle not found in spawned vehicles" }, nil, 404
+  end
+
+  PC:ServerDespawnVehicle(target, 0)
+  return { despawned = 1, vehicleId = vehicleId }, nil, 200
+end
+
 ---Handle GET /vehicle_parts_by_tag/*
 ---@type RequestPathHandler
 local function HandleGetVehiclePartsByTag(session)
@@ -3120,6 +3158,7 @@ return {
   HandleDespawnVehicle = HandleDespawnVehicle,
   HandleDespawnPlayerVehicle = HandleDespawnPlayerVehicle,
   HandleDespawnSpawnedVehicles = HandleDespawnSpawnedVehicles,
+  HandleDespawnSpawnedVehicleById = HandleDespawnSpawnedVehicleById,
   HandleDetachPlayerVehicle = HandleDetachPlayerVehicle,
   HandleCreateVehicleDealerSpawnPoint = HandleCreateVehicleDealerSpawnPoint,
   HandleGetGarages = HandleGetGarages,
