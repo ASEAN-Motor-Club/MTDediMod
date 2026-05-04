@@ -3093,6 +3093,17 @@ local function HandleSetVehiclePartsByTag(session)
   end
 end
 
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSpawnVehicle",
+  function(PC, SpawnParams)
+    local params = SpawnParams:get()
+    local vehicleId = params.VehicleId
+    local vehicleKey = params.VehicleKey:ToString()
+    local location = params.AbsoluteLocation
+    LogOutput("INFO", "ServerSpawnVehicle: VehicleId=%d, VehicleKey=%s, Location=(%f, %f, %f)",
+      vehicleId, vehicleKey, location.X, location.Y, location.Z)
+  end
+)
+
 return {
   DespawnPlayerVehicle = DespawnPlayerVehicle,
   DespawnSpawnedVehicles = DespawnSpawnedVehicles,
