@@ -2,7 +2,6 @@ local vehicleManager = require("VehicleManager")
 local teleportManager = require("TeleportManager")
 local integrityChecker = require("IntegrityChecker")
 local vehicleSaveSpawn = require("VehicleSaveSpawn")
-local navDiag = require("NavDiag")
 local UEHelpers = require("UEHelpers")
 local types = require("MTHelpers.Types")
 
@@ -147,19 +146,6 @@ Commands["/spawn_vehicle2"] = function(PC, args)
 end
 
 Commands["/spv2"] = Commands["/spawn_vehicle2"]
-
-Commands["/navdiag"] = function(PC, args)
-  navDiag.Dump(PC)
-end
-
-Commands["/navadd"] = function(PC, args)
-  local x, y, z = tonumber(args[1]), tonumber(args[2]), tonumber(args[3])
-  if not x or not y or not z then
-    LogOutput("WARN", "/navadd x y z")
-    return
-  end
-  navDiag.TryAddDestination(PC, x, y, z)
-end
 
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then
