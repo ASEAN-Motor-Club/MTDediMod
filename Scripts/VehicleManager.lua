@@ -18,6 +18,9 @@ local TableToVehiclePart = vehicleSerialization.TableToVehiclePart
 local vehicleDealerSoftPath = "/Script/MotorTown.MTDealerVehicleSpawnPoint"
 local garageSoftPath = "/Game/Objects/GarageActorBP.GarageActorBP_C"
 
+-- Forward declarations for functions defined later in the file
+local ApplyPartsToVehicle
+
 local function GetPlayerVehicle(PC)
   if PC.LastVehicle ~= nil and PC.LastVehicle:IsValid() then
     return PC.LastVehicle
@@ -2541,7 +2544,7 @@ end
 ---@param vehicle AMTVehicle
 ---@param parts table[] Part tables (from VehiclePartToTable or JSON)
 ---@return boolean
-local function ApplyPartsToVehicle(vehicle, parts)
+function ApplyPartsToVehicle(vehicle, parts)
   if not vehicle:IsValid() or not vehicle.Net_Parts:IsValid() then
     LogOutput("ERROR", "ApplyPartsToVehicle: vehicle or Net_Parts invalid")
     return false
