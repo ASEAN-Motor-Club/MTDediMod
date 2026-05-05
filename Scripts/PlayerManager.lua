@@ -1243,9 +1243,56 @@ local function HandleSetCustomDestination(session)
     return { error = string.format("Player %s not found", characterGuid) }, nil, 404
   end
 
+  local ps = PC.PlayerState
+  if not ps:IsValid() then
+    return { error = "PlayerState not valid" }, nil, 400
+  end
+
   local location = { X = data.Location.X, Y = data.Location.Y, Z = data.Location.Z }
-  PC:ServerSetCustomDestination(location)
+  ps.CustomDestinationAbsoluteLocation = location
+  LogOutput("INFO", "Set custom destination for %s to %s", characterGuid, json.stringify(location))
   return nil, nil, 204
+end
+
+local function HandleDiagNavigation(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return { error = "Missing character GUID" }, nil, 400
+  end
+
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = "Player not found" }, nil, 404
+  end
+
+  local result = {}
+
+  local nav = PC.Navigation
+  if not nav:IsValid() then
+    result.NavigationValid = false
+    return result, nil, 200
+  end
+
+  result.NavigationValid = true
+  result.NavigationFullName = nav:GetFullName()
+
+  local ok, err = pcall(function()
+    local dests = nav.Destinations
+    result.DestinationsCount = #dests
+    local items = {}
+    for i = 1, math.min(#dests, 10) do
+      local d = dests[i]
+      local actor = d.DestinationActor
+      table.insert(items, {
+        ActorValid = actor:IsValid(),
+        ActorName = actor:IsValid() and actor:GetFullName() or "nil",
+      })
+    end
+    result.Destinations = items
+  end)
+  if not ok then result.DestinationsError = tostring(err) end
+
+  return result, nil, 200
 end
 
 return {
@@ -1270,4 +1317,5 @@ return {
   HandleExperimentalSpectate = HandleExperimentalSpectate,
   HandleSetCustomDestination = HandleSetCustomDestination,
   HandleGetPlayerCustomization = HandleGetPlayerCustomization,
+  HandleDiagNavigation = HandleDiagNavigation,
 }

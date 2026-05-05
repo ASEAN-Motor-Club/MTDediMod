@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc1] — 2026-05-05
+
+#### Added
+- `POST /player_vehicles/{id}/capture_vehicle` — captures current vehicle config (parts, customization, decal) into an in-memory store.
+- `POST /player_vehicles/{id}/apply_captured_vehicle` — applies captured config to the player's current vehicle, including full nested array data (attachments, float values, string values).
+- `POST /players/{id}/enter_last_vehicle` — enters player into their last driven vehicle.
+- `GET /player_vehicles/{id}/exit` — exits player from current vehicle.
+- `POST /vehicles/despawn_by_id` — despawns a specific vehicle by VehicleId.
+- `ServerSpawnVehicle` RPC hook for spawn param logging.
+- Timing instrumentation in `ApplyPartsToVehicle` for monitoring game thread blocking.
+
+#### Fixed
+- Parts with nested arrays (StringValues, FloatValues, Int64Values, VectorValues) are now correctly applied when spawning or restoring vehicles. Previously, nested TArray fields inside struct arrays were silently dropped.
+- Attachment parts (e.g. `Attachment_Light_08`) with mesh paths and position/rotation offsets now properly restored.
+- `HandleSetWorldVehicleDecal` now delegates to the shared `ApplyPartsToVehicle` function for consistent parts handling.
+
 ### [server/v0.40.1-rc1] — 2026-05-03
 
 #### Added

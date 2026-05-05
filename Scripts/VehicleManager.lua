@@ -2075,30 +2075,10 @@ local function HandleSetWorldVehicleDecal(session)
 
       if content.parts ~= nil then
         LogOutput("INFO", "Setting parts, count=" .. tostring(#content.parts))
-        if vehicle:IsValid() and vehicle.Net_Parts:IsValid() then
-          vehicle.Net_Parts:Empty()
-          for i, part in ipairs(content.parts) do
-            LogOutput("INFO", "  part[" .. i .. "] raw Key=" .. tostring(part.Key) .. " partKey=" .. tostring(part.partKey))
-            local convertedPart = TableToVehiclePart(part)
-            LogOutput("INFO", "  part[" .. i .. "] converted Key=" .. tostring(convertedPart.Key) .. " Slot=" .. tostring(convertedPart.Slot))
-            if part.StringValues ~= nil then
-              convertedPart.StringValues = part.StringValues
-            end
-            if part.FloatValues ~= nil then
-              convertedPart.FloatValues = part.FloatValues
-            end
-            if part.Int64Values ~= nil then
-              convertedPart.Int64Values = part.Int64Values
-            end
-            if part.VectorValues ~= nil then
-              convertedPart.VectorValues = part.VectorValues
-            end
-            vehicle.Net_Parts[i] = convertedPart
-          end
-          LogOutput("INFO", "Calling ServerSetParts with " .. tostring(vehicle.Net_Parts:Num()) .. " parts on Net_Parts TArray")
-          vehicle:ServerSetParts(vehicle.Net_Parts)
+        if vehicle:IsValid() then
+          ApplyPartsToVehicle(vehicle, content.parts)
         else
-          LogOutput("ERROR", "Vehicle or Net_Parts invalid, cannot set parts")
+          LogOutput("ERROR", "Vehicle invalid, cannot set parts")
         end
       end
     end
@@ -2555,42 +2535,223 @@ local function TableToVehicleSetting(t)
 end
 
 ---Apply parts to an existing vehicle's Net_Parts TArray and call ServerSetParts.
+---Uses a two-pass approach: scalar fields via proxy assignment, then nested TArray
+---fields (FloatValues, StringValues, etc.) via ForEach with element:get() proxies.
+---Plain Lua table assignment for nested arrays inside structs crashes the engine.
 ---@param vehicle AMTVehicle
----@param parts table[]
+---@param parts table[] Part tables (from VehiclePartToTable or JSON)
 ---@return boolean
 local function ApplyPartsToVehicle(vehicle, parts)
   if not vehicle:IsValid() or not vehicle.Net_Parts:IsValid() then
     LogOutput("ERROR", "ApplyPartsToVehicle: vehicle or Net_Parts invalid")
     return false
   end
+
+  local t0 = os.clock()
+
+  -- Pass 1: set scalar fields (Key/FName, Slot, Damage, ItemInventory) via proxy assignment
   vehicle.Net_Parts:Empty()
   for i, part in ipairs(parts) do
-    local convertedPart = TableToVehiclePart(part)
-    if part.StringValues ~= nil then
-      convertedPart.StringValues = part.StringValues
-    end
-    if part.FloatValues ~= nil then
-      convertedPart.FloatValues = part.FloatValues
-    end
-    if part.Int64Values ~= nil then
-      convertedPart.Int64Values = part.Int64Values
-    end
-    if part.VectorValues ~= nil then
-      convertedPart.VectorValues = part.VectorValues
-    end
-    vehicle.Net_Parts[i] = convertedPart
+    vehicle.Net_Parts[i] = TableToVehiclePart(part)
   end
-  -- Build a fresh Lua table to pass to ServerSetParts instead of the TArray proxy.
-  -- Passing the TArray proxy directly causes "index out of range" after :Empty().
-  local partsArray = {}
+  local t1 = os.clock()
+
+  -- Pass 2: populate nested TArray fields through ForEach (gives mutable struct refs).
+  -- Proxy assignment only copies scalar fields — nested TArrays need their own proxies.
+  local partIndex = 0
+  vehicle.Net_Parts:ForEach(function(index, element)
+    partIndex = partIndex + 1
+    local part = parts[partIndex]
+    if not part then return end
+
+    local partStruct = element:get()
+    if part.FloatValues and #part.FloatValues > 0 and partStruct.FloatValues:IsValid() then
+      partStruct.FloatValues:Empty()
+      for j, val in ipairs(part.FloatValues) do
+        partStruct.FloatValues[j] = val
+      end
+    end
+    if part.Int64Values and #part.Int64Values > 0 and partStruct.Int64Values:IsValid() then
+      partStruct.Int64Values:Empty()
+      for j, val in ipairs(part.Int64Values) do
+        partStruct.Int64Values[j] = val
+      end
+    end
+    if part.StringValues and #part.StringValues > 0 and partStruct.StringValues:IsValid() then
+      partStruct.StringValues:Empty()
+      for j, str in ipairs(part.StringValues) do
+        partStruct.StringValues[j] = str
+      end
+    end
+    if part.VectorValues and #part.VectorValues > 0 and partStruct.VectorValues:IsValid() then
+      partStruct.VectorValues:Empty()
+      for j, vec in ipairs(part.VectorValues) do
+        partStruct.VectorValues[j] = vec
+      end
+    end
+  end)
+  local t2 = os.clock()
+
+  vehicle:ServerSetParts(vehicle.Net_Parts)
+  local t3 = os.clock()
+
+  local pass1_ms = (t1 - t0) * 1000
+  local pass2_ms = (t2 - t1) * 1000
+  local setparts_ms = (t3 - t2) * 1000
+  local total_ms = (t3 - t0) * 1000
+  LogOutput("INFO", "ApplyPartsToVehicle: %d parts to %s | pass1=%.1fms pass2=%.1fms setparts=%.1fms total=%.1fms",
+    #parts, vehicle:GetFullName(), pass1_ms, pass2_ms, setparts_ms, total_ms)
+  return true
+end
+
+-- In-memory store for captured vehicle config (module-level, persists across requests until mod reload)
+local CapturedVehicleConfig = nil
+
+---Capture a vehicle's full config (parts, customization, decal) into a serializable table.
+---@param vehicle AMTVehicle
+---@return table?
+local function CaptureVehicleConfig(vehicle)
+  if not vehicle:IsValid() or not IsUObjectSafe(vehicle) or vehicle:IsActorBeingDestroyed() then
+    return nil
+  end
+
+  local config = {}
+
+  config.vehicleId = vehicle.Net_VehicleId
+  config.fullName = vehicle:GetFullName()
+
+  local class = vehicle:GetClass()
+  if class:IsValid() then
+    local fullName = class:GetFullName()
+    config.assetPath = fullName:gsub("^BlueprintGeneratedClass ", ""):gsub("^Class ", "")
+  end
+
+  config.parts = {}
   if vehicle.Net_Parts:IsValid() then
     vehicle.Net_Parts:ForEach(function(index, element)
-      table.insert(partsArray, element:get())
+      local part = element:get()
+      if IsUObjectSafe(part) then
+        table.insert(config.parts, VehiclePartToTable(part))
+      end
     end)
   end
-  vehicle:ServerSetParts(partsArray)
-  LogOutput("INFO", "ApplyPartsToVehicle: applied %d parts to %s", #parts, vehicle:GetFullName())
-  return true
+
+  if vehicle.Customization:IsValid() then
+    config.customization = VehicleCustomizationToTable(vehicle.Customization)
+  end
+
+  if vehicle.Net_Decal:IsValid() then
+    config.decal = VehicleDecalToTable(vehicle.Net_Decal)
+  end
+
+  return config
+end
+
+---Handle POST /player_vehicles/{playerId}/capture_vehicle
+---@type RequestPathHandler
+local function HandleCaptureVehicle(session)
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = "Invalid player controller" }, nil, 400
+  end
+
+  local vehicle = GetPlayerVehicle(PC)
+  if vehicle == nil or not vehicle:IsValid() or not IsUObjectSafe(vehicle) or vehicle:IsActorBeingDestroyed() then
+    return { error = "Player has no vehicle" }, nil, 404
+  end
+
+  local config = CaptureVehicleConfig(vehicle)
+  if not config then
+    return { error = "Failed to capture vehicle config" }, nil, 500
+  end
+
+  CapturedVehicleConfig = config
+  LogOutput("INFO", "Captured vehicle config: id=%d, parts=%d, assetPath=%s",
+    config.vehicleId, #config.parts, tostring(config.assetPath))
+
+  return { captured = config }, nil, 200
+end
+
+---Handle POST /player_vehicles/{playerId}/apply_captured_vehicle
+---Applies parts (minimal: Key/Slot/Damage), customization, and decal from the captured config.
+---@type RequestPathHandler
+local function HandleApplyCapturedVehicle(session)
+  if not CapturedVehicleConfig then
+    return { error = "No vehicle config captured yet. POST /player_vehicles/{id}/capture_vehicle first." }, nil, 400
+  end
+
+  local characterGuid = session.pathComponents[2]
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = "Invalid player controller" }, nil, 400
+  end
+
+  local vehicle = GetPlayerVehicle(PC)
+  if vehicle == nil or not vehicle:IsValid() or not IsUObjectSafe(vehicle) or vehicle:IsActorBeingDestroyed() then
+    return { error = "Player has no vehicle" }, nil, 404
+  end
+
+  -- Deep-copy to avoid TableToVehiclePart mutating the in-memory config
+  local config = json.parse(json.stringify(CapturedVehicleConfig))
+  local applied = {}
+
+  if config.parts and #config.parts > 0 then
+    local ok = ApplyPartsToVehicle(vehicle, config.parts)
+    if ok then
+      applied.parts = #config.parts
+    end
+  end
+
+  if config.customization and vehicle.Customization:IsValid() then
+    vehicle.Customization.BodyMaterialIndex = config.customization.BodyMaterialIndex
+    if vehicle.Customization.BodyColors:IsValid() and config.customization.BodyColors then
+      vehicle.Customization.BodyColors:Empty()
+      for i, bc in ipairs(config.customization.BodyColors) do
+        vehicle.Customization.BodyColors[i] = {
+          MaterialSlotName = FName(bc.MaterialSlotName),
+          Color = bc.Color,
+        }
+      end
+    end
+    PC:ServerSetVehicleCustomization(vehicle, {
+      BodyMaterialIndex = config.customization.BodyMaterialIndex,
+      BodyColors = vehicle.Customization.BodyColors,
+    })
+    applied.customization = true
+  end
+
+  if config.decal and vehicle.Net_Decal:IsValid() and vehicle.Net_Decal.DecalLayers:IsValid() then
+    local decal = TableToVehicleDecal(config.decal)
+    vehicle.Net_Decal.DecalLayers:Empty()
+    for i, layer in ipairs(decal.DecalLayers) do
+      vehicle.Net_Decal.DecalLayers[i] = layer
+    end
+    vehicle:ServerSetDecal({ DecalLayers = vehicle.Net_Decal.DecalLayers })
+    applied.decal = true
+  end
+
+  -- Schedule verification
+  local expectedParts = config.parts or {}
+  ExecuteInGameThreadWithDelay(2000, function()
+    pcall(function()
+      if not vehicle:IsValid() or not IsUObjectSafe(vehicle) then return end
+      local netPartsCount = vehicle.Net_Parts:IsValid() and vehicle.Net_Parts:Num() or 0
+      LogOutput("INFO", "VerifyParts: vehicle=%d netParts=%d expected=%d",
+        vehicle.Net_VehicleId, netPartsCount, #expectedParts)
+      if netPartsCount < #expectedParts then
+        LogOutput("WARN", "VerifyParts: mismatch, re-applying %d parts", #expectedParts)
+        ApplyPartsToVehicle(vehicle, expectedParts)
+      end
+    end)
+  end)
+
+  return {
+    status = "applied",
+    vehicleId = vehicle.Net_VehicleId,
+    capturedFrom = config.vehicleId,
+    applied = applied,
+  }, nil, 200
 end
 
 ---Find the first valid AMTVehicle with the given tag.
@@ -3166,6 +3327,8 @@ return {
   HandleSpawnVehicle = HandleSpawnVehicle,
   HandleGetVehiclePartsByTag = HandleGetVehiclePartsByTag,
   HandleSetVehiclePartsByTag = HandleSetVehiclePartsByTag,
+  HandleCaptureVehicle = HandleCaptureVehicle,
+  HandleApplyCapturedVehicle = HandleApplyCapturedVehicle,
   VehicleToTable = VehicleToTable,
   VehicleCustomizationToTable = VehicleCustomizationToTable,
   VehicleDecalToTable = VehicleDecalToTable,
