@@ -22,6 +22,7 @@ local characterManager = require("CharacterManager")
 local Commands = require("Commands")
 local rpManager = require("RPManager")
 local criminalManager = require("CriminalManager")
+local balanceManager = require("BalanceManager")
 
 local function LoadWebserver()
   local status, err = pcall(function()
@@ -55,6 +56,10 @@ local function LoadWebserver()
     server.registerHandler("/config", "POST", serverManager.HandleSetServerConfig)
     server.registerHandler("/police/patrol_areas", "GET", serverManager.HandleGetPolicePatrolAreas)
     server.registerHandler("/command", "POST", serverManager.HandleServerExecCommand)
+
+    -- Balance management
+    server.registerHandler("/balance", "GET", balanceManager.HandleGetBalance)
+    server.registerHandler("/balance", "PATCH", balanceManager.HandlePatchBalance)
 
     -- Player management
     server.registerHandler("/players", "GET", playerManager.HandleGetPlayerStates, true)
