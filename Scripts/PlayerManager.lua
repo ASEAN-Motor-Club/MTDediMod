@@ -41,6 +41,10 @@ local function PlayerStateToTable(playerState)
     if pawn:IsValid() then
       data.Rotation = RotatorToTable(pawn:K2_GetActorRotation())
     end
+    local PC = playerState:GetPlayerController()
+    if PC:IsValid() then
+      data.ViewLocation = VectorToTable(PC.Net_ServerViewAbsoluteLocation)
+    end
     data.VehicleKey = playerState.VehicleKey:ToString()
     data.bAFK = playerState.Net_bAFK
   end
