@@ -106,8 +106,10 @@ local function LoadWebserver()
     server.registerHandler("/houses/*/transfer/direct", "POST", propertyManager.HandleTransferHouseDirect)
     server.registerHandler("/houses/*/transfer/direct_extend", "POST", propertyManager.HandleTransferHouseDirectExtend)
     server.registerHandler("/houses/*/terminate", "POST", propertyManager.HandleTerminateHouseOwnership)
-    server.registerHandler("/houses/*/rent/extend", "POST", propertyManager.HandleExtendHouseRent)
+    server.registerHandler("/houses/*/rent/extend", "POST", propertyManager.HandleExtendRent)
     server.registerHandler("/houses/*/rent/set", "POST", propertyManager.HandleSetHouseRentExpiry)
+    server.registerHandler("/houses/*/rent", "POST", propertyManager.HandleRentHouse)
+    server.registerHandler("/houses/*/rentinfo", "GET", propertyManager.HandleGetRentInfo)
 
     -- Cargo management
     server.registerHandler("/delivery/points", "GET", cargoManager.HandleGetDeliveryPoints)
