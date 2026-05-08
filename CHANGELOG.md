@@ -6,10 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
-### [server/v0.42.0-rc2] — 2026-05-08
+### [server/v0.42.0-rc3] — 2026-05-08
 
-#### Added
-- Popup message shown to players who attempt house rent or extend through the native game UI, directing them to use the Discord bot (`/house buy` or `/house extend`).
+#### Changed
+- `ServerRentHouse` and `ServerRentExtendHouse` hooks now send webhook events with `Blocked=true` when a player-initiated rent/extend is intercepted, allowing the backend to handle popup messages.
+
+### [server/v0.42.0-rc2] — 2026-05-08
 
 #### Fixed
 - `io.popen("cd")` crash during hot reload — now guarded with `pcall`.
