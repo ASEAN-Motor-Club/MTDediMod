@@ -1,4 +1,9 @@
-local dir = os.getenv("PWD") or io.popen("cd"):read()
+local dir = os.getenv("PWD")
+if not dir then
+  local ok, h = pcall(io.popen, "cd")
+  if ok and h then dir = h:read() end
+end
+dir = dir or "."
 package.cpath = package.cpath .. ";" .. dir .. "/ue4ss/Mods/shared/?/core.dll"
 package.cpath = package.cpath .. ";" .. dir .. "/ue4ss/Mods/shared/?.dll"
 

@@ -456,6 +456,7 @@ RegisterHook(
       LogOutput("INFO", "Blocked in-game ServerRentHouse for house %s", GuidToString(house.HouseGuid))
       ExecuteInGameThreadWithDelay(100, function()
         if playerController:IsValid() and house:IsValid() then
+          playerController:ClientShowPopupMessage(FText("House rentals must be done through our Discord bot. Use /house buy in Discord."))
           playerController:ServerTerminateHouseOwnership(house)
         end
       end)
@@ -494,6 +495,7 @@ RegisterHook(
     if not _allowExtendRentHouse then
       Seconds:set(0)
       Money:set(0)
+      playerController:ClientShowPopupMessage(FText("House rent extensions must be done through our Discord bot. Use /house extend in Discord."))
       if seconds > 0 then
         LogOutput("INFO", "Blocked in-game ServerRentExtendHouse: player=%s house=%s money=%d seconds=%.1f",
           uniqueId, houseGuid, money, seconds)
