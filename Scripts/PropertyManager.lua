@@ -1,7 +1,8 @@
-local UEHelper = require("UEHelpers")
 local json = require("JsonParser")
-local socket = require("socket")
 local assetManager = require("AssetManager")
+
+local _allowRentHouse = false
+local _allowExtendRentHouse = false
 
 ---@param houseGuid string
 ---@return AMTHouse?
@@ -349,6 +350,74 @@ local function HandleSetHouseRentExpiry(session)
   return { status = resultMsg }, nil, 200
 end
 
+local function HandleRentHouse(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then return { error = "Missing house GUID" }, nil, 400 end
+
+  local data = json.parse(session.content)
+  if not data or not data.CharacterGuid then
+    return { error = "Missing CharacterGuid in payload" }, nil, 400
+  end
+
+  local resultMsg = "not_executed"
+  local ok, err = pcall(function()
+    local house = FindHouseByGuid(houseGuid)
+    if not house then resultMsg = "house_not_found"; return end
+    local pc = FindOnlinePCByCharacterGuid(data.CharacterGuid)
+    if not pc or not pc:IsValid() then resultMsg = "player_offline"; return end
+
+    _allowRentHouse = true
+    pc:ServerRentHouse(house)
+    resultMsg = "success"
+  end)
+  if not ok then resultMsg = "error: " .. tostring(err) end
+  return { status = resultMsg }, nil, 200
+end
+
+local function HandleExtendRent(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then return { error = "Missing house GUID" }, nil, 400 end
+
+  local data = json.parse(session.content)
+  if not data or not data.CharacterGuid or not data.Seconds then
+    return { error = "Missing CharacterGuid or Seconds in payload" }, nil, 400
+  end
+
+  local resultMsg = "not_executed"
+  local ok, err = pcall(function()
+    local house = FindHouseByGuid(houseGuid)
+    if not house then resultMsg = "house_not_found"; return end
+    local pc = FindOnlinePCByCharacterGuid(data.CharacterGuid)
+    if not pc or not pc:IsValid() then resultMsg = "player_offline"; return end
+
+    _allowExtendRentHouse = true
+    pc:ServerRentExtendHouse(house, 0, data.Seconds)
+    resultMsg = "success"
+  end)
+  if not ok then resultMsg = "error: " .. tostring(err) end
+  return { status = resultMsg }, nil, 200
+end
+
+local function HandleGetRentInfo(session)
+  local houseGuid = session.pathComponents[2]
+  if not houseGuid then return { error = "Missing house GUID" }, nil, 400 end
+
+  local house = FindHouseByGuid(houseGuid)
+  if not house then return { error = "House not found" }, nil, 404 end
+
+  local data = HouseToTable(house)
+
+  pcall(function()
+    local gameState = GetMotorTownGameState()
+    if gameState:IsValid() and gameState.Net_ServerConfig:IsValid() then
+      data.HousingPlotRentalPriceRatio = gameState.Net_ServerConfig.HousingPlotRentalPriceRatio
+      data.MaxHousingPlotRentalDays = gameState.Net_ServerConfig.MaxHousingPlotRentalDays
+    end
+  end)
+
+  return { data = data }, nil, 200
+end
+
 RegisterHook(
   "/Script/MotorTown.MotorTownPlayerController:ServerBuyHouse",
   function(PC, House)
@@ -380,23 +449,28 @@ RegisterHook(
   function(PC, House)
     local playerController = PC:get()
     if not playerController:IsValid() then return end
-
     local house = House:get()
     if not house or not house:IsValid() then return end
 
+    if not _allowRentHouse then
+      LogOutput("INFO", "Blocked in-game ServerRentHouse for house %s", GuidToString(house.HouseGuid))
+      ExecuteInGameThreadWithDelay(100, function()
+        if playerController:IsValid() and house:IsValid() then
+          playerController:ServerTerminateHouseOwnership(house)
+        end
+      end)
+      return
+    end
+    _allowRentHouse = false
+
     local playerState = playerController.PlayerState
     if not playerState:IsValid() then return end
-
     local uniqueId = GetUniqueNetIdAsString(playerState)
     local characterGuid = GuidToString(playerState.CharacterGuid)
     local houseGuid = GuidToString(house.HouseGuid)
-
     LogOutput("INFO", "ServerRentHouse: player=%s guid=%s house=%s", uniqueId, characterGuid, houseGuid)
-
     EnqueueWebhookEvent("ServerRentHouse", {
-      CharacterGuid = characterGuid,
-      PlayerId = uniqueId,
-      HouseGuid = houseGuid,
+      CharacterGuid = characterGuid, PlayerId = uniqueId, HouseGuid = houseGuid,
     })
   end
 )
@@ -406,28 +480,37 @@ RegisterHook(
   function(PC, House, Money, Seconds)
     local playerController = PC:get()
     if not playerController:IsValid() then return end
-
     local house = House:get()
     if not house or not house:IsValid() then return end
 
     local playerState = playerController.PlayerState
     if not playerState:IsValid() then return end
-
     local uniqueId = GetUniqueNetIdAsString(playerState)
     local characterGuid = GuidToString(playerState.CharacterGuid)
     local houseGuid = GuidToString(house.HouseGuid)
     local money = Money:get()
     local seconds = Seconds:get()
 
-    LogOutput("INFO", "ServerRentExtendHouse: player=%s guid=%s house=%s money=%d seconds=%.1f",
-      uniqueId, characterGuid, houseGuid, money, seconds)
+    if not _allowExtendRentHouse then
+      Seconds:set(0)
+      Money:set(0)
+      if seconds > 0 then
+        LogOutput("INFO", "Blocked in-game ServerRentExtendHouse: player=%s house=%s money=%d seconds=%.1f",
+          uniqueId, houseGuid, money, seconds)
+        EnqueueWebhookEvent("ServerRentExtendHouse", {
+          CharacterGuid = characterGuid, PlayerId = uniqueId, HouseGuid = houseGuid,
+          Money = money, Seconds = seconds,
+        })
+      end
+      return
+    end
+    _allowExtendRentHouse = false
 
+    LogOutput("INFO", "ServerRentExtendHouse (system): player=%s guid=%s house=%s money=%d seconds=%.1f",
+      uniqueId, characterGuid, houseGuid, money, seconds)
     EnqueueWebhookEvent("ServerRentExtendHouse", {
-      CharacterGuid = characterGuid,
-      PlayerId = uniqueId,
-      HouseGuid = houseGuid,
-      Money = money,
-      Seconds = seconds,
+      CharacterGuid = characterGuid, PlayerId = uniqueId, HouseGuid = houseGuid,
+      Money = money, Seconds = seconds,
     })
   end
 )
@@ -466,5 +549,8 @@ return {
   HandleTransferHouseDirectExtend = HandleTransferHouseDirectExtend,
   HandleTerminateHouseOwnership = HandleTerminateHouseOwnership,
   HandleExtendHouseRent = HandleExtendHouseRent,
-  HandleSetHouseRentExpiry = HandleSetHouseRentExpiry
+  HandleSetHouseRentExpiry = HandleSetHouseRentExpiry,
+  HandleRentHouse = HandleRentHouse,
+  HandleExtendRent = HandleExtendRent,
+  HandleGetRentInfo = HandleGetRentInfo,
 }
