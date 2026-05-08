@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc2] — 2026-05-08
+
+#### Added
+- Popup message shown to players who attempt house rent or extend through the native game UI, directing them to use the Discord bot (`/house buy` or `/house extend`).
+
+#### Fixed
+- `io.popen("cd")` crash during hot reload — now guarded with `pcall`.
+
 ### [server/v0.42.0-rc1] — 2026-05-05
 
 #### Added
