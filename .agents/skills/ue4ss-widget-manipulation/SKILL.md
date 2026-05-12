@@ -76,7 +76,20 @@ NotifyOnNewObject(WIDGET_FULL_PATH, function(widget)
 end)
 ```
 
-UE visibility values: `0=Visible`, `1=Collapsed`, `2=Hidden`, `3=HitTestInvisible`, `4=SelfHitTestInvisible`.
+UE visibility values (correct enum order):
+- `0 = Visible`
+- `1 = Collapsed`
+- `2 = Hidden`
+- `3 = HitTestInvisible`
+- `4 = SelfHitTestInvisible`
+
+> **Important**: `Visible (0)` allows the widget and its children to receive input. `SelfHitTestInvisible (4)` renders the widget but blocks it from receiving input — useful when you want children (like text) to handle clicks instead.
+
+## Related skills
+
+- **UE4SS UMG Creation** — Creating widgets at runtime, containers, sizing, positioning
+- **UE4SS Input Polling** — Handling clicks without delegates, debouncing, lifecycle
+- **UE4SS Fetch API** — Making HTTPS requests from UE4SS Lua
 
 ## UE4SS API reference
 
@@ -86,4 +99,6 @@ UE visibility values: `0=Visible`, `1=Collapsed`, `2=Hidden`, `3=HitTestInvisibl
 - `FindAllOf(string ShortClassName)` — finds all live instances
 - `RegisterHook(string UFunctionName, function Callback)` — hooks a UFunction; callback params are `(Context, Params...)`
 - `ExecuteInGameThread(function)` — queues execution on the game thread
+- `LoopInGameThreadWithDelay(integer DelayMs, function Callback)` — polls repeatedly; return `handle` for `CancelDelayedAction`
+- `CancelDelayedAction(handle)` — stops a delayed/polling action
 - `LoopAsync(integer DelayMs, function Callback)` — polls until callback returns `true`

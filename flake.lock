@@ -75,7 +75,8 @@
         "fenix": "fenix",
         "flake-parts": "flake-parts",
         "nixpkgs": "nixpkgs",
-        "ue4ss": "ue4ss"
+        "ue4ss": "ue4ss",
+        "ue4ss-prebuilt": "ue4ss-prebuilt"
       }
     },
     "rust-analyzer-src": {
@@ -98,19 +99,32 @@
     "ue4ss": {
       "flake": false,
       "locked": {
-        "lastModified": 1773447772,
-        "narHash": "sha256-Kocdndrl/T9I7nhEzTa1fo+V9BarymxqCRA917JFup4=",
+        "lastModified": 1774932249,
+        "narHash": "sha256-MQaYK+/o/abgH6BjciF3VSj4SEwatzVOMMS1lqPRF6I=",
         "ref": "refs/heads/main",
-        "rev": "0bfec09ee30b7c4cda8aa151e2fdb15cbe6c10c9",
-        "revCount": 1945,
-        "submodules": true,
+        "rev": "265115c05bfcc75f96d8a1f4beda105a7d2753b1",
+        "revCount": 1950,
+        "submodules": false,
         "type": "git",
         "url": "https://github.com/UE4SS-RE/RE-UE4SS.git"
       },
       "original": {
-        "submodules": true,
+        "submodules": false,
         "type": "git",
         "url": "https://github.com/UE4SS-RE/RE-UE4SS.git"
+      }
+    },
+    "ue4ss-prebuilt": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1707940758,
+        "narHash": "sha256-QcY8A2ItZXEVzOsaurWvILqKdwjdZWrZea2aG0X2wzI=",
+        "type": "tarball",
+        "url": "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip"
       }
     }
   },
