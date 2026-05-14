@@ -338,6 +338,7 @@ local function TriggerDespawnAimed()
         local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
         local cargoClass = StaticFindObject("/Script/MotorTown.MTCargo")
         local itemComponentClass = StaticFindObject("/Script/MotorTown.UMTItemComponent")
+        local breakableClass = StaticFindObject("/Script/MotorTown.MTBreakable")
 
         if vehicleClass:IsValid() and actor:IsA(vehicleClass) then
             ---@cast actor AMTVehicle
@@ -350,6 +351,11 @@ local function TriggerDespawnAimed()
             if not actor:IsActorBeingDestroyed() then
                 PC:ServerDespawnCargo(actor)
                 LogOutput("INFO", "Despawn shortcut: Despawned cargo %s", actor:GetFullName())
+            end
+        elseif breakableClass:IsValid() and actor:IsA(breakableClass) then
+            if not actor:IsActorBeingDestroyed() then
+                PC:ServerTrashItem(actor)
+                LogOutput("INFO", "Despawn shortcut: Trashed breakable %s", actor:GetFullName())
             end
         elseif itemComponentClass:IsValid() then
             local itemComponent = actor:GetComponentByClass(itemComponentClass)
