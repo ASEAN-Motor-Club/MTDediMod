@@ -382,6 +382,11 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
+### [client/v0.3.3] — 2026-05-14
+
+#### Added
+- Despawn shortcut now trashes `MTBreakable` actors via `ServerTrashItem` (Ctrl+Shift+RMB on breakable objects).
+
 ### [client/v0.3.0] — 2026-04-29
 
 #### Added
