@@ -161,6 +161,7 @@ local function LoadWebserver()
     server.registerHandler("/messages/popup", "POST", widgetManager.HandleShowPopupMessage)
     server.registerHandler("/messages/system", "POST", widgetManager.HandleShowSystemMessage)
     server.registerHandler("/messages/announce", "POST", chatManager.HandleAnnounceMessage)
+    server.registerHandler("/pin", "POST", chatManager.HandlePinAnnouncement)
 
     -- Company management
     server.registerHandler("/companies", "GET", companyManager.HandleGetCompanies)

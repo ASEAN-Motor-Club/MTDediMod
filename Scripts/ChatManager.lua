@@ -49,6 +49,27 @@ end
 
 -- Handle HTTP requests
 
+---Handle a direct pinned-announcement write from the backend (`POST /pin`).
+---The mod is intentionally dumb here: Django computes the current scheduled
+---message and pushes it. We just write whatever value we receive to the `/ap`
+---board (Net_ServerConfig.PinnedAnnounce). Empty string clears the board.
+---@type RequestPathHandler
+local function HandlePinAnnouncement(session)
+  local data = json.parse(session.content)
+  if not data or type(data) ~= "table" or type(data.message) ~= "string" then
+    return { message = "Invalid request content" }, nil, 400
+  end
+
+  local message = data.message
+  ExecuteInGameThread(function()
+    local gameState = GetMotorTownGameState()
+    if gameState and gameState:IsValid() and gameState.Net_ServerConfig then
+      gameState.Net_ServerConfig.PinnedAnnounce = message
+    end
+  end)
+  return { status = "ok" }
+end
+
 ---Handle announce request
 ---@type RequestPathHandler
 local function HandleAnnounceMessage(session)
@@ -73,5 +94,6 @@ local function HandleAnnounceMessage(session)
 end
 
 return {
-  HandleAnnounceMessage = HandleAnnounceMessage
+  HandleAnnounceMessage = HandleAnnounceMessage,
+  HandlePinAnnouncement = HandlePinAnnouncement
 }
