@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [Unreleased]
+
+#### Added
+- `POST /pin` — dumb endpoint that sets the server's pinned announcement (`Net_ServerConfig.PinnedAnnounce`, the `/ap` board) to the message sent by the backend. No polling/scheduling logic in the mod; Django computes the current scheduled message and pushes it.
+
 ### [server/v0.42.0-rc3] — 2026-05-08
 
 #### Changed
