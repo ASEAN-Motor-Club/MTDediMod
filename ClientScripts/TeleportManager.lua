@@ -59,15 +59,57 @@ local function FindTeleportPoint(name)
   return nil
 end
 
---- Get list of teleport point names
+--- Get list of teleport point names, collapsing points that share the exact
+--- same location into a single entry with aliases. Mirrors mergeTeleportPoints
+--- in amc-web/src/lib/components/Map/Map/teleport.ts: the longest name wins as
+--- the main point, others become its aliases; ties keep the earliest name.
 ---@return string[]
 local function GetPointNames()
   local points = GetTeleportPoints()
   if type(points) ~= "table" then return {} end
 
-  local names = {}
+  -- Group points by exact coordinate, longest name wins as primary.
+  local pointByCoord = {} -- coordKey -> { name = string, aliases = string[] }
+  local order = {}        -- coordKey in first-seen order
   for _, point in ipairs(points) do
-    table.insert(names, point.name)
+    local coordKey = string.format(
+      "%s,%s,%s",
+      tostring(point.location.X),
+      tostring(point.location.Y),
+      tostring(point.location.Z)
+    )
+    local existing = pointByCoord[coordKey]
+    if existing then
+      local isDuplicate = existing.name == point.name
+      if not isDuplicate then
+        for _, alias in ipairs(existing.aliases) do
+          if alias == point.name then
+            isDuplicate = true
+            break
+          end
+        end
+      end
+      if not isDuplicate then
+        if #point.name > #existing.name then
+          table.insert(existing.aliases, existing.name)
+          existing.name = point.name
+        else
+          table.insert(existing.aliases, point.name)
+        end
+      end
+    else
+      pointByCoord[coordKey] = { name = point.name, aliases = {} }
+      table.insert(order, pointByCoord[coordKey])
+    end
+  end
+
+  local names = {}
+  for _, entry in ipairs(order) do
+    if #entry.aliases > 0 then
+      table.insert(names, string.format("%s (alias: %s)", entry.name, table.concat(entry.aliases, ", ")))
+    else
+      table.insert(names, entry.name)
+    end
   end
   return names
 end
