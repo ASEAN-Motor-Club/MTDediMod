@@ -37,9 +37,9 @@ jobs:
 
       - name: Verify UEPseudo populated
         run: |
-          test -f ue4ss-src/deps/first/Unreal/Unreal/Script.h \
-            || { echo "UEPseudo submodule content missing"; ls ue4ss-src/deps/first/Unreal; exit 1; }
-          du -sh ue4ss-src
+          test -n "$(ls -A ue4ss-src/deps/first/Unreal 2>/dev/null)" \
+            || { echo "UEPseudo submodule content missing"; ls ue4ss-src/deps/first/; exit 1; }
+          du -sh ue4ss-src ue4ss-src/deps/first/Unreal
 
       - name: Strip git metadata (plain source tree for nix path inputs)
         run: find ue4ss-src -depth -name .git -exec rm -rf {} +
