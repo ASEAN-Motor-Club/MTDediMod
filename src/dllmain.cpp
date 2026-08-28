@@ -1322,7 +1322,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			}
 
 			// Human-readable audit line (survives even if the backend drops the event)
-			Output::send<LogLevel::Info>(
+			Output::send<LogLevel::Normal>(
 				STR("ServerDespawnVehicle: caller={} vehicle={}({}) owner={}({}) cost={}"),
 				to_wstring(caller_guid),
 				to_wstring(veh_name),
