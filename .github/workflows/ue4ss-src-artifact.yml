@@ -1,0 +1,52 @@
+name: Dump UE4SS source with submodules (dev tooling)
+
+# Fetches UE4SS at the flake.lock-pinned revision WITH recursive submodules
+# (including the private UEPseudo dep) using the repo's UEPSEUDO_PAT secret,
+# and uploads the tree as a build artifact so local machines without UEPseudo
+# access can cross-compile via: nix run --override-input ue4ss "path:<dir>" .#configure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Read locked UE4SS rev
+        id: rev
+        run: echo "rev=$(jq -r '.nodes.ue4ss.locked.rev' flake.lock)" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch UE4SS source with submodules
+        uses: actions/checkout@v4
+        with:
+          repository: UE4SS-RE/RE-UE4SS
+          ref: ${{ steps.rev.outputs.rev }}
+          path: ue4ss-src
+          submodules: recursive
+          token: ${{ secrets.UEPSEUDO_PAT }}
+
+      - name: Verify UEPseudo populated
+        run: |
+          test -f ue4ss-src/deps/first/Unreal/Unreal/Script.h \
+            || { echo "UEPseudo submodule content missing"; ls ue4ss-src/deps/first/Unreal; exit 1; }
+          du -sh ue4ss-src
+
+      - name: Strip git metadata (plain source tree for nix path inputs)
+        run: find ue4ss-src -depth -name .git -exec rm -rf {} +
+
+      - name: Tar source tree
+        run: tar czf "ue4ss-src-${{ steps.rev.outputs.rev }}.tar.gz" ue4ss-src
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ue4ss-src
+          path: ue4ss-src-*.tar.gz
+          retention-days: 7
+          compression-level: 0
