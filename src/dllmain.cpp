@@ -1246,6 +1246,95 @@ auto MotorTownMods::on_unreal_init() -> void
 		}
 	);
 
+	// ========== Vehicle Despawn Hook ==========
+	// Logs every ServerDespawnVehicle RPC: the calling controller (base payload
+	// CharacterGuid), the vehicle, its registered owner, and the cost. Covers
+	// player /d, mod despawn endpoints (they call PC:ServerDespawnVehicle), and
+	// any direct RPC invocation from a modified client (cheat detection: caller
+	// != owner shows up right here).
+	HookManager::RegisterPlayerEventHook(
+		STR("/Script/MotorTown.MotorTownPlayerController:ServerDespawnVehicle"),
+		"ServerDespawnVehicle",
+		[](UnrealScriptFunctionCallableContext& Context, json::object& event_data) -> bool {
+			const auto FunctionBeingExecuted = Context.TheStack.CurrentNativeFunction()
+				? Context.TheStack.CurrentNativeFunction()
+				: *std::bit_cast<UFunction**>(&Context.TheStack.Code()[0 - sizeof(uint64)]);
+			if (!FunctionBeingExecuted) return false;
+
+			// --- Extract Vehicle (AMTVehicle) from function params ---
+			auto VehicleProp = static_cast<FObjectProperty*>(
+				PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("Vehicle")));
+			if (!VehicleProp) {
+				Output::send<LogLevel::Warning>(STR("ServerDespawnVehicle: Vehicle property not found\n"));
+				return false;
+			}
+			const auto& VehiclePtr = VehicleProp->ContainerPtrToValuePtr<UObject*>(Context.TheStack.Locals());
+			if (!VehiclePtr || !*VehiclePtr) {
+				Output::send<LogLevel::Warning>(STR("ServerDespawnVehicle: Vehicle object is null\n"));
+				return false;
+			}
+			auto Vehicle = *VehiclePtr;
+
+			std::string caller_guid(event_data["CharacterGuid"].as_string().c_str());
+			std::string veh_name = to_string(Vehicle->GetFName().ToString());
+			std::optional<int64_t> veh_id;
+			if (auto VehicleId = PropertyCache::GetObjectValue<int64_t>(Vehicle, STR("Net_VehicleId")); VehicleId) {
+				veh_id = *VehicleId;
+			}
+
+			json::object vehicle_obj;
+			vehicle_obj["Name"] = json::string(veh_name);
+			if (veh_id) vehicle_obj["Net_VehicleId"] = *veh_id;
+			vehicle_obj["Class"] = json::string(to_string(Vehicle->GetClassPrivate()->GetFName().ToString()));
+			event_data["Vehicle"] = std::move(vehicle_obj);
+
+			// --- Vehicle owner (may differ from the caller: grief detection) ---
+			std::string owner_guid_str;
+			std::string owner_name;
+			if (const auto& OwnerGuid = PropertyCache::GetObjectValue<FGuid>(Vehicle, STR("Net_OwnerCharacterGuid")); OwnerGuid) {
+				owner_guid_str = std::format(
+					"{:08X}{:04X}{:04X}{:04X}{:04X}{:08X}",
+					OwnerGuid->A,
+					(OwnerGuid->B >> 16),
+					(OwnerGuid->B & 0xFFFF),
+					(OwnerGuid->C >> 16),
+					(OwnerGuid->C & 0xFFFF),
+					OwnerGuid->D
+				);
+				event_data["OwnerCharacterGuid"] = json::string(owner_guid_str);
+			}
+			if (auto OwnerNameProp = PropertyCache::GetObjectProp(Vehicle, STR("Net_OwnerName")); OwnerNameProp) {
+				const auto& OwnerName = OwnerNameProp->ContainerPtrToValuePtr<FString>(Vehicle);
+				if (OwnerName && OwnerName->GetCharArray().GetData()) {
+					owner_name = to_string(OwnerName->GetCharArray().GetData());
+					event_data["OwnerName"] = json::string(owner_name);
+				}
+			}
+
+			// --- Cost (int64, rental returns charge > 0) ---
+			std::optional<int64_t> cost;
+			if (auto CostProp = PropertyCache::GetFuncParam(FunctionBeingExecuted, STR("Cost")); CostProp) {
+				auto Cost = CostProp->ContainerPtrToValuePtr<int64_t>(Context.TheStack.Locals());
+				if (Cost) {
+					cost = *Cost;
+					event_data["Cost"] = *cost;
+				}
+			}
+
+			// Human-readable audit line (survives even if the backend drops the event)
+			Output::send<LogLevel::Info>(
+				STR("ServerDespawnVehicle: caller={} vehicle={}({}) owner={}({}) cost={}"),
+				to_wstring(caller_guid),
+				to_wstring(veh_name),
+				veh_id ? *veh_id : -1,
+				to_wstring(owner_name),
+				to_wstring(owner_guid_str),
+				cost ? *cost : 0
+			);
+			return true;
+		}
+	);
+
 }
 
 // Forward declarations for Lua-table-to-JSON conversion
