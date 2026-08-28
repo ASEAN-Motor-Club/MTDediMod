@@ -7,6 +7,9 @@ name: Dump UE4SS source with submodules (dev tooling)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'ci/**'
 
 permissions:
   contents: read
