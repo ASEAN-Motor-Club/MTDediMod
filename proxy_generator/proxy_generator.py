@@ -86,7 +86,7 @@ def main():
         f.write("extern mProcs:QWORD\n")
         for i, exp in enumerate(exports):
             f.write(f"f{i} proc\n")
-            f.write(f"  jmp mProcs[8*{i}]\n")
+            f.write(f"  jmp QWORD PTR mProcs[8*{i}]\n")
             f.write(f"f{i} endp\n")
         f.write("end\n")
 
