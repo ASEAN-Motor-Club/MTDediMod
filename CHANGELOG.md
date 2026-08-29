@@ -382,6 +382,14 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
+### [client/v0.4.0] — 2026-08-29
+
+#### Added
+- Engine toggle shortcut (`Ctrl+Shift+E`) — raycast the aimed vehicle and stop/start its engine via `ServerSetEngineColdState` (admin-gated, reversible).
+
+#### Fixed
+- Generated proxy stubs (`dwmapi.dll`) now jump indirect through `mProcs` (`QWORD PTR`). llvm-ml mis-assembled the previous form into direct jumps that executed function pointers as code, crashing UE4SS on the game's first dwmapi call — every client release up to and including v0.3.3 shipped a broken proxy.
+
 ### [client/v0.3.3] — 2026-05-14
 
 #### Added
