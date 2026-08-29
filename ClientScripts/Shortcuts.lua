@@ -17,6 +17,7 @@ local lastDespawnTime = 0
 local lastImpulseTime = 0
 local lastDespawnDialogTime = 0
 local lastDoorToggleTime = 0
+local lastEngineToggleTime = 0
 local despawnDialogOpen = false
 
 --- Impulse strength for the aimed impulse shortcut
@@ -368,6 +369,68 @@ local function TriggerDespawnAimed()
         else
             LogOutput("INFO", "Despawn shortcut: Aimed actor is not despawnable: %s", actor:GetFullName())
         end
+    end)
+end
+
+---Toggle the engine of the vehicle the player is aiming at (Ctrl+Shift+E)
+---Flips NetLC_EngineColdState.bDisabled via the ServerSetEngineColdState RPC.
+---When disabled, the vehicle cannot be started until toggled back.
+local function TriggerEngineToggleAimed()
+    if not IsAdmin() then
+        LogOutput("WARN", "Engine toggle shortcut: Admin only")
+        return
+    end
+
+    local now = os.clock() * 1000
+    if now - lastEngineToggleTime < DEBOUNCE_MS then
+        return
+    end
+    lastEngineToggleTime = now
+
+    ExecuteInGameThread(function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then
+            LogOutput("WARN", "Engine toggle shortcut: PlayerController not valid")
+            return
+        end
+
+        local wasHit, hitResult = GetHitResultFromCenterLineTrace()
+        if not wasHit then
+            LogOutput("INFO", "Engine toggle shortcut: Nothing aimed at")
+            return
+        end
+
+        local actor = GetActorFromHitResult(hitResult)
+        if not actor:IsValid() then
+            LogOutput("INFO", "Engine toggle shortcut: Invalid aimed actor")
+            return
+        end
+
+        local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+        if not vehicleClass:IsValid() or not actor:IsA(vehicleClass) then
+            LogOutput("INFO", "Engine toggle shortcut: Aimed actor is not a vehicle")
+            return
+        end
+
+        ---@cast actor AMTVehicle
+        if actor:IsActorBeingDestroyed() then
+            LogOutput("INFO", "Engine toggle shortcut: Vehicle is being destroyed")
+            return
+        end
+
+        local coldState = actor.NetLC_EngineColdState
+        local wasDisabled = coldState ~= nil and coldState.bDisabled == true
+        ---@type FMTEngineColdState
+        local newState = {
+            bOverHeated = coldState ~= nil and coldState.bOverHeated == true or false,
+            bDisabled = not wasDisabled,
+        }
+        actor:ServerSetEngineColdState(newState)
+        LogOutput("INFO", "Engine toggle shortcut: %s engine on %s (bDisabled %s -> %s)",
+            newState.bDisabled and "Stopped" or "Started",
+            actor:GetFullName(),
+            tostring(wasDisabled),
+            tostring(newState.bDisabled))
     end)
 end
 
@@ -752,6 +815,7 @@ RegisterKeyBind(Key.RIGHT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT
 RegisterKeyBind(Key.I, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.O, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDoorToggle)
+RegisterKeyBind(Key.E, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerEngineToggleAimed)
 RegisterKeyBind(Key.T, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerTeleportDialog)
 RegisterKeyBind(Key.D, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnDialog)
 RegisterKeyBind(Key.G, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerGhostToggle)
