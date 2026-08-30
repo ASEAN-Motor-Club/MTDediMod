@@ -1,7 +1,15 @@
 local json = require("JsonParser")
 local statics = require("Statics")
 
-local dir = os.getenv("PWD") or io.popen("cd"):read()
+-- Reload-safe dir lookup (mirrors main.lua): RestartCurrentMod() re-runs this
+-- file with PWD unset and io.popen unavailable; the old unguarded
+-- `io.popen("cd"):read()` crashed the whole mod on POST /mods/reload.
+local dir = os.getenv("PWD")
+if not dir then
+  local ok, h = pcall(io.popen, "cd")
+  if ok and h then dir = h:read() end
+end
+dir = dir or "."
 local modConfigFilePath = dir .. "/ue4ss/Mods/" .. statics.ModName .. "/config.json"
 
 ---@enum HotBarLocation
