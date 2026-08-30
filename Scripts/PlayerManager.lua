@@ -409,10 +409,13 @@ end)
 
 -- Muted players: block outgoing whispers (also covers /reply, which targets
 -- LastWhisperInPlayerState through this same RPC). The hook fires BEFORE
--- ServerWhisper executes; blanking the Message param means the target receives
--- an empty whisper instead of the original text. Every blocked whisper is
--- logged (UE4SS.log + ServerWhisperBlocked webhook) so mute-bypass attempts
--- via whisper leave an evidence trail.
+-- ServerWhisper executes, so we neutralize the call by (a) redirecting the
+-- target to the SENDER themselves — the intended target receives nothing —
+-- and (b) blanking the message, so the content is never delivered or stored.
+-- The muted player only sees an empty echo of their own whisper plus a
+-- neutral popup, which reads as a failed send. Every blocked whisper is
+-- logged (UE4SS.log + ServerWhisperBlocked webhook, with the ORIGINAL target
+-- and message) so mute-bypass attempts leave an evidence trail.
 RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerWhisper", function(PC, TargetPlayerState, Message)
   local playerController = PC:get()
   if not playerController:IsValid() then return end
@@ -425,6 +428,8 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerWhisper", functi
   local muteInfo = GetMuteInfo(uniqueId)
   if not muteInfo then return end
 
+  -- Capture the original content and target for the moderation log BEFORE
+  -- we modify the params.
   local messageStr = Message:get():ToString()
   local targetName = "unknown"
   pcall(function()
@@ -434,9 +439,18 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerWhisper", functi
     end
   end)
 
+  -- Neutralize: whisper goes to the sender instead of the target, empty.
+  -- (UE4SS Lua supports param Set for ObjectProperty and FString; setting a
+  -- valid object rather than nil keeps the native code on a safe path.)
+  TargetPlayerState:set(playerState)
   Message:set("")
 
-  LogOutput("INFO", "Blocked whisper from muted player %s to %s", uniqueId, targetName)
+  -- Explicit "failed" feedback on the muted player's own screen.
+  pcall(function()
+    playerController:ClientShowPopupMessage(FText("Message could not be delivered."))
+  end)
+
+  LogOutput("INFO", "Blocked whisper from muted player %s to %s (redirected to self + blanked)", uniqueId, targetName)
   EnqueueWebhookEvent("ServerWhisperBlocked", {
     Message = messageStr,
     TargetPlayerName = targetName,
