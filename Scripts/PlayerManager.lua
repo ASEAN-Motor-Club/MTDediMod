@@ -407,6 +407,59 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", funct
   end
 end)
 
+-- Muted players: block outgoing whispers (also covers /reply, which targets
+-- LastWhisperInPlayerState through this same RPC). The hook fires BEFORE
+-- ServerWhisper executes, so we neutralize the call by (a) redirecting the
+-- target to the SENDER themselves — the intended target receives nothing —
+-- and (b) blanking the message, so the content is never delivered or stored.
+-- No feedback is shown to the muted player; from their side the whisper
+-- simply fails to arrive. Every blocked whisper is logged (UE4SS.log +
+-- ServerWhisperBlocked webhook, with the ORIGINAL target and message) so
+-- mute-bypass attempts leave an evidence trail.
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerWhisper", function(PC, TargetPlayerState, Message)
+  local playerController = PC:get()
+  if not playerController:IsValid() then return end
+  local playerState = playerController.PlayerState
+  if not playerState:IsValid() then return end
+
+  local uniqueId = GetUniqueNetIdAsString(playerState)
+  if not uniqueId then return end
+
+  local muteInfo = GetMuteInfo(uniqueId)
+  if not muteInfo then return end
+
+  -- Capture the original content and target for the moderation log BEFORE
+  -- we modify the params.
+  local messageStr = Message:get():ToString()
+  local senderName = "unknown"
+  pcall(function()
+    senderName = playerState:GetPlayerName():ToString()
+  end)
+  local targetName = "unknown"
+  pcall(function()
+    local targetState = TargetPlayerState:get()
+    if targetState and targetState:IsValid() then
+      targetName = targetState:GetPlayerName():ToString()
+    end
+  end)
+
+  -- Neutralize: whisper goes to the sender instead of the target, empty.
+  -- (UE4SS Lua supports param Set for ObjectProperty and FString; setting a
+  -- valid object rather than nil keeps the native code on a safe path.)
+  -- No feedback is shown to the muted player — silent interception.
+  TargetPlayerState:set(playerState)
+  Message:set("")
+
+  LogOutput("INFO", "Blocked whisper from muted player %s (%s) to %s (redirected to self + blanked)", senderName, uniqueId, targetName)
+  EnqueueWebhookEvent("ServerWhisperBlocked", {
+    Message = messageStr,
+    SenderName = senderName,
+    TargetPlayerName = targetName,
+    UniqueID = uniqueId,
+    CharacterGuid = GuidToString(playerState.CharacterGuid),
+  })
+end)
+
 RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSetCustomizationParts", function(PC, CustomizationParts)
   local playerController = PC:get()
   if not playerController:IsValid() then return end

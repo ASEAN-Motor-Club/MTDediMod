@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc4] — 2026-08-30
+
+#### Added
+- Mute now blocks outgoing whispers (and `/reply`, which targets the last whisperer through the same `ServerWhisper` RPC): the call is neutralized before execution — the whisper is redirected to the sender with an empty message, so the intended target receives nothing and no feedback is shown to the muted player. Each blocked whisper is logged to UE4SS.log and emitted as a `ServerWhisperBlocked` webhook event (sender, original target + message) so mute-bypass attempts leave an evidence trail.
+
 ### [server/v0.42.0-rc3] — 2026-05-08
 
 #### Changed
