@@ -291,22 +291,6 @@ local mutedPlayers = {}
 local MUTE_CATEGORY_SOFT = 7
 local MUTE_CATEGORY_HARD = 2
 
--- Per-player cooldown for the "whisper failed" feedback shown to muted
--- players, so rapid whisper attempts don't flood their screen. Evidence
--- logging is NOT throttled — every attempt is still recorded.
-local WHISPER_NOTICE_COOLDOWN_SECONDS = 5
-local lastWhisperNoticeTime = {}
-
-local function ShouldShowWhisperNotice(uniqueId)
-  local now = os.time()
-  local last = lastWhisperNoticeTime[uniqueId]
-  if last and (now - last) < WHISPER_NOTICE_COOLDOWN_SECONDS then
-    return false
-  end
-  lastWhisperNoticeTime[uniqueId] = now
-  return true
-end
-
 local function GetMuteInfo(uniqueId)
   local entry = mutedPlayers[uniqueId]
   if entry == nil then return nil end
@@ -334,7 +318,6 @@ end
 
 local function UnmutePlayer(uniqueId)
   mutedPlayers[uniqueId] = nil
-  lastWhisperNoticeTime[uniqueId] = nil
   LogOutput("INFO", "Player %s unmuted", uniqueId)
 end
 
@@ -429,10 +412,10 @@ end)
 -- ServerWhisper executes, so we neutralize the call by (a) redirecting the
 -- target to the SENDER themselves — the intended target receives nothing —
 -- and (b) blanking the message, so the content is never delivered or stored.
--- The muted player only sees an empty echo of their own whisper plus a
--- throttled system message, which reads as a failed send. Every blocked
--- whisper is logged (UE4SS.log + ServerWhisperBlocked webhook, with the
--- ORIGINAL target and message) so mute-bypass attempts leave an evidence trail.
+-- No feedback is shown to the muted player; from their side the whisper
+-- simply fails to arrive. Every blocked whisper is logged (UE4SS.log +
+-- ServerWhisperBlocked webhook, with the ORIGINAL target and message) so
+-- mute-bypass attempts leave an evidence trail.
 RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerWhisper", function(PC, TargetPlayerState, Message)
   local playerController = PC:get()
   if not playerController:IsValid() then return end
@@ -463,16 +446,9 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerWhisper", functi
   -- Neutralize: whisper goes to the sender instead of the target, empty.
   -- (UE4SS Lua supports param Set for ObjectProperty and FString; setting a
   -- valid object rather than nil keeps the native code on a safe path.)
+  -- No feedback is shown to the muted player — silent interception.
   TargetPlayerState:set(playerState)
   Message:set("")
-
-  -- "Failed send" feedback on the muted player's own screen (system message,
-  -- not a popup — looks like a native game notice; cooldown prevents spam).
-  if ShouldShowWhisperNotice(uniqueId) then
-    pcall(function()
-      playerController:ClientShowSystemMessage(FText("Whisper could not be delivered."))
-    end)
-  end
 
   LogOutput("INFO", "Blocked whisper from muted player %s (%s) to %s (redirected to self + blanked)", senderName, uniqueId, targetName)
   EnqueueWebhookEvent("ServerWhisperBlocked", {
