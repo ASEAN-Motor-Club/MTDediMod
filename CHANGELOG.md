@@ -6,6 +6,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc4] — 2026-08-31
+
+#### Added
+- Server-side autopilot enforcement for RP players: a 3s game-thread poll of the vehicle's replicated AI-driving flag; RP players get a warning popup and are ejected from the driver seat if autopilot stays on. Toggling autopilot off at any point resets the cycle. (Fuel-starvation, engine-latch and parking-brake levers were live-tested and rejected — the client sim ignores server-set vehicle state; seat ejection is the only server-authoritative physical action.)
+- The server-side RP name check now matches `R`/`*` anywhere in the first bracket, so muted+RP players (`[XR] Name`) no longer bypass the server-side RP hooks (matches the retired C++ `should_block_teleport` semantics).
+- Fully managed house rent flow; player rent/extend attempts emit webhook events (`Blocked=true` when intercepted) with native popup feedback.
+- Balance editing support (server-side balance table overrides).
+- `/players` API now exposes `ViewLocation` from the PlayerController.
+- Server API support for the paginated teleport widget.
+
+#### Fixed
+- `ModConfig.lua` directory lookup is reload-safe (no more `io.popen` crash on mod reload — a failed reload used to brick the mod API until a game restart).
+- RP hook registration is pcall-wrapped (`SafeRegisterHook`): a hook that cannot register logs a warning instead of killing `main.lua` mid-chunk.
+- The RP autopilot poll loop defers registration until the game world exists (avoids a boot-time race where the loop silently never ticks).
+
 ### [server/v0.42.0-rc3] — 2026-05-08
 
 #### Changed
