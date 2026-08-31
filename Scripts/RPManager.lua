@@ -15,8 +15,12 @@ local function IsRPPlayer(playerController)
   end)
   if not ok or not name then return false end
 
-  -- Match [R...] or [*...] tag prefix (same regex as C++ should_block_teleport)
-  return string.find(name, "^%[R") ~= nil or string.find(name, "%[%*") ~= nil
+  -- Match a leading [tag] whose contents contain R (RP mode / wanted) or *
+  -- (wanted stars) — same semantics as the original C++ should_block_teleport
+  -- (dllmain.cpp). The previous ^%[R prefix check missed muted+RP players,
+  -- whose tag is [XR...], leaving all server-side RP blocks bypassed.
+  local tag = string.match(name, "^%[([^%]]*)%]")
+  return tag ~= nil and string.find(tag, "[R*]") ~= nil
 end
 
 ---Get the player's current pawn location.
