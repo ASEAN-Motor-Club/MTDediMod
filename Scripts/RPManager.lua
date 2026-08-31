@@ -119,9 +119,14 @@ local function GetOwningPlayerController(vehicle)
   return nil
 end
 
----Block autopilot (AI driving) for RP players: clear bIsAIDriving before the
----server applies the cold state. Mirrors the client-side RPRestrictions logic;
----needed because vanilla/outdated clients have no client-side block.
+---Block autopilot (AI driving) for RP players. Two layers:
+---1. Clear bIsAIDriving in the incoming cold state (server never marks AI driving).
+---2. Cut the engine via the reversible bDisabled latch: vehicle movement is
+---   client-authoritative (no ServerMove RPCs on MTVehicle), so a vanilla or
+---   outdated client would keep rolling on flag-clear alone. Client-mod users
+---   never hit layer 2 — their RPRestrictions hook strips the flag pre-send.
+local LAST_AUTOPILOT_ACTION = 0
+
 RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle, ColdState, bMulticast)
   local veh = Vehicle:get()
   if not veh or not veh:IsValid() or veh:IsActorBeingDestroyed() then return end
@@ -131,8 +136,27 @@ RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle
   local ok, cs = pcall(function() return ColdState:get() end)
   if not ok or not cs then return end
   local okAI, bAI = pcall(function() return cs.bIsAIDriving end)
-  if okAI and bAI then
-    pcall(function() cs.bIsAIDriving = false end)
+  if not okAI or not bAI then return end
+
+  pcall(function() cs.bIsAIDriving = false end)
+
+  local now = os.time()
+  if now - LAST_AUTOPILOT_ACTION >= 5 then
+    LAST_AUTOPILOT_ACTION = now
+    pcall(function()
+      local engineState = veh.NetLC_EngineColdState
+      if engineState and engineState.bDisabled ~= true then
+        veh:ServerSetEngineColdState({
+          bOverHeated = engineState.bOverHeated == true,
+          bDisabled = true,
+        })
+        pcall(function()
+          pc:ClientShowSystemMessage(FText("Autopilot is disabled in RP mode. Engine turned off."))
+        end)
+        LogOutput("INFO", "[RPManager] Cleared bIsAIDriving + engine disabled (autopilot attempt) for RP player")
+      end
+    end)
+  else
     LogOutput("INFO", "[RPManager] Cleared bIsAIDriving (ServerSyncColdState) for RP player")
   end
 end)
