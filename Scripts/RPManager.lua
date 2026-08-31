@@ -103,6 +103,40 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerVehicleExControl
   end
 end)
 
+---Find the PlayerController whose pawn is this vehicle (i.e. the driver).
+local function GetOwningPlayerController(vehicle)
+  local gameState = GetMotorTownGameState()
+  if not gameState or not gameState:IsValid() then return nil end
+  for i = 1, #gameState.PlayerArray, 1 do
+    local PS = gameState.PlayerArray[i]
+    if PS and PS:IsValid() then
+      local ok, pc = pcall(function() return PS:GetPlayerController() end)
+      if ok and pc and pc:IsValid() and pc:K2_GetPawn() == vehicle then
+        return pc
+      end
+    end
+  end
+  return nil
+end
+
+---Block autopilot (AI driving) for RP players: clear bIsAIDriving before the
+---server applies the cold state. Mirrors the client-side RPRestrictions logic;
+---needed because vanilla/outdated clients have no client-side block.
+RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle, ColdState, bMulticast)
+  local veh = Vehicle:get()
+  if not veh or not veh:IsValid() or veh:IsActorBeingDestroyed() then return end
+  local pc = GetOwningPlayerController(veh)
+  if not pc or not IsRPPlayer(pc) then return end
+
+  local ok, cs = pcall(function() return ColdState:get() end)
+  if not ok or not cs then return end
+  local okAI, bAI = pcall(function() return cs.bIsAIDriving end)
+  if okAI and bAI then
+    pcall(function() cs.bIsAIDriving = false end)
+    LogOutput("INFO", "[RPManager] Cleared bIsAIDriving (ServerSyncColdState) for RP player")
+  end
+end)
+
 LogOutput("INFO", "[RPManager] Loaded (v%s)", statics.ModVersion)
 
 return {}
