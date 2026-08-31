@@ -125,7 +125,9 @@ end
 ---   client-authoritative (no ServerMove RPCs on MTVehicle), so a vanilla or
 ---   outdated client would keep rolling on flag-clear alone. Client-mod users
 ---   never hit layer 2 — their RPRestrictions hook strips the flag pre-send.
-local LAST_AUTOPILOT_ACTION = 0
+---Layer-2 action is debounced per-player; repeated syncs from a client that
+---keeps autopilot engaged only log/act once per window.
+local LAST_AUTOPILOT_ACTION = {}
 
 RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle, ColdState, bMulticast)
   local veh = Vehicle:get()
@@ -141,24 +143,24 @@ RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle
   pcall(function() cs.bIsAIDriving = false end)
 
   local now = os.time()
-  if now - LAST_AUTOPILOT_ACTION >= 5 then
-    LAST_AUTOPILOT_ACTION = now
-    pcall(function()
-      local engineState = veh.NetLC_EngineColdState
-      if engineState and engineState.bDisabled ~= true then
-        veh:ServerSetEngineColdState({
-          bOverHeated = engineState.bOverHeated == true,
-          bDisabled = true,
-        })
-        pcall(function()
-          pc:ClientShowSystemMessage(FText("Autopilot is disabled in RP mode. Engine turned off."))
-        end)
-        LogOutput("INFO", "[RPManager] Cleared bIsAIDriving + engine disabled (autopilot attempt) for RP player")
-      end
-    end)
-  else
-    LogOutput("INFO", "[RPManager] Cleared bIsAIDriving (ServerSyncColdState) for RP player")
-  end
+  if now - (LAST_AUTOPILOT_ACTION[pc] or 0) < 5 then return end
+  LAST_AUTOPILOT_ACTION[pc] = now
+
+  pcall(function()
+    local engineState = veh.NetLC_EngineColdState
+    if engineState and engineState.bDisabled ~= true then
+      veh:ServerSetEngineColdState({
+        bOverHeated = engineState.bOverHeated == true,
+        bDisabled = true,
+      })
+      pcall(function()
+        pc:ClientShowSystemMessage(FText("Autopilot is disabled in RP mode. Engine turned off."))
+      end)
+      LogOutput("INFO", "[RPManager] Cleared bIsAIDriving + engine disabled (autopilot attempt) for RP player")
+    else
+      LogOutput("INFO", "[RPManager] Cleared bIsAIDriving (engine already disabled) for RP player")
+    end
+  end)
 end)
 
 LogOutput("INFO", "[RPManager] Loaded (v%s)", statics.ModVersion)
