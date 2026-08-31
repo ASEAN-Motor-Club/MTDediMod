@@ -119,14 +119,13 @@ local function GetOwningPlayerController(vehicle)
   return nil
 end
 
----Block autopilot (AI driving) for RP players. Two layers:
----1. Clear bIsAIDriving in the incoming cold state (server never marks AI driving).
----2. Cut the engine via the reversible bDisabled latch: vehicle movement is
----   client-authoritative (no ServerMove RPCs on MTVehicle), so a vanilla or
----   outdated client would keep rolling on flag-clear alone. Client-mod users
----   never hit layer 2 — their RPRestrictions hook strips the flag pre-send.
----Layer-2 action is debounced per-player; repeated syncs from a client that
----keeps autopilot engaged only log/act once per window.
+---Block autopilot (AI driving) for RP players. The client OWNS the vehicle
+---cold state and only syncs it to the server, so clearing bIsAIDriving here
+---is bookkeeping — enforcement is the proven seat eject (freeman's original
+---approach, removed with the LoopAsync system in 9534c24; the eject itself
+---was never the crash vector, the background polling loop was). Client-mod
+---users never trigger this — their RPRestrictions hook strips the flag
+---pre-send. Action debounced per-player.
 local LAST_AUTOPILOT_ACTION = {}
 
 RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle, ColdState, bMulticast)
@@ -147,20 +146,15 @@ RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle
   LAST_AUTOPILOT_ACTION[pc] = now
 
   pcall(function()
-    local engineState = veh.NetLC_EngineColdState
-    if engineState and engineState.bDisabled ~= true then
-      veh:ServerSetEngineColdState({
-        bOverHeated = engineState.bOverHeated == true,
-        bDisabled = true,
-      })
-      pcall(function()
-        pc:ClientShowSystemMessage(FText("Autopilot is disabled in RP mode. Engine turned off."))
-      end)
-      LogOutput("INFO", "[RPManager] Cleared bIsAIDriving + engine disabled (autopilot attempt) for RP player")
-    else
-      LogOutput("INFO", "[RPManager] Cleared bIsAIDriving (engine already disabled) for RP player")
+    if veh.NetLC_ColdState and veh.NetLC_ColdState:IsValid() then
+      veh.NetLC_ColdState.bIsAIDriving = false
     end
+    pc:ServerExitVehicle()
   end)
+  pcall(function()
+    pc:ClientShowSystemMessage(FText("You may not use autopilot in RP mode. Toggle autopilot again to turn it off."))
+  end)
+  LogOutput("INFO", "[RPManager] Ejected RP player from vehicle (autopilot attempt)")
 end)
 
 LogOutput("INFO", "[RPManager] Loaded (v%s)", statics.ModVersion)
