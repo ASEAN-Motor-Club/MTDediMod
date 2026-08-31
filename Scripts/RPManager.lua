@@ -120,13 +120,14 @@ local function GetOwningPlayerController(vehicle)
 end
 
 ---Block autopilot (AI driving) for RP players. The client OWNS the vehicle
----cold state and only syncs it to the server, so clearing bIsAIDriving here
----is bookkeeping — enforcement is the proven seat eject (freeman's original
----approach, removed with the LoopAsync system in 9534c24; the eject itself
----was never the crash vector, the background polling loop was). Client-mod
----users never trigger this — their RPRestrictions hook strips the flag
----pre-send. Action debounced per-player.
+---cold state, so clearing bIsAIDriving here is bookkeeping only — enforcement
+---is fuel starvation with restore (freeman): save current fuel, MulticastSetFuel(0)
+---(the client's own simulation starves — AI can't drive an empty tank), and
+---restore on the player's next sync with bIsAIDriving=false. Client-mod users
+---never trigger this — their RPRestrictions hook strips the flag pre-send.
+---Per-player debounce; per-vehicle starve state.
 local LAST_AUTOPILOT_ACTION = {}
+local STARVED_FUEL = {}
 
 RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle, ColdState, bMulticast)
   local veh = Vehicle:get()
@@ -137,7 +138,25 @@ RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle
   local ok, cs = pcall(function() return ColdState:get() end)
   if not ok or not cs then return end
   local okAI, bAI = pcall(function() return cs.bIsAIDriving end)
-  if not okAI or not bAI then return end
+  if not okAI then return end
+
+  -- Restore path: autopilot toggled off -> give the fuel back (never less
+  -- than what's in the tank now, so a mid-starve refuel is not rolled back).
+  if not bAI then
+    local saved = STARVED_FUEL[veh]
+    if saved then
+      STARVED_FUEL[veh] = nil
+      pcall(function()
+        local current = 0
+        if veh.NetLC_VehicleState and veh.NetLC_VehicleState:IsValid() then
+          current = veh.NetLC_VehicleState.Fuel or 0
+        end
+        veh:MulticastSetFuel(math.max(saved, current))
+      end)
+      LogOutput("INFO", "[RPManager] Restored fuel (autopilot off) for RP player")
+    end
+    return
+  end
 
   pcall(function() cs.bIsAIDriving = false end)
 
@@ -149,12 +168,19 @@ RegisterHook("/Script/MotorTown.MTVehicle:ServerSyncColdState", function(Vehicle
     if veh.NetLC_ColdState and veh.NetLC_ColdState:IsValid() then
       veh.NetLC_ColdState.bIsAIDriving = false
     end
-    pc:ServerExitVehicle()
+    if not STARVED_FUEL[veh] then
+      local saved = 0
+      if veh.NetLC_VehicleState and veh.NetLC_VehicleState:IsValid() then
+        saved = veh.NetLC_VehicleState.Fuel or 0
+      end
+      STARVED_FUEL[veh] = saved
+      veh:MulticastSetFuel(0)
+    end
   end)
   pcall(function()
-    pc:ClientShowSystemMessage(FText("You may not use autopilot in RP mode. Toggle autopilot again to turn it off."))
+    pc:ClientShowSystemMessage(FText("You may not use autopilot in RP mode. Toggle autopilot off to restore fuel."))
   end)
-  LogOutput("INFO", "[RPManager] Ejected RP player from vehicle (autopilot attempt)")
+  LogOutput("INFO", "[RPManager] Starved fuel (autopilot attempt) for RP player")
 end)
 
 LogOutput("INFO", "[RPManager] Loaded (v%s)", statics.ModVersion)
