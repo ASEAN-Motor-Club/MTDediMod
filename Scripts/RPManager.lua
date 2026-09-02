@@ -90,6 +90,12 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehi
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportVehicle") end
   local playerController = PC:get()
   if not IsRPPlayer(playerController) then return end
+  -- Event members: movement blocks waived (racetrack allowance), except
+  -- character teleport + autopilot which stay enforced for everyone
+  if IsInServerEvent(playerController) then
+    LogOutput("INFO", string.format("[RPManager] Allowed ServerTeleportVehicle for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
+    return
+  end
 
   local veh = Vehicle:get()
   if veh and veh:IsValid() then
@@ -107,6 +113,7 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerRespawnChara
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerRespawnCharacter") end
   local playerController = PC:get()
   if not IsRPPlayer(playerController) then return end
+  if IsInServerEvent(playerController) then return end
 
   local loc = GetPawnLocation(playerController)
   if loc then
@@ -150,6 +157,9 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerVehicleExCon
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerVehicleExControl") end
   local playerController = PC:get()
   if not IsRPPlayer(playerController) then return end
+  -- Event members: roadside service allowed (RaceSetup can enable roadside
+  -- towing to garage — races legitimately use it; racetrack allowance)
+  if IsInServerEvent(playerController) then return end
   if Control:get() == 2 then
     Control:set(0)
     LogOutput("INFO", string.format("[RPManager] Neutralized RoadsideService for %s", GetPlayerName(playerController)))
