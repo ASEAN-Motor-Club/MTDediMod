@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc5] — 2026-09-02
+
+#### Fixed
+- Autopilot enforcement now reliably starts at server boot. The boot-deferred poll (`NotifyOnNewObject` on `MTGameResource`) silently never fired on some boots — autopilot warn→eject was dead while the teleport/reset hooks (independent mechanism) kept working. The poll now starts idempotently via whichever of these fires first: any RP-hook invocation, backend-polled HTTP requests (`/status/general`, `/events` GET wrappers in main.lua), the retained `NotifyOnNewObject` path, or a `FindAllOf` retry belt; the registration line logs which trigger won.
+- Enforcement log lines (`Blocked`/`Allowed`/`Neutralized`) now carry the affected player's name — attribution was guesswork before.
+
+#### Added
+- Racetrack allowance: while an RP player is joined to an event (`PlayerState.JoinedEventGuids`, server-readable), vehicle reset / roadside / vehicle-teleport / respawn restrictions are waived so racetrack Reset Vehicle and race towing work. `ServerTeleportCharacter` (all `/tp`, including the fire-death house-TP path) and autopilot warn→eject remain enforced for everyone, event-joined or not.
+
 ### [server/v0.42.0-rc4] — 2026-08-31
 
 #### Added
