@@ -54,6 +54,21 @@ local function GetPawnLocation(playerController)
   return pawn:K2_GetActorLocation()
 end
 
+---Racetrack allowance (YOUYU decision 2026-09-02: "racetracks resets not
+---affected"): vehicle reset is part of legitimate racing. The game's Reset UI
+---only exists at racetracks, but roadside TP fires the SAME
+---ServerResetVehicleAt RPC, so a blanket allow would un-block roadside.
+---Discriminator: the server tracks event membership on the PlayerState —
+---allow the reset while the player is joined to an event (races/CTF run at
+---tracks); roadside TP without event membership stays blocked.
+local function IsInServerEvent(playerController)
+  if not playerController or not playerController:IsValid() then return false end
+  local PS = playerController.PlayerState
+  if not PS or not PS:IsValid() then return false end
+  local ok, n = pcall(function() return #PS.JoinedEventGuids end)
+  return ok and (n or 0) > 0
+end
+
 -- ServerTeleportCharacter: replace AbsoluteLocation with current pawn pos
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter", function(PC, AbsoluteLocation, bCharge, bIsRespawn)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportCharacter") end
@@ -108,6 +123,12 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicle
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerResetVehicleAt") end
   local playerController = PC:get()
   if not IsRPPlayer(playerController) then return end
+
+  -- Racetrack allowance: event members may reset (see IsInServerEvent)
+  if IsInServerEvent(playerController) then
+    LogOutput("INFO", string.format("[RPManager] Allowed ServerResetVehicleAt for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
+    return
+  end
 
   local veh = Vehicle:get()
   if veh and veh:IsValid() then
