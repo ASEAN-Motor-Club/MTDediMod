@@ -14,23 +14,34 @@ local function SafeRegisterHook(path, fn)
   return ok
 end
 
----Check if a player's display name contains an RP tag [R...] or wanted tag [*].
-local function IsRPPlayer(playerController)
-  if not playerController or not playerController:IsValid() then return false end
-  local PS = playerController.PlayerState
-  if not PS or not PS:IsValid() then return false end
+---Forward declaration: the poll loop lives below, but every RP hook triggers it
+---on first invocation (see the boot comment near StartAutopilotPoll — on prod
+---rc4 the boot-time NotifyOnNewObject defer NEVER fired, 2026-09-02, while the
+---hooks demonstrably fire all day, so they are the reliable starter).
+local EnsureAutopilotPoll
 
+---Best-effort display name for log attribution (hooks log names so enforcement
+---evidence is attributable per player).
+local function GetPlayerName(playerController)
+  if not playerController or not playerController:IsValid() then return "?" end
+  local PS = playerController.PlayerState
+  if not PS or not PS:IsValid() then return "?" end
   local ok, name = pcall(function()
     local n = PS:GetPlayerName()
     if type(n) == "userdata" then return n:ToString() end
     return tostring(n)
   end)
-  if not ok or not name then return false end
+  if not ok or not name or name == "" then return "?" end
+  return name
+end
 
-  -- Match a leading [tag] whose contents contain R (RP mode / wanted) or *
-  -- (wanted stars) — same semantics as the original C++ should_block_teleport
-  -- (dllmain.cpp). The previous ^%[R prefix check missed muted+RP players,
-  -- whose tag is [XR...], leaving all server-side RP blocks bypassed.
+---Check if a player's display name contains an RP tag [R...] or wanted tag [*]
+---(#15 semantics: match a leading [tag] whose contents contain R (RP mode /
+---wanted) or * (wanted stars) — same semantics as the C++ should_block_teleport
+---(dllmain.cpp). The previous ^%[R prefix check missed muted+RP players, whose
+---tag is [XR...], leaving all server-side RP blocks bypassed.)
+local function IsRPPlayer(playerController)
+  local name = GetPlayerName(playerController)
   local tag = string.match(name, "^%[([^%]]*)%]")
   return tag ~= nil and string.find(tag, "[R*]") ~= nil
 end
@@ -45,6 +56,7 @@ end
 
 -- ServerTeleportCharacter: replace AbsoluteLocation with current pawn pos
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter", function(PC, AbsoluteLocation, bCharge, bIsRespawn)
+  if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportCharacter") end
   local playerController = PC:get()
   if not IsRPPlayer(playerController) then return end
 
@@ -54,12 +66,13 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportChar
     al.X = loc.X
     al.Y = loc.Y
     al.Z = loc.Z
-    LogOutput("INFO", "[RPManager] Blocked ServerTeleportCharacter — replaced with current pos")
+    LogOutput("INFO", string.format("[RPManager] Blocked ServerTeleportCharacter for %s — replaced with current pos", GetPlayerName(playerController)))
   end
 end)
 
 -- ServerTeleportVehicle: replace AbsoluteLocation with current vehicle pos
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehicle", function(PC, Vehicle, AbsoluteLocation)
+  if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportVehicle") end
   local playerController = PC:get()
   if not IsRPPlayer(playerController) then return end
 
@@ -70,12 +83,13 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehi
     al.X = loc.X
     al.Y = loc.Y
     al.Z = loc.Z
-    LogOutput("INFO", "[RPManager] Blocked ServerTeleportVehicle — replaced with current pos")
+    LogOutput("INFO", string.format("[RPManager] Blocked ServerTeleportVehicle for %s — replaced with current pos", GetPlayerName(playerController)))
   end
 end)
 
 -- ServerRespawnCharacter: replace AbsoluteLocation with current pawn pos
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerRespawnCharacter", function(PC, AbsoluteLocation)
+  if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerRespawnCharacter") end
   local playerController = PC:get()
   if not IsRPPlayer(playerController) then return end
 
@@ -85,12 +99,13 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerRespawnChara
     al.X = loc.X
     al.Y = loc.Y
     al.Z = loc.Z
-    LogOutput("INFO", "[RPManager] Blocked ServerRespawnCharacter — replaced with current pos")
+    LogOutput("INFO", string.format("[RPManager] Blocked ServerRespawnCharacter for %s — replaced with current pos", GetPlayerName(playerController)))
   end
 end)
 
 -- ServerResetVehicleAt: replace WorldLocation/Rotation with current vehicle transform
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(PC, Vehicle, WorldLocation, Rotation, bRemoveCargo, bResetCarriedVehicles)
+  if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerResetVehicleAt") end
   local playerController = PC:get()
   if not IsRPPlayer(playerController) then return end
 
@@ -106,16 +121,17 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicle
     r.Pitch = rot.Pitch
     r.Yaw = rot.Yaw
     r.Roll = rot.Roll
-    LogOutput("INFO", "[RPManager] Blocked ServerResetVehicleAt — replaced with current transform")
+    LogOutput("INFO", string.format("[RPManager] Blocked ServerResetVehicleAt for %s — replaced with current transform", GetPlayerName(playerController)))
   end
 end)
 
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerVehicleExControl", function(PC, Vehicle, Control)
+  if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerVehicleExControl") end
   local playerController = PC:get()
   if not IsRPPlayer(playerController) then return end
   if Control:get() == 2 then
     Control:set(0)
-    LogOutput("INFO", "[RPManager] Neutralized RoadsideService for RP player")
+    LogOutput("INFO", string.format("[RPManager] Neutralized RoadsideService for %s", GetPlayerName(playerController)))
   end
 end)
 
@@ -158,9 +174,19 @@ local POLL_STARTED = false
 ---code hot-reloaded post-world ticks every 3s). So: register immediately when
 ---the game state already exists (hot reload), otherwise defer until
 ---MTGameResource is created (world up — the same signal BalanceManager relies on).
-local function StartAutopilotPoll()
+---FIELD FAILURE (prod rc4, 2026-09-02): the boot-time NotifyOnNewObject callback
+---NEVER fired — "Registered notification" logged at require time, MTGameResource
+---was created, yet zero "poll loop registered" lines and zero heartbeats all
+---day. Starter is therefore MULTI-TRIGGER and idempotent (first one lands wins):
+---  1. any of the 5 RP hooks — fire for every player, proven to fire all day
+---  2. HTTP /status/general + /events GET handlers — backend polls them
+---  3. NotifyOnNewObject (kept — harmless, may work on other builds)
+---  4. FindAllOf retry loop (BalanceManager's pattern; dead if boot-registered
+---     loops never tick on this build, harmless then)
+local function StartAutopilotPoll(source)
   if POLL_STARTED then return end
   POLL_STARTED = true
+  LogOutput("INFO", "[RPManager] Autopilot poll loop registered (3s game-thread) via " .. tostring(source))
   LoopInGameThreadWithDelay(3000, function()
   POLL_TICKS = POLL_TICKS + 1
   local gameState = GetMotorTownGameState()
@@ -250,21 +276,34 @@ local function StartAutopilotPoll()
     LogOutput("INFO", string.format("[RPManager] POLL alive (tick %d, rpSeen=%d)", POLL_TICKS, rpSeen))
   end
 end)
-  LogOutput("INFO", "[RPManager] Autopilot poll loop registered (3s game-thread)")
 end
+EnsureAutopilotPoll = StartAutopilotPoll
 
 -- Register now if the world already exists (hot reload); otherwise defer until
 -- MTGameResource is created at world load (boot), which also guarantees the
 -- EngineTick hook is installable (see the comment above StartAutopilotPoll).
 local okGS, bootGameState = pcall(GetMotorTownGameState)
 if okGS and bootGameState and bootGameState:IsValid() then
-  StartAutopilotPoll()
+  StartAutopilotPoll("hot-reload: world exists")
 else
   pcall(function()
     NotifyOnNewObject("/Script/MotorTown.MTGameResource", function(obj)
       if obj and obj:IsValid() then
-        StartAutopilotPoll()
+        StartAutopilotPoll("notify:new MTGameResource")
       end
+    end)
+  end)
+  -- Best-effort belt: FindAllOf retry (BalanceManager's proven pattern). If
+  -- boot-registered game-thread loops never tick on this build this never
+  -- runs — the hook/http triggers are the reliable path then.
+  pcall(function()
+    LoopInGameThreadWithDelay(5000, function()
+      local okFound, found = pcall(FindAllOf, "MTGameResource")
+      if okFound and found and #found > 0 then
+        StartAutopilotPoll("findallof retry")
+        return true
+      end
+      return false
     end)
   end)
   LogOutput("INFO", "[RPManager] Poll loop deferred until world (MTGameResource) exists")
@@ -272,4 +311,6 @@ end
 
 LogOutput("INFO", "[RPManager] Loaded (v%s)", statics.ModVersion)
 
-return {}
+return {
+  EnsureAutopilotPoll = EnsureAutopilotPoll,
+}
