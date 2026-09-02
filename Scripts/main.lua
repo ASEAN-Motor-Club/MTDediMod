@@ -47,7 +47,10 @@ local function LoadWebserver()
     server.registerHandler("/webhook", "GET", webclient.HandleGetWebhooks)
     server.registerHandler("/status", "GET", serverManager.HandleGetServerStatus, true)
     server.registerHandler("/version", "GET", serverManager.HandleGetModVersion, true)
-    server.registerHandler("/status/general", "GET", serverManager.HandleGetServerState, true)
+    server.registerHandler("/status/general", "GET", function(...)
+      if rpManager.EnsureAutopilotPoll then rpManager.EnsureAutopilotPoll("http:/status/general") end
+      return serverManager.HandleGetServerState(...)
+    end, true)
     server.registerHandler("/status/general/*", "GET", serverManager.HandleGetZoneState, true)
     server.registerHandler("/dump/lua_types", "POST", function(session)
         GenerateLuaTypes()
@@ -95,7 +98,10 @@ local function LoadWebserver()
     server.registerHandler("/parties", "GET", playerManager.HandleGetParties)
 
     -- Event management
-    server.registerHandler("/events", "GET", eventManager.HandleGetEvents)
+    server.registerHandler("/events", "GET", function(...)
+      if rpManager.EnsureAutopilotPoll then rpManager.EnsureAutopilotPoll("http:/events") end
+      return eventManager.HandleGetEvents(...)
+    end)
     server.registerHandler("/events", "POST", eventManager.HandleCreateNewEvent)
     server.registerHandler("/events/*", "GET", eventManager.HandleGetEvents)
     server.registerHandler("/events/*/state", "POST", eventManager.HandleChangeEventState)
