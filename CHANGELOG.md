@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc6] — 2026-09-03
+
+#### Added
+- Cargo-strip branch for API teleports: `POST /players/{guid}/teleport` with a `bRemoveCargo` field now goes through the server-authoritative `ServerResetVehicleAt` — loaded cargo (on the vehicle and any hitched trailer) is despawned and the trailer stays behind; only the vehicle moves. Without the field, the legacy `ClientResetVehicleAt` path is unchanged. Opt-in per request — the backend's paid `/tp2marker` sends it (amc-backend PR #74).
+
 ### [server/v0.42.0-rc5] — 2026-09-02
 
 #### Fixed
