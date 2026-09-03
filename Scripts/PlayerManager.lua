@@ -683,15 +683,30 @@ local function HandleTeleportPlayer(session)
             return { error = string.format("Failed to teleport player %s: Player is inside a vehicle", playerId) }, nil, 400
           elseif pawn:IsA(vehicleClass) then
             ---@cast pawn AMTVehicle
-            local bResetTrailers = true
-            if data.bResetTrailers ~= nil then
-              bResetTrailers = data.bResetTrailers
+            if data.bRemoveCargo ~= nil then
+              -- Explicit cargo-strip branch: ServerResetVehicleAt is the
+              -- server-authoritative reset — its bRemoveCargo flag strips
+              -- loaded cargo instead of teleporting it along with the
+              -- vehicle (the Client variant carries the vehicle + trailer
+              -- chain as-is, field-verified 2026-09-03).
+              local bResetCarriedVehicles = true
+              if data.bResetCarriedVehicles ~= nil then
+                bResetCarriedVehicles = data.bResetCarriedVehicles
+              end
+              PC:ServerResetVehicleAt(pawn, location, rotation, data.bRemoveCargo, bResetCarriedVehicles)
+            else
+              -- Legacy path (unchanged): client-side reset keeps the
+              -- vehicle + trailer chain together.
+              local bResetTrailers = true
+              if data.bResetTrailers ~= nil then
+                bResetTrailers = data.bResetTrailers
+              end
+              local bResetCarriedVehicles = true
+              if data.bResetCarriedVehicles ~= nil then
+                bResetCarriedVehicles = data.bResetCarriedVehicles
+              end
+              PC:ClientResetVehicleAt(pawn, location, rotation, bResetTrailers, bResetCarriedVehicles)
             end
-            local bResetCarriedVehicles = true
-            if data.bResetCarriedVehicles ~= nil then
-              bResetCarriedVehicles = data.bResetCarriedVehicles
-            end
-            PC:ClientResetVehicleAt(pawn, location, rotation, bResetTrailers, bResetCarriedVehicles)
           else
             error("Failed to teleport player")
           end
