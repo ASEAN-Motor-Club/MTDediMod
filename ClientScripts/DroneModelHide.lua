@@ -2,59 +2,172 @@ local statics = require("Statics")
 
 ---DroneModelHide — client-side drone model hiding for FPV flight.
 ---
----Ctrl+Shift+B toggles hiding of every primitive component on the local
----player's drone (body, propellers, effects). UCameraComponent derives from
----USceneComponent, not UPrimitiveComponent, so the drone's camera keeps
----rendering while the visible model disappears.
+---Ctrl+Shift+B toggles hiding of the local player's drone model for a clean
+---FPV view. The drone camera (UCameraComponent) is never affected — bHidden
+---and per-component hiding only affect primitive rendering, and a camera is
+---not a UPrimitiveComponent.
 ---
----While enabled, hiding is re-applied on drone spawn
----(ClientSpawnDroneResponse) and re-asserted once per second, so the game
----re-showing components (e.g. a camera-mode switch) gets undone.
+---Field-tested 2026-09-05 on the live client (drone class Falcon1_C, a BP
+---subclass of AMTDrone):
+---  * ClientSpawnDroneResponse hooks client-side and passes the drone actor
+---    directly — that capture is the reliable way to get the in-flight drone.
+---  * FindFirstOf/FindAllOf match EXACT class names and miss BP subclasses;
+---    PC.Drone is nil client-side. Both are kept only as fallbacks.
+---  * AActor:GetComponentsByClass is NOT callable on this build (throws).
+---  * Working hide ladder: whole-actor (K2_SetActorHiddenInGame /
+---    SetActorHiddenInGame) → per-component (K2_GetComponentsByClass /
+---    GetComponentsByClass) → native AMTDrone fields (RootBody + Props).
+---The first strategy that works is cached and re-asserted every 500ms while
+---enabled, so game-driven re-shows (e.g. camera-mode switches) are undone.
 ---State is runtime-only: resets to stock (visible) on client restart.
 
 local PRIMITIVE_CLASS_PATH = "/Script/Engine.PrimitiveComponent"
 local DRONE_SPAWN_HOOK = "/Script/MotorTown.MotorTownPlayerController:ClientSpawnDroneResponse"
 
----Feature state: true = drone primitives hidden
+---Feature state
 local hideEnabled = false
 
----Get the local player's drone (AMotorTownPlayerController.Drone), nil-safe
----@return FActorInstance?
-local function GetMyDrone()
-    local PC = GetMyPlayerController()
-    if not PC or not PC:IsValid() then return nil end
-    local ok, drone = pcall(function() return PC.Drone end)
-    if not ok or not drone or not drone:IsValid() then return nil end
-    if drone:IsActorBeingDestroyed() then return nil end
-    return drone
+---Captured from ClientSpawnDroneResponse — kept even when hideEnabled was
+---off at spawn time, so the toggle can act on the in-flight drone.
+local lastDroneRef = nil
+
+---Which hide strategy worked (cached; logged once; reused on re-assert)
+local activeStrategy = nil
+
+---Concrete class name of an actor (diagnostics: shows the real BP subclass)
+local function ClassNameOf(actor)
+    local ok, name = pcall(function()
+        return actor:GetClass():GetFName():ToString()
+    end)
+    if ok and name then return name end
+    return "?"
 end
 
----Set bHiddenInGame on every primitive component of the drone
----@param drone FActorInstance
----@param hidden boolean
----@return number found  primitive components seen on the actor
----@return number changed components actually toggled this call
-local function SetDroneModelHidden(drone, hidden)
+local function DroneUsable(drone)
+    return drone and drone:IsValid() and not drone:IsActorBeingDestroyed()
+end
+
+---The local player's drone, best-effort (capture > PC.Drone > name search)
+local function GetMyDrone()
+    if DroneUsable(lastDroneRef) then return lastDroneRef end
+    local pc = GetMyPlayerController()
+    if pc and pc:IsValid() then
+        local ok, drone = pcall(function() return pc.Drone end)
+        if ok and DroneUsable(drone) then return drone end
+    end
+    local ok2, drone = pcall(FindFirstOf, "MTDrone")
+    if ok2 and DroneUsable(drone) then return drone end
+    return nil
+end
+
+------------------------------------------------------------ Strategy 1
+---Whole-actor hide: one call hides every primitive on the actor.
+---@return boolean ok
+---@return string via
+local function HideWholeActor(drone, hidden)
+    for _, fnName in ipairs({ "K2_SetActorHiddenInGame", "SetActorHiddenInGame" }) do
+        local okCall, err = pcall(function() drone[fnName](drone, hidden) end)
+        if okCall then
+            local okRead, isHidden = pcall(function() return drone.bHidden end)
+            if not okRead or isHidden == hidden then return true, fnName end
+            LogOutput("INFO", "[DroneModelHide] call %s(%s) ok but bHidden reads %s",
+                fnName, tostring(hidden), tostring(isHidden))
+        else
+            LogOutput("INFO", "[DroneModelHide] call %s threw: %s", fnName, tostring(err))
+        end
+    end
+    return false, "whole-actor"
+end
+
+------------------------------------------------------------ Strategy 2
+---Per-component hide via the actor's component enumeration.
+---@return boolean ok
+---@return string via
+local function HidePerComponent(drone, hidden)
     local primClass = StaticFindObject(PRIMITIVE_CLASS_PATH)
-    if not primClass or not primClass:IsValid() then return 0, 0 end
+    if not primClass or not primClass:IsValid() then return false, "no primitive class object" end
+    for _, fnName in ipairs({ "K2_GetComponentsByClass", "GetComponentsByClass" }) do
+        local ok, comps = pcall(function() return drone[fnName](drone, primClass) end)
+        if ok and comps then
+            local found, changed = 0, 0
+            local count = #comps
+            for i = 1, count do
+                local comp = comps[i]
+                if comp and comp:IsValid() then
+                    found = found + 1
+                    local readOk, isHidden = pcall(function() return comp.bHiddenInGame end)
+                    if readOk and isHidden ~= hidden then
+                        pcall(function() comp:SetHiddenInGame(hidden) end)
+                        changed = changed + 1
+                    end
+                end
+            end
+            if found > 0 then
+                return true, fnName .. " [" .. changed .. "/" .. found .. " comps]"
+            end
+        else
+            LogOutput("INFO", "[DroneModelHide] %s threw: %s", fnName, tostring(comps))
+        end
+    end
+    return false, "per-component"
+end
 
-    local ok, comps = pcall(function() return drone:GetComponentsByClass(primClass) end)
-    if not ok or not comps then return 0, 0 end
-
-    local found, changed = 0, 0
-    local count = #comps
-    for i = 1, count do
-        local comp = comps[i]
-        if comp and comp:IsValid() then
-            found = found + 1
-            local readOk, isHidden = pcall(function() return comp.bHiddenInGame end)
+------------------------------------------------------------ Strategy 3
+---Native AMTDrone fields: RootBody (USphereComponent) + Props (TArray).
+---@return boolean ok
+---@return string via
+local function HideNativeFields(drone, hidden)
+    local changed = 0
+    pcall(function()
+        local rb = drone.RootBody
+        if rb and rb:IsValid() then
+            local readOk, isHidden = pcall(function() return rb.bHiddenInGame end)
             if readOk and isHidden ~= hidden then
-                pcall(function() comp:SetHiddenInGame(hidden) end)
+                pcall(function() rb:SetHiddenInGame(hidden) end)
                 changed = changed + 1
             end
         end
+    end)
+    pcall(function()
+        local props = drone.Props
+        if props then
+            for i = 1, #props do
+                local comp = props[i]
+                if comp and comp:IsValid() then
+                    local readOk, isHidden = pcall(function() return comp.bHiddenInGame end)
+                    if readOk and isHidden ~= hidden then
+                        pcall(function() comp:SetHiddenInGame(hidden) end)
+                        changed = changed + 1
+                    end
+                end
+            end
+        end
+    end)
+    return changed > 0, "native fields [" .. changed .. "]"
+end
+
+---Apply the layered hide. Cached strategy first, then the full ladder.
+local function ApplyDroneHide(drone, hidden)
+    if activeStrategy == "whole-actor" then
+        local ok, via = HideWholeActor(drone, hidden)
+        if ok then return true, via end
     end
-    return found, changed
+    local ok1, via1 = HideWholeActor(drone, hidden)
+    if ok1 then
+        activeStrategy = "whole-actor"
+        return true, via1
+    end
+    local ok2, via2 = HidePerComponent(drone, hidden)
+    if ok2 then
+        activeStrategy = "per-component"
+        return true, via2
+    end
+    local ok3, via3 = HideNativeFields(drone, hidden)
+    if ok3 then
+        activeStrategy = "native-fields"
+        return true, via3
+    end
+    return false, "ALL strategies failed"
 end
 
 ---Keybind handler: flip state, apply to the drone in flight (if any)
@@ -62,12 +175,11 @@ local function ToggleDroneModel()
     hideEnabled = not hideEnabled
     local drone = GetMyDrone()
     if drone then
-        local found, changed = SetDroneModelHidden(drone, hideEnabled)
-        LogOutput("INFO", "[DroneModelHide] %s — %d/%d primitive component(s) %s",
-            hideEnabled and "ON" or "OFF", changed, found,
-            hideEnabled and "hidden" or "shown")
+        local ok, via = ApplyDroneHide(drone, hideEnabled)
+        LogOutput("INFO", "[DroneModelHide] %s — %s (class: %s)",
+            hideEnabled and "ON" or "OFF", ok and via or ("FAILED: " .. via), ClassNameOf(drone))
     else
-        LogOutput("INFO", "[DroneModelHide] %s (no drone in flight)",
+        LogOutput("INFO", "[DroneModelHide] %s (no drone found — armed for next spawn)",
             hideEnabled and "ON" or "OFF")
     end
     pcall(function()
@@ -78,36 +190,43 @@ local function ToggleDroneModel()
     end)
 end
 
----Instant hide on drone spawn. Wrapped in pcall — RegisterHook THROWS on an
----unregistrable UFunction and must not brick the client mod's main chunk
----(if this hook is lost, the 1s re-assert loop below still covers spawns).
+---Drone spawn response: capture the actor ALWAYS (BP-safe, the hook hands us
+---the actor — no class-name search), hide immediately when enabled.
+---Wrapped in pcall — RegisterHook THROWS on an unregistrable UFunction and
+---must not brick the client mod's main chunk.
 do
     local ok, err = pcall(function()
         RegisterHook(DRONE_SPAWN_HOOK, function(Context, InDrone, InDroneItemKey)
-            if not hideEnabled then return end
             local drone = InDrone:get()
-            if not drone or not drone:IsValid() then return end
-            local found, changed = SetDroneModelHidden(drone, true)
-            LogOutput("INFO", "[DroneModelHide] Drone spawned — hid %d/%d primitive component(s)",
-                changed, found)
+            if not drone then return end
+            lastDroneRef = drone
+            if not DroneUsable(drone) then return end
+            LogOutput("INFO", "[DroneModelHide] Drone spawn captured (class: %s)", ClassNameOf(drone))
+            if not hideEnabled then return end
+            local ok2, via = ApplyDroneHide(drone, true)
+            LogOutput("INFO", "[DroneModelHide] Drone spawned — %s",
+                ok2 and ("hidden via " .. via) or ("FAILED: " .. via))
         end)
     end)
     if not ok then
-        LogOutput("WARN", "[DroneModelHide] %s hook failed to register (%s) — spawn coverage falls back to the 1s loop",
+        LogOutput("WARN", "[DroneModelHide] %s hook failed to register (%s) — toggle fallbacks still apply",
             DRONE_SPAWN_HOOK, tostring(err))
     end
 end
 
----Re-assert while enabled: undoes the game re-showing components (e.g. after
----a camera-mode switch) and covers spawns missed by a failed hook registration.
----No-ops when disabled or no drone in flight.
-LoopInGameThreadWithDelay(1000, function()
+---Re-assert while enabled (500ms): undoes game re-shows (e.g. camera-mode
+---switches), covers spawns that happened while disabled. Early-outs cheaply.
+LoopInGameThreadWithDelay(500, function()
     if not hideEnabled then return end
     local drone = GetMyDrone()
     if not drone then return end
-    local found, changed = SetDroneModelHidden(drone, true)
-    if changed > 0 then
-        LogOutput("INFO", "[DroneModelHide] Re-asserted — hid %d/%d primitive component(s)", changed, found)
+    if activeStrategy == "whole-actor" then
+        local okRead, isHidden = pcall(function() return drone.bHidden end)
+        if okRead and isHidden then return end
+    end
+    local ok, via = ApplyDroneHide(drone, true)
+    if ok and not via:match("%[0/") then
+        LogOutput("INFO", "[DroneModelHide] Re-asserted — %s", via)
     end
 end)
 
