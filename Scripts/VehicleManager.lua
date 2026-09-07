@@ -2306,6 +2306,10 @@ local function HandleGetPlayerLastVehicle(session)
 
   local data = LastVehicleMinimalToTable(vehicle)
 
+  -- Live drivetrain topology for /check_parts (same read the full
+  -- VehicleToTable serializer uses; vehicle is validated above).
+  data.DriveInfo = GetDriveInfo(vehicle)
+
   -- Trailer chain with the same minimal schema
   data.trailers = {}
   local curr = vehicle
