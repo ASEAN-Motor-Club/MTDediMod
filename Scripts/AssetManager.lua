@@ -24,18 +24,22 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
     local assetTag = tag
     pcall(function()
       LoadAsset(assetPath)
-      local assetClass = {}
+      -- StaticFindObject only resolves objects already in memory, so the find
+      -- above misses assets that have never been loaded (first-ever spawn of
+      -- a non-preloaded asset, e.g. workshop prop meshes). Re-find AFTER the
+      -- load so the freshly loaded object is visible.
+      object = StaticFindObject(assetPath)
 
-      if object:IsA(staticMeshClass) then
-        assetClass = staticMeshActorClass
-      else
+      if not object or not object:IsValid() then
+        error("Invalid asset loaded: " .. assetPath)
+      end
+
+      local assetClass = staticMeshActorClass
+      if not object:IsA(staticMeshClass) then
         assetClass = object
       end
 
       LogOutput("DEBUG", "Loaded and found asset %s", assetClass:GetFullName())
-      if not assetClass:IsValid() then
-        error("Invalid asset loaded: " .. assetPath)
-      end
 
       ---@type AActor
       actor = world:SpawnActor(
@@ -78,24 +82,47 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
 
         -- Set actor to movable
         actor:SetMobility(2)
-        if actor.StaticMeshComponent:SetStaticMesh(object) then
+        local meshComponent = actor.StaticMeshComponent ---@cast meshComponent UStaticMeshComponent
+        local meshSet = false
+        if meshComponent and meshComponent:IsValid() and object and object:IsValid() then
+          meshSet = meshComponent:SetStaticMesh(object)
+        end
+        if meshSet then
           if scale then
-            actor.StaticMeshComponent:SetWorldScale3D({
+            meshComponent:SetWorldScale3D({
               X = scale and scale.X or 1,
               Y = scale and scale.Y or 1,
               Z = scale and scale.Z or 1,
             })
-            -- Push scale change to render thread so bounds are correct
-            actor.StaticMeshComponent:MarkRenderStateDirty()
           end
-          actor.StaticMeshComponent:SetIsReplicated(true)
+          -- Render-distance / replication wiring is best-effort, step by
+          -- step: the actor already exists and is tagged, so a failure here
+          -- must not fail the whole spawn (it used to 500 AFTER the actor was
+          -- created, leaving a ghost actor + an error for the caller).
+          local function tryStep(name, fn)
+            local ok, err = pcall(fn)
+            if not ok then
+              LogOutput("WARN", "SpawnActor: mesh wiring step %s failed for %s: %s", name, assetPath, tostring(err))
+            end
+          end
+          tryStep("set-is-replicated", function() meshComponent:SetIsReplicated(true) end)
           -- Increase render distance so mesh is visible from afar (~500m)
-          actor.StaticMeshComponent:SetCullDistance(50000)
+          tryStep("set-cull-distance", function() meshComponent:SetCullDistance(50000) end)
           -- Prevent level Cull Distance Volumes from overriding our draw distance
-          actor.StaticMeshComponent.bAllowCullDistanceVolume = false
-          actor.StaticMeshComponent:MarkRenderStateDirty()
+          tryStep("bAllowCullDistanceVolume", function() meshComponent.bAllowCullDistanceVolume = false end)
+          -- NOTE: no explicit MarkRenderStateDirty here. On UE5.5/UE4SS that
+          -- call errors with a nullptr instance on freshly spawned server-side
+          -- components (observed on prod + staging), and it is redundant —
+          -- SetStaticMesh/SetWorldScale3D already dirty the render state
+          -- internally.
         else
-          error("Failed to set " .. object:GetFullName())
+          LogOutput(
+            "WARN",
+            "SpawnActor: spawned static mesh actor but could not attach mesh %s (component valid: %s, mesh valid: %s)",
+            assetPath,
+            tostring(meshComponent ~= nil and meshComponent:IsValid()),
+            tostring(object and object:IsValid())
+          )
         end
       end
       return true, assetTag, actor
