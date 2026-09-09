@@ -105,16 +105,16 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
               LogOutput("WARN", "SpawnActor: mesh wiring step %s failed for %s: %s", name, assetPath, tostring(err))
             end
           end
-          if scale then
-            -- Push scale change to render thread so bounds are correct
-            tryStep("mark-render-dirty-scale", function() meshComponent:MarkRenderStateDirty() end)
-          end
           tryStep("set-is-replicated", function() meshComponent:SetIsReplicated(true) end)
           -- Increase render distance so mesh is visible from afar (~500m)
           tryStep("set-cull-distance", function() meshComponent:SetCullDistance(50000) end)
           -- Prevent level Cull Distance Volumes from overriding our draw distance
           tryStep("bAllowCullDistanceVolume", function() meshComponent.bAllowCullDistanceVolume = false end)
-          tryStep("mark-render-dirty", function() meshComponent:MarkRenderStateDirty() end)
+          -- NOTE: no explicit MarkRenderStateDirty here. On UE5.5/UE4SS that
+          -- call errors with a nullptr instance on freshly spawned server-side
+          -- components (observed on prod + staging), and it is redundant —
+          -- SetStaticMesh/SetWorldScale3D already dirty the render state
+          -- internally.
         else
           LogOutput(
             "WARN",

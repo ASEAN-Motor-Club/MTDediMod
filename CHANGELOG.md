@@ -9,7 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 ### [server/v0.42.0-rc7] — 2026-09-10
 
 #### Fixed
-- `AssetManager.SpawnActor` static-mesh spawn: re-find the asset object after `LoadAsset` (`StaticFindObject` only resolves in-memory objects, so first-ever spawns of non-preloaded assets always failed), and make the post-spawn mesh wiring (scale push, replication, cull distance, render-state dirty) best-effort per step — a failure there used to 500 the request AFTER the actor was already spawned, leaving a ghost actor. Broken mesh attach now logs a WARN instead of erroring.
+- `AssetManager.SpawnActor` static-mesh spawn: re-find the asset object after `LoadAsset` (`StaticFindObject` only resolves in-memory objects, so first-ever spawns of non-preloaded assets always failed), guard the mesh attach on component + mesh validity, and make the post-spawn wiring (replication, cull distance) best-effort per step — a failure there used to 500 the request AFTER the actor was already spawned, leaving a ghost actor. The explicit `MarkRenderStateDirty` calls were removed: on UE5.5/UE4SS they error with a nullptr instance on freshly spawned server-side components, and they are redundant (`SetStaticMesh`/`SetWorldScale3D` dirty the render state internally). Verified on staging: first-ever mesh spawn now returns 200 with the mesh attached.
 
 ### [server/v0.42.0-rc6] — 2026-09-03
 
