@@ -489,6 +489,7 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSetCustomization
     Removed = removed,         -- parts taken off
     CostumeBodyKey = costumeBodyKey,
     CostumeItemKey = costumeItemKey,
+    CostumeItemClass = GetItemRowClassPath(costumeItemKey),
   })
 end)
 
@@ -566,16 +567,16 @@ RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSetEquipmentInve
     local oldKey = currentBySlot[slot] or ""
     if oldKey ~= newKey then
       if newKey ~= "" then
-        table.insert(equipped, { Slot = slot, ItemKey = newKey })
+        table.insert(equipped, { Slot = slot, ItemKey = newKey, ItemClass = GetItemRowClassPath(newKey) })
       end
       if oldKey ~= "" then
-        table.insert(unequipped, { Slot = slot, ItemKey = oldKey })
+        table.insert(unequipped, { Slot = slot, ItemKey = oldKey, ItemClass = GetItemRowClassPath(oldKey) })
       end
     end
   end
   for slot, oldKey in pairs(currentBySlot) do
     if newBySlot[slot] == nil and oldKey ~= "" then
-      table.insert(unequipped, { Slot = slot, ItemKey = oldKey })
+      table.insert(unequipped, { Slot = slot, ItemKey = oldKey, ItemClass = GetItemRowClassPath(oldKey) })
     end
   end
 
@@ -1177,14 +1178,22 @@ local function CharacterCustomizationToTable(character)
 
   -- Equipment slots (Hat=1, Glasses=2, Beard=3, Costume=4).
   -- EMTEquipmentSlot.Costume = 4 — this is the currently-worn costume key.
+  -- ItemClass = the row's HoldableActorClass from the Items DataTable, i.e. the
+  -- actor class the game spawns for this inventory item (resolved via
+  -- GetItemRowClassPath, see Helpers.lua).
   pcall(function()
     character.Net_EquipmentInventory.EquipmentSlots:ForEach(function(_, element)
       local entry = element:get()
       local ok_ik, val_ik = pcall(function() return entry.ItemKey:ToString() end)
       local itemKey = ok_ik and val_ik and val_ik ~= "None" and val_ik or nil
-      table.insert(data.Equipment, { Slot = entry.Slot, ItemKey = itemKey })
+      table.insert(data.Equipment, {
+        Slot = entry.Slot,
+        ItemKey = itemKey,
+        ItemClass = itemKey and GetItemRowClassPath(itemKey) or nil,
+      })
       if entry.Slot == 4 then
         data.Costume = itemKey
+        data.CostumeClass = itemKey and GetItemRowClassPath(itemKey) or nil
       end
     end)
   end)

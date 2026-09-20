@@ -62,22 +62,31 @@ local function CharacterToTable(character)
   data.Net_GroupPassenger = PassengerComponentToTable(character.Net_GroupPassenger)
   data.BaseTurnRate = character.BaseTurnRate
   data.BaseLookUpRate = character.BaseLookUpRate
-  data.Net_Customization = {
-    BodyKey = character.Net_Customization.BodyKey:ToString(),
-    CostumeBodyKey = character.Net_Customization.CostumeBodyKey:ToString(),
-    CostumeItemKey = character.Net_Customization.CostumeItemKey:ToString()
-  }
+  -- Net_Customization (FMTCharacterCustomization) reads are unreliable for
+  -- inactive/ghost character entries (null UObject proxies) — guard them.
+  data.Net_Customization = {}
+  pcall(function()
+    data.Net_Customization.BodyKey = character.Net_Customization.BodyKey:ToString()
+    data.Net_Customization.CostumeBodyKey = character.Net_Customization.CostumeBodyKey:ToString()
+    data.Net_Customization.CostumeItemKey = character.Net_Customization.CostumeItemKey:ToString()
+    data.Net_Customization.CostumeItemClass =
+        GetItemRowClassPath(data.Net_Customization.CostumeItemKey)
+  end)
   data.Net_ResidentKey = character.Net_ResidentKey:ToString()
   data.MapIconName = character.MapIconName:ToString()
   -- data.LC_InteractionTarget = character.LC_InteractionTarget
   data.Net_Cargo = character.Net_Cargo:IsValid() and cargo.CargoToTable(character.Net_Cargo) or json.null
-  data.Net_HoldingItem = {
-    Actor = character.Net_HoldingItem.Actor:IsValid() and character.Net_HoldingItem.Actor:GetFullName() or json.null,
-    ItemKey = character.Net_HoldingItem.ItemKey:ToString(),
-    QuickSlotIndex = character.Net_HoldingItem.QuickSlotIndex
-  }
+  -- Net_HoldingItem can also hit null proxies on ghost entries — guard it.
+  data.Net_HoldingItem = {}
+  pcall(function()
+    data.Net_HoldingItem = {
+      Actor = character.Net_HoldingItem.Actor:IsValid() and character.Net_HoldingItem.Actor:GetFullName() or json.null,
+      ItemKey = character.Net_HoldingItem.ItemKey:ToString(),
+      ItemClass = GetItemRowClassPath(character.Net_HoldingItem.ItemKey:ToString()),
+      QuickSlotIndex = character.Net_HoldingItem.QuickSlotIndex
+    }
+  end)
   data.Net_SeatPositionType = character.Net_SeatPositionType
-  -- data.Net_Seat = character.Net_Seat
   -- data.Net_Pose = character.Net_Pose
   data.Net_PoseFlags = character.Net_PoseFlags
   data.Net_CharacterFlags = character.Net_CharacterFlags
