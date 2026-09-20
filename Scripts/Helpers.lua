@@ -606,3 +606,70 @@ function ExecuteInGameThreadSync(exec, label, maxMs)
   end
   return true
 end
+
+---Items master DataTable (/Game/DataAsset/Items/Items) — maps ItemKey -> ItemRow.
+---Row.HoldableActorClass (FSoftObjectPath) is the actor class the game spawns for
+---the item (e.g. IT_Common_Cargo_C for costumes, IT_Flashlight_C for the flashlight).
+local itemsTableCache = nil
+local itemClassCache = {} ---@type table<string, string|false>
+
+---Resolve an item row's HoldableActorClass from the Items DataTable.
+---Results are cached per key (rows are static at runtime; only boot-time pak mods change them).
+---@param itemKey string|nil Item row key (FName text), e.g. "Costume_ScareCrow_01"
+---@return string|nil classPath e.g. "/Game/Objects/Item/IT_Common_Cargo.IT_Common_Cargo_C", nil when unknown
+function GetItemRowClassPath(itemKey)
+  if not itemKey or itemKey == "" or itemKey == "None" then return nil end
+  local cached = itemClassCache[itemKey]
+  if cached ~= nil then
+    if cached == false then return nil end
+    return cached
+  end
+
+  local classPath = nil
+  local lookupErr
+  xpcall(function()
+    if not itemsTableCache or not itemsTableCache:IsValid() then
+      -- StaticFindObject throws on names it can't parse as long names; the
+      -- DataTable asset inside its package is "<PackagePath>.<AssetName>".
+      pcall(function() itemsTableCache = StaticFindObject("/Game/DataAsset/Items/Items.Items") end)
+      if not itemsTableCache or not itemsTableCache:IsValid() then
+        LoadAsset("/Game/DataAsset/Items/Items")
+        pcall(function() itemsTableCache = StaticFindObject("/Game/DataAsset/Items/Items.Items") end)
+      end
+    end
+    if not itemsTableCache or not itemsTableCache:IsValid() then
+      lookupErr = "items table not found"
+      return
+    end
+    local row = itemsTableCache:FindRow(itemKey)
+    if not row then return end
+    -- HoldableActorClass is a TSoftObjectPtr userdata: GetWeakPtr():Get()
+    -- resolves the class when loaded (normal at boot) -> GetFullName gives
+    -- "BlueprintGeneratedClass /Game/<Pkg>.<Class>_C". Fallback: the soft
+    -- path's asset FName (class suffix only) via GetObjectID().
+    local sp = row.HoldableActorClass
+    pcall(function()
+      local cls = sp:GetWeakPtr():Get()
+      if cls and cls:IsValid() then
+        local full = cls:GetFullName()
+        local _, _, path = full:find("^%S+%s+(.+)$")
+        classPath = path or full
+      end
+    end)
+    if not classPath then
+      pcall(function()
+        local assetName = sp:GetObjectID():GetAssetPathName():ToString()
+        if assetName and assetName ~= "None" then classPath = assetName end
+      end)
+    end
+  end, function(err)
+    lookupErr = tostring(err)
+  end)
+
+  if lookupErr then
+    LogOutput("WARN", "GetItemRowClassPath(%s) lookup failed: %s", itemKey, lookupErr)
+  end
+
+  itemClassCache[itemKey] = classPath or false
+  return classPath
+end
