@@ -1314,6 +1314,75 @@ local function HandleDiagNavigation(session)
   return result, nil, 200
 end
 
+---Knock down (ragdoll) a player's character via the native Server_Knockdown RPC.
+---This is the same RPC the game itself fires when a character is knocked over;
+---on the dedicated server it runs server-side with authority and replicates the
+---knockdown state to every client. Recovery is handled by the game's native
+---get-up logic, so this is a temporary ragdoll, not a kill.
+---@type RequestPathHandler
+local function HandleKnockdownPlayer(session)
+  local characterGuid = session.pathComponents[2]
+  if not characterGuid then
+    return { error = "Missing character GUID" }, nil, 400
+  end
+
+  local PC = GetPlayerControllerFromGuid(characterGuid)
+  if not PC:IsValid() then
+    return { error = string.format("Player %s not found", characterGuid) }, nil, 404
+  end
+
+  local result = {}
+  -- Handlers already run on the game thread; pcall directly (the
+  -- HandleMakePlayerSuspect pattern) — ExecuteInGameThread does not
+  -- propagate the callback's return values.
+  local ok, err = pcall(function()
+    -- Net_MyDrivingCharacter is the MTCharacter while on foot; K2_GetPawn
+    -- returns the vehicle when seated, so prefer the driving-character field
+    -- and fall back to the pawn with an explicit class check.
+    local character = PC.Net_MyDrivingCharacter
+    if not character or not character:IsValid() then
+      character = PC:K2_GetPawn()
+    end
+    if not character or not character:IsValid() then
+      result.status = "char_not_found"
+      return
+    end
+
+    local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+    if not charClass or not charClass:IsValid() or not character:IsA(charClass) then
+      result.status = "not_a_character"
+      return
+    end
+
+    LogOutput("INFO", "HandleKnockdownPlayer: knocking down %s (%s)",
+      characterGuid, character:GetFullName())
+    local knockOk, knockErr = pcall(function()
+      character:Server_Knockdown()
+    end)
+    if not knockOk then
+      result.status = "knockdown_failed"
+      result.error = tostring(knockErr)
+      LogOutput("ERROR", "HandleKnockdownPlayer: Server_Knockdown failed for %s: %s",
+        characterGuid, tostring(knockErr))
+      return
+    end
+
+    result.status = "ok"
+  end)
+  if not ok then
+    result.status = "error"
+    result.error = tostring(err)
+    LogOutput("ERROR", "HandleKnockdownPlayer: game thread error for %s: %s",
+      characterGuid, tostring(err))
+    return result, nil, 500
+  end
+
+  if result.status ~= "ok" then
+    return result, nil, 409
+  end
+  return result, nil, 200
+end
+
 return {
   HandleGetPlayerStates = HandleGetPlayerStates,
   GetMyCurrentTransform = GetMyCurrentTransform,
@@ -1329,6 +1398,7 @@ return {
   HandleGetParties = HandleGetParties,
   HandleMakePlayerSuspect = HandleMakePlayerSuspect,
   HandleClearPlayerSuspect = HandleClearPlayerSuspect,
+  HandleKnockdownPlayer = HandleKnockdownPlayer,
   HandleGetPoliceState = HandleGetPoliceState,
   HandleExperimentalHideActor = HandleExperimentalHideActor,
   HandleExperimentalHideCostume = HandleExperimentalHideCostume,
