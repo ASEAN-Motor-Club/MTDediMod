@@ -19,6 +19,7 @@ local lastDespawnDialogTime = 0
 local lastDoorToggleTime = 0
 local lastEngineToggleTime = 0
 local despawnDialogOpen = false
+local lastKnockdownTime = 0
 
 --- Impulse strength for the aimed impulse shortcut
 local IMPULSE_STRENGTH = 100000.0
@@ -434,6 +435,77 @@ local function TriggerEngineToggleAimed()
     end)
 end
 
+---[EXPERIMENTAL] Knock down (ragdoll) the player the user is aiming at.
+---Transport depends on ownership, which the engine enforces for Server RPCs:
+---a client may only send Server RPCs on actors it OWNS. So:
+--- - Self target: direct Server_Knockdown on our own character (owned, works).
+--- - Other target: the direct call is dropped client-side ("no owning
+---   connection"), so we request the server mod to fire the same RPC with
+---   authority via POST /players/{guid}/knockdown.
+local function TriggerKnockdownAimed()
+    if not IsAdmin() then
+        LogOutput("WARN", "Knockdown shortcut: Admin only")
+        return
+    end
+
+    local now = os.clock() * 1000
+    if now - lastKnockdownTime < DEBOUNCE_MS then
+        return
+    end
+    lastKnockdownTime = now
+
+    ExecuteInGameThread(function()
+        local PC = GetMyPlayerController()
+        if not PC:IsValid() then
+            LogOutput("WARN", "Knockdown shortcut: PlayerController not valid")
+            return
+        end
+
+        local wasHit, hitResult = GetHitResultFromCenterLineTrace()
+        if not wasHit then
+            LogOutput("INFO", "Knockdown shortcut: Nothing aimed at")
+            return
+        end
+
+        local actor = GetActorFromHitResult(hitResult)
+        if not actor:IsValid() then
+            LogOutput("INFO", "Knockdown shortcut: Invalid aimed actor")
+            return
+        end
+
+        local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+        if not charClass:IsValid() or not actor:IsA(charClass) then
+            LogOutput("INFO", "Knockdown shortcut: Aimed actor is not a character: %s", actor:GetFullName())
+            return
+        end
+
+        ---@cast actor AMTCharacter
+        local myGuid = GetMyCharacterGuid()
+        local PS = actor.Net_MTPlayerState
+        local targetGuid = nil
+        if PS and PS:IsValid() then
+            targetGuid = GuidToString(PS.CharacterGuid)
+        end
+
+        -- Direct RPC always attempted (validates ownership behavior in the log)
+        local directOk, directErr = pcall(function()
+            actor:Server_Knockdown()
+        end)
+        LogOutput("INFO", "Knockdown shortcut: direct Server_Knockdown on %s (ok=%s err=%s)",
+            actor:GetFullName(), tostring(directOk), tostring(directErr))
+
+        -- Non-self targets also go through the server mod for authority
+        if not (myGuid and targetGuid and myGuid == targetGuid) then
+            if targetGuid and targetGuid ~= "0000" then
+                ModApiPost("/players/" .. targetGuid .. "/knockdown", {})
+                LogOutput("INFO", "Knockdown shortcut: knockdown requested via mod API for %s", targetGuid)
+            else
+                LogOutput("WARN", "Knockdown shortcut: aimed character has no guid (resident NPC?)")
+            end
+        end
+    end)
+end
+
 ---[EXPERIMENTAL] Apply a physics impulse to the actor the player is aiming at.
 ---Uses the game's built-in ServerApplyImpact RPC which replicates automatically.
 local function TriggerImpulseAimed()
@@ -812,6 +884,7 @@ end
 RegisterKeyboardShortcut()
 RegisterGamepadShortcut()
 RegisterKeyBind(Key.RIGHT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnAimed)
+RegisterKeyBind(Key.K, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerKnockdownAimed)
 RegisterKeyBind(Key.I, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.O, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDoorToggle)

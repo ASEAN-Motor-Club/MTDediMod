@@ -84,6 +84,7 @@ local function LoadWebserver()
     server.registerHandler("/players/*/customization", "GET", playerManager.HandleGetPlayerCustomization)
     server.registerHandler("/players/*/suspect", "POST", playerManager.HandleMakePlayerSuspect)
     server.registerHandler("/players/*/suspect", "DELETE", playerManager.HandleClearPlayerSuspect)
+    server.registerHandler("/players/*/knockdown", "POST", playerManager.HandleKnockdownPlayer)
     
     -- Experimental
     server.registerHandler("/players/*/experimental/hide_actor", "POST", playerManager.HandleExperimentalHideActor)
