@@ -27,6 +27,7 @@ local characterManager = require("CharacterManager")
 local Commands = require("Commands")
 local rpManager = require("RPManager")
 local criminalManager = require("CriminalManager")
+local noTeleportManager = require("NoTeleportManager")
 local balanceManager = require("BalanceManager")
 
 local function LoadWebserver()
@@ -84,6 +85,9 @@ local function LoadWebserver()
     server.registerHandler("/players/*/customization", "GET", playerManager.HandleGetPlayerCustomization)
     server.registerHandler("/players/*/suspect", "POST", playerManager.HandleMakePlayerSuspect)
     server.registerHandler("/players/*/suspect", "DELETE", playerManager.HandleClearPlayerSuspect)
+    server.registerHandler("/players/*/no_teleport", "POST", noTeleportManager.HandleSetPlayerNoTeleport)
+    server.registerHandler("/players/*/no_teleport", "DELETE", noTeleportManager.HandleClearPlayerNoTeleport)
+    server.registerHandler("/players/no_teleport", "GET", noTeleportManager.HandleGetNoTeleportPlayers)
     
     -- Experimental
     server.registerHandler("/players/*/experimental/hide_actor", "POST", playerManager.HandleExperimentalHideActor)

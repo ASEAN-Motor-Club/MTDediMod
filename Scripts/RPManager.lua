@@ -1,4 +1,5 @@
 local statics = require("Statics")
+local noTeleportManager = require("NoTeleportManager")
 
 local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
 
@@ -46,6 +47,17 @@ local function IsRPPlayer(playerController)
   return tag ~= nil and string.find(tag, "[R*]") ~= nil
 end
 
+---Backend-pushed invisible no-teleport flag (NoTeleportManager): keyed on the
+---character GUID so it never touches the display name — unlike the [R] tag it
+---reveals nothing about wanted status. Fails closed to "not flagged" on any
+---GUID-resolution problem.
+local function IsNoTeleportFlagged(playerController)
+  if not playerController or not playerController:IsValid() then return false end
+  local ok, guid = pcall(GetPlayerGuid, playerController)
+  if not ok or not guid then return false end
+  return noTeleportManager.IsNoTeleportGuid(guid)
+end
+
 ---Get the player's current pawn location.
 local function GetPawnLocation(playerController)
   if not playerController or not playerController:IsValid() then return nil end
@@ -73,7 +85,7 @@ end
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter", function(PC, AbsoluteLocation, bCharge, bIsRespawn)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportCharacter") end
   local playerController = PC:get()
-  if not IsRPPlayer(playerController) then return end
+  if not IsRPPlayer(playerController) and not IsNoTeleportFlagged(playerController) then return end
 
   local loc = GetPawnLocation(playerController)
   if loc then
@@ -89,10 +101,13 @@ end)
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehicle", function(PC, Vehicle, AbsoluteLocation)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportVehicle") end
   local playerController = PC:get()
-  if not IsRPPlayer(playerController) then return end
+  local notpFlagged = IsNoTeleportFlagged(playerController)
+  if not IsRPPlayer(playerController) and not notpFlagged then return end
   -- Event members: movement blocks waived (racetrack allowance), except
-  -- character teleport + autopilot which stay enforced for everyone
-  if IsInServerEvent(playerController) then
+  -- character teleport + autopilot which stay enforced for everyone.
+  -- The no-teleport flag does NOT get the allowance — it is a deliberate
+  -- enforcement flag, not an RP rule.
+  if not notpFlagged and IsInServerEvent(playerController) then
     LogOutput("INFO", string.format("[RPManager] Allowed ServerTeleportVehicle for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
     return
   end
@@ -112,8 +127,9 @@ end)
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerRespawnCharacter", function(PC, AbsoluteLocation)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerRespawnCharacter") end
   local playerController = PC:get()
-  if not IsRPPlayer(playerController) then return end
-  if IsInServerEvent(playerController) then return end
+  local notpFlagged = IsNoTeleportFlagged(playerController)
+  if not IsRPPlayer(playerController) and not notpFlagged then return end
+  if not notpFlagged and IsInServerEvent(playerController) then return end
 
   local loc = GetPawnLocation(playerController)
   if loc then
@@ -129,6 +145,9 @@ end)
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(PC, Vehicle, WorldLocation, Rotation, bRemoveCargo, bResetCarriedVehicles)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerResetVehicleAt") end
   local playerController = PC:get()
+  -- NOTE: the no-teleport flag deliberately does NOT apply here: this RPC
+  -- recovers the vehicle AT ITS CURRENT position (no escape value) and is
+  -- legitimate roadside/racetrack recovery.
   if not IsRPPlayer(playerController) then return end
 
   -- Racetrack allowance: event members may reset (see IsInServerEvent)
