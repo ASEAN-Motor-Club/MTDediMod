@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc8] — 2026-09-23
+
+#### Added
+- Backend-pushed invisible no-teleport flag (`NoTeleportManager.lua`): per-GUID in-memory set driven by `POST/DELETE /players/{guid}/no_teleport` (+ `GET /players/no_teleport`), with no display-name involvement. `RPManager` blocks `ServerTeleportCharacter`, `ServerTeleportVehicle` and `ServerRespawnCharacter` for flagged GUIDs — WITHOUT the racetrack event-member allowance (the flag is deliberate enforcement, not an RP rule). `ServerResetVehicleAt` is deliberately NOT flagged (recovers at the current position — no escape value). Replaces the [R] name tag as the teleport-lock carrier for wanted suspects (incl. the 30 s grace window) and on-duty police (amc-backend PR #195).
+
 ### [server/v0.42.0-rc7] — 2026-09-10
 
 #### Fixed
