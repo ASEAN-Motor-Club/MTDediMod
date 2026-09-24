@@ -5,9 +5,10 @@ local teleportAllow = require("TeleportAllow")
 ---Anti-teleport-with-cargo (universal, not RP-gated): player-made teleport
 ---mods call ServerResetVehicleAt with cargo kept (bRemoveCargo=false) and a
 ---far-away WorldLocation — a free cargo teleport. Legit uses of this RPC with
----cargo kept are short repositions (roadside tow to the nearest road,
----racetrack Reset — both at/near the current position), so anything beyond
----this distance with cargo aboard gets pinned to the current transform.
+---bRemoveCargo=false are short repositions (roadside tow to the nearest road,
+---racetrack Reset — both at/near the current position); the garage tow always
+---passes bRemoveCargo=true. So: pin when bRemoveCargo=false and the requested
+---destination exceeds this distance.
 ---Units are UE cm; 10000 = 100 m (same order as the /rescue marker radius).
 ---Tunable: blocked lines log the actual distance so it can be tuned from logs.
 local CARGO_RESET_MAX_DIST = 10000.0
