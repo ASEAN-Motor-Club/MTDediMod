@@ -17,6 +17,8 @@
 ---the flag is a deliberate enforcement (wanted grace window / admin hold),
 ---not an RP immersion rule.
 
+local json = require("JsonParser")
+
 local noTeleportGuids = {}
 
 ---@param guid string character GUID

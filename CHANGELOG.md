@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc9] — 2026-09-24
+
+#### Fixed
+- `NoTeleportManager`: the POST handler crashed with `attempt to index a nil value (global 'json')` — the file never required `JsonParser`, so EVERY backend flag push 500ed and the no-teleport lock never took effect on prod (hit 2026-09-24, rc8). Add the missing require.
+
 ### [server/v0.42.0-rc8] — 2026-09-23
 
 #### Added
