@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc10] — 2026-09-24
+
+#### Added
+- Universal anti-teleport-with-cargo guard in `RPManager.lua` (not RP-gated): `ServerResetVehicleAt` is pinned to the current transform when `bRemoveCargo=false` and the destination is > 100 m; `ServerTeleportVehicle` is pinned for everyone (admin-only RPC the game never calls itself). Backend-initiated teleports (`/tp`, `/tp2marker`, `/rescue`) bypass via `Scripts/TeleportAllow.lua` one-shot tokens. Blocked lines log player + requested distance.
+
 ### [server/v0.42.0-rc9] — 2026-09-24
 
 #### Fixed
