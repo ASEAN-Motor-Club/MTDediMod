@@ -1,6 +1,7 @@
 local json = require("JsonParser")
 local socket = require("socket")
 local UEHelpers = require("UEHelpers")
+local teleportAllow = require("TeleportAllow")
 
 ---Convert player state to JSON serializable table
 ---@param playerState AMotorTownPlayerState
@@ -693,7 +694,16 @@ local function HandleTeleportPlayer(session)
               if data.bResetCarriedVehicles ~= nil then
                 bResetCarriedVehicles = data.bResetCarriedVehicles
               end
-              PC:ServerResetVehicleAt(pawn, location, rotation, data.bRemoveCargo, bResetCarriedVehicles)
+              -- TeleportAllow: mark this as a mod-initiated teleport so the
+              -- RPManager anti-teleport-with-cargo hook lets it through
+              -- (take before the RPC, release after — hook fires synchronously
+              -- on the game thread).
+              teleportAllow.Take()
+              local ok, err = pcall(function()
+                PC:ServerResetVehicleAt(pawn, location, rotation, data.bRemoveCargo, bResetCarriedVehicles)
+              end)
+              teleportAllow.Release()
+              if not ok then error(err) end
             else
               -- Legacy path (unchanged): client-side reset keeps the
               -- vehicle + trailer chain together.
