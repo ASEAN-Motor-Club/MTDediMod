@@ -1,5 +1,17 @@
 local statics = require("Statics")
 local noTeleportManager = require("NoTeleportManager")
+local teleportAllow = require("TeleportAllow")
+
+---Anti-teleport-with-cargo (universal, not RP-gated): player-made teleport
+---mods call ServerResetVehicleAt with cargo kept (bRemoveCargo=false) and a
+---far-away WorldLocation — a free cargo teleport. Legit uses of this RPC with
+---bRemoveCargo=false are short repositions (roadside tow to the nearest road,
+---racetrack Reset — both at/near the current position); the garage tow always
+---passes bRemoveCargo=true. So: pin when bRemoveCargo=false and the requested
+---destination exceeds this distance.
+---Units are UE cm; 10000 = 100 m (same order as the /rescue marker radius).
+---Tunable: blocked lines log the actual distance so it can be tuned from logs.
+local CARGO_RESET_MAX_DIST = 10000.0
 
 local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
 
@@ -97,12 +109,33 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportChar
   end
 end)
 
--- ServerTeleportVehicle: replace AbsoluteLocation with current vehicle pos
+-- ServerTeleportVehicle: replace AbsoluteLocation with current vehicle pos.
+-- UNIVERSAL (not RP-gated): vehicle teleport is admin-only in-game — any
+-- non-mod-originated call is a cheat attempt (teleport-with-cargo). Only our
+-- own Lua handlers (PlayerManager, via TeleportAllow tokens) get through.
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehicle", function(PC, Vehicle, AbsoluteLocation)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportVehicle") end
   local playerController = PC:get()
   local notpFlagged = IsNoTeleportFlagged(playerController)
-  if not IsRPPlayer(playerController) and not notpFlagged then return end
+  -- Our own backend-initiated calls (tp2marker et al.) bypass everything.
+  if teleportAllow.Consume() then
+    LogOutput("INFO", "[AntiCheat] Allowed ServerTeleportVehicle — mod-initiated (TeleportAllow)")
+    return
+  end
+  if not IsRPPlayer(playerController) and not notpFlagged then
+    -- Non-RP caller: pin it (universal anti-cheat). Event membership does
+    -- NOT exempt vehicle teleports — the game never calls this RPC itself.
+    local veh0 = Vehicle:get()
+    if veh0 and veh0:IsValid() then
+      local loc0 = veh0:K2_GetActorLocation()
+      local al0 = AbsoluteLocation:get()
+      al0.X = loc0.X
+      al0.Y = loc0.Y
+      al0.Z = loc0.Z
+      LogOutput("INFO", string.format("[AntiCheat] Blocked ServerTeleportVehicle for %s — replaced with current pos (teleport-with-cargo guard)", GetPlayerName(playerController)))
+    end
+    return
+  end
   -- Event members: movement blocks waived (racetrack allowance), except
   -- character teleport + autopilot which stay enforced for everyone.
   -- The no-teleport flag does NOT get the allowance — it is a deliberate
@@ -148,7 +181,52 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicle
   -- NOTE: the no-teleport flag deliberately does NOT apply here: this RPC
   -- recovers the vehicle AT ITS CURRENT position (no escape value) and is
   -- legitimate roadside/racetrack recovery.
-  if not IsRPPlayer(playerController) then return end
+  -- Our own backend-initiated calls (tp2marker cargo-strip path) bypass the
+  -- anti-cheat below; the RP block still applies to them (unchanged).
+  local modInitiated = teleportAllow.Consume()
+  local isRP = IsRPPlayer(playerController)
+
+  if not isRP then
+    if modInitiated then
+      LogOutput("INFO", "[AntiCheat] Allowed ServerResetVehicleAt — mod-initiated (TeleportAllow)")
+      return
+    end
+    -- UNIVERSAL anti-teleport-with-cargo guard: with cargo kept
+    -- (bRemoveCargo=false) only SHORT repositions are legit (roadside tow to
+    -- the nearest road, racetrack Reset at current position). Anything
+    -- farther than CARGO_RESET_MAX_DIST gets pinned to the current transform.
+    local veh = Vehicle:get()
+    if veh and veh:IsValid() then
+      local loc = veh:K2_GetActorLocation()
+      local rot = veh:K2_GetActorRotation()
+      local wl = WorldLocation:get()
+      local dx = wl.X - loc.X
+      local dy = wl.Y - loc.Y
+      local dz = wl.Z - loc.Z
+      local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+      local removeCargo = false
+      if bRemoveCargo and bRemoveCargo:get() ~= nil then removeCargo = bRemoveCargo:get() end
+      if IsInServerEvent(playerController) then
+        LogOutput("INFO", string.format("[AntiCheat] Allowed ServerResetVehicleAt for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
+        return
+      end
+      -- Gate: bRemoveCargo=false AND destination > CARGO_RESET_MAX_DIST.
+      -- Garage tow is always bRemoveCargo=true (its cargo-strip flag), so
+      -- distance+param alone covers it; no cargo-presence probe needed.
+      if removeCargo or dist <= CARGO_RESET_MAX_DIST then
+        return
+      end
+      wl.X = loc.X
+      wl.Y = loc.Y
+      wl.Z = loc.Z
+      local r = Rotation:get()
+      r.Pitch = rot.Pitch
+      r.Yaw = rot.Yaw
+      r.Roll = rot.Roll
+      LogOutput("INFO", string.format("[AntiCheat] Blocked teleport-with-cargo for %s — %.0f m requested (limit %.0f m), replaced with current transform", GetPlayerName(playerController), dist / 100.0, CARGO_RESET_MAX_DIST / 100.0))
+    end
+    return
+  end
 
   -- Racetrack allowance: event members may reset (see IsInServerEvent)
   if IsInServerEvent(playerController) then
