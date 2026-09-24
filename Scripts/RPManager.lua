@@ -209,22 +209,10 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicle
         LogOutput("INFO", string.format("[AntiCheat] Allowed ServerResetVehicleAt for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
         return
       end
-      -- Only pin when the vehicle ACTUALLY still carries cargo:
-      -- tow-to-nearest-garage repositions through this RPC (possibly > 100 m)
-      -- AFTER the game has already despawned the carried cargo server-side
-      -- (field-verified 2026-09-04), so a cargo check (not just distance)
-      -- keeps that legit recovery working while the cheat — which teleports
-      -- WITH cargo aboard — still gets pinned.
-      local hasCargo = false
-      local okCargo, cargos = pcall(function() return veh:BP_GetAllCargos(true) end)
-      if okCargo and cargos then
-        local okN, n = pcall(function() return #cargos end)
-        if okN then hasCargo = (n or 0) > 0 end
-      end
-      -- pcall failure on the cargo probe fails OPEN (treat as no cargo) so a
-      -- game-update change to BP_GetAllCargos can't strand legit recoveries;
-      -- the distance+param check still covers the common cheat shape.
-      if removeCargo or dist <= CARGO_RESET_MAX_DIST or not hasCargo then
+      -- Gate: bRemoveCargo=false AND destination > CARGO_RESET_MAX_DIST.
+      -- Garage tow is always bRemoveCargo=true (its cargo-strip flag), so
+      -- distance+param alone covers it; no cargo-presence probe needed.
+      if removeCargo or dist <= CARGO_RESET_MAX_DIST then
         return
       end
       wl.X = loc.X
