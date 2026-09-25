@@ -2,81 +2,6 @@ local statics = require("Statics")
 local noTeleportManager = require("NoTeleportManager")
 local teleportAllow = require("TeleportAllow")
 
----Anti-teleport-with-cargo (universal, not RP-gated): player-made teleport
----mods call ServerResetVehicleAt with cargo kept (bRemoveCargo=false) and a
----far-away WorldLocation — a free cargo teleport. Legit uses of this RPC with
----bRemoveCargo=false are short repositions (roadside tow to the nearest road,
----racetrack Reset — both at/near the current position); the garage tow always
----passes bRemoveCargo=true. So: pin when bRemoveCargo=false and the requested
----destination exceeds this distance.
----Units are UE cm; 10000 = 100 m (same order as the /rescue marker radius).
----Tunable: blocked lines log the actual distance so it can be tuned from logs.
-local CARGO_RESET_MAX_DIST = 10000.0
-
----Roadside whitelist probe (ROAD_DEBUG build, 2026-09-25): the game's roadside
----tow repositions the vehicle to a point ON a MotorTownRoad spline. Cheat mods
----pick arbitrary destinations. So a requested reset destination > the distance
----limit is ALLOWED when it sits on a road spline (within ROADSIDE_ROAD_TOL of
----the closest spline point). Roads are cached once (world-static) with a
----bounding-sphere prefilter per road so the per-call scan stays cheap.
-local ROAD_DEBUG = true
-local ROADSIDE_ROAD_TOL = 600.0   -- 6 m off-spline tolerance (road half-width + margin)
-local ROADSIDE_ROAD_MAX_DIST = 60000.0 -- destination must be within 600 m of vehicle too
-local roadCache = nil
-
-local function BuildRoadCache()
-  local okFound, found = pcall(FindAllOf, "MotorTownRoad")
-  if not okFound or not found then return nil end
-  local cache = {}
-  for _, road in ipairs(found) do
-    if road:IsValid() and road.Spline and road.Spline:IsValid() then
-      cache[#cache + 1] = road
-    end
-  end
-  LogOutput("INFO", string.format("[AntiCheat] Road cache built: %d roads", #cache))
-  return cache
-end
-
----Returns true when wl sits on/near a road spline (roadside-shaped request).
-local function IsRoadsideDestination(veh, wl)
-  if not roadCache then roadCache = BuildRoadCache() end
-  if not roadCache then
-    if ROAD_DEBUG then LogOutput("INFO", "[AntiCheat] ROAD_DEBUG road cache unavailable — fail-closed") end
-    return false
-  end
-  local loc = veh:K2_GetActorLocation()
-  for _, road in ipairs(roadCache) do
-    local okSpline, spline = pcall(function() return road.Spline end)
-    if okSpline and spline and spline:IsValid() then
-      -- cheap reject: closest point on spline, then measure both legs
-      local okClosest, closest = pcall(spline.FindLocationClosestToWorldLocation, spline, wl)
-      if okClosest and closest and closest.X then
-        local ddx = closest.X - wl.X
-        local ddy = closest.Y - wl.Y
-        local ddz = closest.Z - wl.Z
-        local roadDist = math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
-        if roadDist <= ROADSIDE_ROAD_TOL then
-          -- also require destination within tow distance of the VEHICLE (game cap: MaxRoadSideTowDistance, per-road)
-          local maxTow = nil
-          pcall(function() maxTow = road.MaxRoadSideTowDistance end)
-          local limit = ROADSIDE_ROAD_MAX_DIST
-          if maxTow and maxTow > 0 then limit = maxTow end
-          local vdx = wl.X - loc.X
-          local vdy = wl.Y - loc.Y
-          local vdz = wl.Z - loc.Z
-          local vDist = math.sqrt(vdx * vdx + vdy * vdy + vdz * vdz)
-          if ROAD_DEBUG then
-            LogOutput("INFO", string.format("[AntiCheat] ROAD_DEBUG roadside hit: roadDist %.0f cm, veh->dest %.0f cm, limit %.0f", roadDist, vDist, limit))
-          end
-          if vDist <= limit then return true end
-        end
-      end
-    end
-  end
-  if ROAD_DEBUG then LogOutput("INFO", "[AntiCheat] ROAD_DEBUG no road near requested destination — treat as cheat") end
-  return false
-end
-
 local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
 
 ---RegisterHook wrapper: RegisterHook THROWS on an unregistrable UFunction
@@ -255,44 +180,13 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicle
       LogOutput("INFO", "[AntiCheat] Allowed ServerResetVehicleAt — mod-initiated (TeleportAllow)")
       return
     end
-    -- UNIVERSAL anti-teleport-with-cargo guard: with cargo kept
-    -- (bRemoveCargo=false) only SHORT repositions are legit (roadside tow to
-    -- the nearest road, racetrack Reset at current position). Anything
-    -- farther than CARGO_RESET_MAX_DIST gets pinned to the current transform.
-    local veh = Vehicle:get()
-    if veh and veh:IsValid() then
-      local loc = veh:K2_GetActorLocation()
-      local rot = veh:K2_GetActorRotation()
-      local wl = WorldLocation:get()
-      local dx = wl.X - loc.X
-      local dy = wl.Y - loc.Y
-      local dz = wl.Z - loc.Z
-      local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-      local removeCargo = false
-      if bRemoveCargo and bRemoveCargo:get() ~= nil then removeCargo = bRemoveCargo:get() end
-      if IsInServerEvent(playerController) then
-        LogOutput("INFO", string.format("[AntiCheat] Allowed ServerResetVehicleAt for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
-        return
-      end
-      -- Gate: bRemoveCargo=false AND destination > CARGO_RESET_MAX_DIST.
-      -- Garage tow is always bRemoveCargo=true (its cargo-strip flag), so
-      -- distance+param alone covers it.
-      if removeCargo or dist <= CARGO_RESET_MAX_DIST then
-        return
-      end
-      -- ROADSIDE WHITELIST PROBE: a legit roadside tow lands ON a road spline.
-      if IsRoadsideDestination(veh, wl) then
-        LogOutput("INFO", string.format("[AntiCheat] Allowed ServerResetVehicleAt for %s — roadside allowance (%.0f m, on-road)", GetPlayerName(playerController), dist / 100.0))
-        return
-      end
-      wl.X = loc.X
-      wl.Y = loc.Y
-      wl.Z = loc.Z
-      local r = Rotation:get()
-      r.Pitch = rot.Pitch
-      r.Yaw = rot.Yaw
-      r.Roll = rot.Roll
-      LogOutput("INFO", string.format("[AntiCheat] Blocked teleport-with-cargo for %s — %.0f m requested (limit %.0f m), replaced with current transform", GetPlayerName(playerController), dist / 100.0, CARGO_RESET_MAX_DIST / 100.0))
+    -- 2026-09-25 (freeman): ServerResetVehicleAt restrictions REMOVED for now —
+    -- the distance+bRemoveCargo gate (and its roadside road-proximity probe)
+    -- false-flagged legit roadside tows (prod 2026-09-25: 214-449 m pinned for
+    -- a non-RP, cargo-free player). No universal restrictions remain on this
+    -- RPC; RP/wanted/no-teleport enforcement below is unchanged.
+    if IsInServerEvent(playerController) then
+      LogOutput("INFO", string.format("[AntiCheat] Allowed ServerResetVehicleAt for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
     end
     return
   end
