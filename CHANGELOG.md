@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc12] - 2026-09-25
+
+#### Removed
+- All universal `ServerResetVehicleAt` restrictions (freeman call, 2026-09-25): the anti-teleport-with-cargo distance gate (rc10) and its roadside road-proximity whitelist (rc11) are removed - they false-flagged legit roadside tows on prod (214-449 m pinned for a non-RP, cargo-free player). RP/wanted/no-teleport enforcement on this RPC is unchanged; `ServerTeleportVehicle` pinning is unchanged.
 ### [server/v0.42.0-rc11] — 2026-09-25
 
 #### Fixed
