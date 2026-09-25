@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc11] — 2026-09-25
+
+#### Fixed
+- Anti-teleport-with-cargo guard no longer blocks legit roadside tows: when `ServerResetVehicleAt` with cargo kept exceeds the 100 m limit, it is allowed if the destination sits within 6 m of a `MotorTownRoad` spline and within that road's `MaxRoadSideTowDistance` (fallback 600 m) of the vehicle. Roads are cached once (world-static); `ROAD_DEBUG=true` (off after validation) logs allow/pin reasons. False flag hit prod 2026-09-25: roadside destinations 214-449 m pinned for a non-RP player with no cargo.
 ### [server/v0.42.0-rc10] — 2026-09-24
 
 #### Added
