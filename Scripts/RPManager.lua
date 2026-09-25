@@ -13,6 +13,70 @@ local teleportAllow = require("TeleportAllow")
 ---Tunable: blocked lines log the actual distance so it can be tuned from logs.
 local CARGO_RESET_MAX_DIST = 10000.0
 
+---Roadside whitelist probe (ROAD_DEBUG build, 2026-09-25): the game's roadside
+---tow repositions the vehicle to a point ON a MotorTownRoad spline. Cheat mods
+---pick arbitrary destinations. So a requested reset destination > the distance
+---limit is ALLOWED when it sits on a road spline (within ROADSIDE_ROAD_TOL of
+---the closest spline point). Roads are cached once (world-static) with a
+---bounding-sphere prefilter per road so the per-call scan stays cheap.
+local ROAD_DEBUG = true
+local ROADSIDE_ROAD_TOL = 600.0   -- 6 m off-spline tolerance (road half-width + margin)
+local ROADSIDE_ROAD_MAX_DIST = 60000.0 -- destination must be within 600 m of vehicle too
+local roadCache = nil
+
+local function BuildRoadCache()
+  local okFound, found = pcall(FindAllOf, "MotorTownRoad")
+  if not okFound or not found then return nil end
+  local cache = {}
+  for _, road in ipairs(found) do
+    if road:IsValid() and road.Spline and road.Spline:IsValid() then
+      cache[#cache + 1] = road
+    end
+  end
+  LogOutput("INFO", string.format("[AntiCheat] Road cache built: %d roads", #cache))
+  return cache
+end
+
+---Returns true when wl sits on/near a road spline (roadside-shaped request).
+local function IsRoadsideDestination(veh, wl)
+  if not roadCache then roadCache = BuildRoadCache() end
+  if not roadCache then
+    if ROAD_DEBUG then LogOutput("INFO", "[AntiCheat] ROAD_DEBUG road cache unavailable — fail-closed") end
+    return false
+  end
+  local loc = veh:K2_GetActorLocation()
+  for _, road in ipairs(roadCache) do
+    local okSpline, spline = pcall(function() return road.Spline end)
+    if okSpline and spline and spline:IsValid() then
+      -- cheap reject: closest point on spline, then measure both legs
+      local okClosest, closest = pcall(spline.FindLocationClosestToWorldLocation, spline, wl)
+      if okClosest and closest and closest.X then
+        local ddx = closest.X - wl.X
+        local ddy = closest.Y - wl.Y
+        local ddz = closest.Z - wl.Z
+        local roadDist = math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
+        if roadDist <= ROADSIDE_ROAD_TOL then
+          -- also require destination within tow distance of the VEHICLE (game cap: MaxRoadSideTowDistance, per-road)
+          local maxTow = nil
+          pcall(function() maxTow = road.MaxRoadSideTowDistance end)
+          local limit = ROADSIDE_ROAD_MAX_DIST
+          if maxTow and maxTow > 0 then limit = maxTow end
+          local vdx = wl.X - loc.X
+          local vdy = wl.Y - loc.Y
+          local vdz = wl.Z - loc.Z
+          local vDist = math.sqrt(vdx * vdx + vdy * vdy + vdz * vdz)
+          if ROAD_DEBUG then
+            LogOutput("INFO", string.format("[AntiCheat] ROAD_DEBUG roadside hit: roadDist %.0f cm, veh->dest %.0f cm, limit %.0f", roadDist, vDist, limit))
+          end
+          if vDist <= limit then return true end
+        end
+      end
+    end
+  end
+  if ROAD_DEBUG then LogOutput("INFO", "[AntiCheat] ROAD_DEBUG no road near requested destination — treat as cheat") end
+  return false
+end
+
 local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
 
 ---RegisterHook wrapper: RegisterHook THROWS on an unregistrable UFunction
@@ -212,8 +276,13 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicle
       end
       -- Gate: bRemoveCargo=false AND destination > CARGO_RESET_MAX_DIST.
       -- Garage tow is always bRemoveCargo=true (its cargo-strip flag), so
-      -- distance+param alone covers it; no cargo-presence probe needed.
+      -- distance+param alone covers it.
       if removeCargo or dist <= CARGO_RESET_MAX_DIST then
+        return
+      end
+      -- ROADSIDE WHITELIST PROBE: a legit roadside tow lands ON a road spline.
+      if IsRoadsideDestination(veh, wl) then
+        LogOutput("INFO", string.format("[AntiCheat] Allowed ServerResetVehicleAt for %s — roadside allowance (%.0f m, on-road)", GetPlayerName(playerController), dist / 100.0))
         return
       end
       wl.X = loc.X
