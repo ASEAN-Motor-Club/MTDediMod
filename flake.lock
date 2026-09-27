@@ -39,6 +39,18 @@
         "type": "github"
       }
     },
+    "netdeps": {
+      "flake": false,
+      "locked": {
+        "path": "./net-deps",
+        "type": "path"
+      },
+      "original": {
+        "path": "./net-deps",
+        "type": "path"
+      },
+      "parent": []
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1773389992,
@@ -74,6 +86,7 @@
       "inputs": {
         "fenix": "fenix",
         "flake-parts": "flake-parts",
+        "netdeps": "netdeps",
         "nixpkgs": "nixpkgs",
         "ue4ss": "ue4ss",
         "ue4ss-prebuilt": "ue4ss-prebuilt"

@@ -20,6 +20,16 @@
       url = "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip";
       flake = false;
     };
+
+    # Network-dependency cache for the pure DLL builds (xwin MSVC SDK,
+    # CMake FetchContent dirs, cargo-vendored crates). The committed
+    # ./net-deps is a placeholder; generate the real contents with
+    # `nix run .#regen-net-deps` and CI overrides it with
+    # --override-input netdeps "path:$PWD/net-deps".
+    netdeps = {
+      url = "path:./net-deps";
+      flake = false;
+    };
   };
 
   outputs = inputs @ {
@@ -126,17 +136,17 @@
         # Cached derivations: Lua-only changes must never trigger a C++
         # rebuild. Structure:
         #
-        #   ue4ssNetDeps (fixed-output, network) — downloads EVERYTHING
-        #     the C++ build needs from the network exactly once:
+        #   netdeps input (path:./net-deps) — network-dependency cache:
         #       xwin/    MSVC CRT+SDK (xwin splat)
         #       deps/    CMake FetchContent dirs (fmt, glfw, imgui, ...)
         #       vendor/  cargo-vendored crates.io deps of patternsleuth_bind
         #       cargo/   CARGO_HOME with source-replacement config.toml
-        #     Hash only changes when UE4SS rev / toolchain / deps change.
+        #     Regenerated via the `.#regen-net-deps` app; CI caches it
+        #     per UE4SS rev and passes it with --override-input netdeps.
         #
         #   modDll / clientDll (pure, sandboxed) — build the DLLs with
         #     zero network: xwin cache, FetchContent dirs and vendored
-        #     cargo registry all come from ue4ssNetDeps store paths.
+        #     cargo registry all come from the netdeps input.
         #     src = cppSrc (C++ ONLY — Lua edits never invalidate it).
         #
         #   packages.<pkg> (pure) — zip packaging; inputs are Lua sources
@@ -159,68 +169,18 @@
             || pkgs.lib.hasPrefix "tools/" rel || rel == "tools";
         };
 
-        ue4ssNetDeps = pkgs.stdenv.mkDerivation {
-          name = "ue4ss-net-deps";
-          # Fixed-output derivation: network is permitted by nix for these.
-          # NOTE: hash is pinned after the first successful build (nix prints
-          # the got-hash on mismatch). Bump whenever UE4SS rev, toolchain,
-          # or third-party deps change.
-          outputHashAlgo = "sha256";
-          outputHashMode = "recursive";
-          outputHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-
-          src = cppSrc;
-          nativeBuildInputs = crossCompileBuildInputs;
-          SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-
-          configurePhase = ''
-            runHook preConfigure
-            ${crossCompileEnv}
-            export BUILD_TYPE="${buildType}"
-            export UE4SS_PROXY_PATH="${proxyPath}"
-            export BUILD_DIR="netdeps-build"
-            # FetchContent dirs are populated straight into $out/deps
-            export EXTRA_CMAKE_ARGS="-DFETCHCONTENT_BASE_DIR=$out/deps"
-            # force the setup script to download xwin into .xwin-cache
-            export XWIN_CACHE_DIR=""
-
-            cat > CMakeLists.txt <<EOF
-            cmake_minimum_required(VERSION 3.22)
-            project(UE4SSWrapper)
-            if(NOT UE4SS_SOURCE_DIR)
-                set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
-            endif()
-            add_subdirectory("''${UE4SS_SOURCE_DIR}" RE-UE4SS)
-            add_subdirectory("src" ${modName})
-            EOF
-
-            bash setup_cross_compile.sh
-            runHook postConfigure
-          '';
-
-          buildPhase = ''
-            runHook preBuild
-            # cargo vendor for the only Rust crate (patternsleuth_bind)
-            cargo vendor "$out/vendor" \
-              --manifest-path "$UE4SS_SOURCE_DIR/deps/first/patternsleuth_bind/Cargo.toml" \
-              > vendor-summary.txt
-            runHook postBuild
-          '';
-
-          installPhase = ''
-            runHook preInstall
-            mkdir -p $out/xwin $out/cargo
-            cp -r .xwin-cache/. $out/xwin/
-            cat > $out/cargo/config.toml <<EOF
-            [source.crates-io]
-            replace-with = "vendored-sources"
-
-            [source.vendored-sources]
-            directory = "$out/vendor"
-            EOF
-            runHook postInstall
-          '';
-        };
+        # Network-dependency cache (xwin MSVC SDK, CMake FetchContent
+        # dirs, cargo-vendored crates). Consumed by the PURE DLL builds
+        # below via the netdeps flake input (path:./net-deps).
+        #
+        # Regenerate with the `.#regen-net-deps` app (network-capable,
+        # unsandboxed app — like `.#configure`):
+        #   nix run --no-update-lock-file .#regen-net-deps
+        # CI caches the result per UE4SS rev and passes it via
+        #   --override-input netdeps "path:$PWD/net-deps"
+        # Rebuild it only when the UE4SS rev, toolchain, or third-party
+        # deps change.
+        netdepsDir = inputs.netdeps;
 
         # Shared pure C++ build: proxy DLL + UE4SS.dll + mod DLL + PDBs.
         # src is C++-only (cppSrc) so Lua edits never invalidate the cache.
@@ -234,10 +194,10 @@
             export BUILD_TYPE="${buildType}"
             export UE4SS_PROXY_PATH="${proxyPath}"
             export BUILD_DIR="${buildDir}"
-            export XWIN_CACHE_DIR="${ue4ssNetDeps}/xwin"
-            export CARGO_HOME="${ue4ssNetDeps}/cargo"
+            export XWIN_CACHE_DIR="${netdepsDir}/xwin"
+            export CARGO_HOME="${netdepsDir}/cargo"
             export CARGO_NET_OFFLINE=true
-            export EXTRA_CMAKE_ARGS="-DFETCHCONTENT_BASE_DIR=${ue4ssNetDeps}/deps -DFETCHCONTENT_FULLY_DISCONNECTED=ON"
+            export EXTRA_CMAKE_ARGS="-DFETCHCONTENT_BASE_DIR=${netdepsDir}/deps -DFETCHCONTENT_FULLY_DISCONNECTED=ON"
 
             cat > CMakeLists.txt <<EOF
             cmake_minimum_required(VERSION 3.22)
@@ -900,8 +860,7 @@
           '';
         };
       in {
-        # Cached build outputs (see ue4ssNetDeps / mkDll / mkPackage above)
-        packages."ue4ss-net-deps" = ue4ssNetDeps;
+        # Cached build outputs (see netdeps / mkDll / mkPackage above)
         packages."${modName}-dll" = modDll;
         packages."${clientModName}-dll" = clientDll;
         packages."${modName}-package" = serverPackage;
@@ -949,6 +908,65 @@
         apps.package = {
           type = "app";
           program = "${packageScript}/bin/${modName}-package";
+        };
+
+        # Regenerate ./net-deps (xwin SDK, CMake FetchContent dirs,
+        # cargo-vendored crates) for the PURE DLL builds. Network-bound,
+        # unsandboxed app — the nix sandbox stays enabled everywhere else.
+        # NOTE: the output must be git-UNtracked for `--override-input
+        # netdeps "path:..."` to see it (path inputs inside a git tree are
+        # filtered to tracked files) — CI therefore copies it outside the
+        # checkout before overriding.
+        apps.regen-net-deps = {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            name = "regen-net-deps";
+            runtimeInputs = crossCompileBuildInputs ++ [pkgs.cacert];
+            text = ''
+              set -e
+              export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              export HOME="$PWD"
+              ${crossCompileEnv}
+              export BUILD_TYPE="${buildType}"
+              export UE4SS_PROXY_PATH="${proxyPath}"
+              export BUILD_DIR="netdeps-build"
+              export EXTRA_CMAKE_ARGS="-DFETCHCONTENT_BASE_DIR=$PWD/net-deps/deps"
+
+              mkdir -p net-deps/xwin net-deps/deps net-deps/cargo
+
+              # CMakeLists.txt wrapper (same as .#configure)
+              cat > CMakeLists.txt <<EOF
+              cmake_minimum_required(VERSION 3.22)
+              project(UE4SSWrapper)
+              if(NOT UE4SS_SOURCE_DIR)
+                  set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
+              endif()
+              add_subdirectory("''${UE4SS_SOURCE_DIR}" RE-UE4SS)
+              add_subdirectory("src" ${modName})
+              EOF
+
+              # Downloads MSVC SDK into .xwin-cache and populates
+              # net-deps/deps via FETCHCONTENT_BASE_DIR
+              bash setup_cross_compile.sh
+
+              cp -r .xwin-cache/. net-deps/xwin/
+
+              cargo vendor net-deps/vendor \
+                --manifest-path "$UE4SS_SOURCE_DIR/deps/first/patternsleuth_bind/Cargo.toml" \
+                > /dev/null
+              cat > net-deps/cargo/config.toml <<EOF
+              [source.crates-io]
+              replace-with = "vendored-sources"
+
+              [source.vendored-sources]
+              directory = "$PWD/net-deps/vendor"
+              EOF
+
+              rm -rf netdeps-build
+              echo "net-deps regenerated: $(du -sh net-deps | cut -f1)"
+            '';
+          }}/bin/regen-net-deps";
         };
 
         # Client mod configure script (cross-compiles UE4SS with dwmapi.dll proxy)
