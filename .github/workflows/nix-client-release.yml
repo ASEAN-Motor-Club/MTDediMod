@@ -52,20 +52,22 @@ jobs:
         uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Cache xwin
+        if: false # superseded by ue4ss-net-deps fixed-output derivation
         uses: actions/cache@v4
         with:
           path: .xwin-cache
           key: xwin-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: xwin-${{ runner.os }}-
 
-      - name: Configure client
-        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#configure-client
-
-      - name: Build client
-        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-client
-
-      - name: Package client
-        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package-client
+      # Single nix build: DLL derivation is a cache hit (magic-nix-cache)
+      # whenever no C++ file changed; Lua-only tags rebuild only the
+      # packaging derivation (seconds).
+      - name: Build client package
+        run: |
+          nix build --no-update-lock-file --print-out-paths \
+            --override-input ue4ss "path:$PWD/.ue4ss-src" \
+            ".#packages.x86_64-linux.MotorTownClientMod-package" | tee out-path.txt
+          cp "$(cat out-path.txt)/MotorTownClientMod-package.zip" .
 
       - name: Extract version
         id: version

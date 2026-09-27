@@ -122,6 +122,240 @@
         clientProxyPath = "C:\\Windows\\System32\\dwmapi.dll";
         clientBuildDir = "build-cross-client";
 
+        # ============================================================
+        # Cached derivations: Lua-only changes must never trigger a C++
+        # rebuild. Structure:
+        #
+        #   ue4ssNetDeps (fixed-output, network) — downloads EVERYTHING
+        #     the C++ build needs from the network exactly once:
+        #       xwin/    MSVC CRT+SDK (xwin splat)
+        #       deps/    CMake FetchContent dirs (fmt, glfw, imgui, ...)
+        #       vendor/  cargo-vendored crates.io deps of patternsleuth_bind
+        #       cargo/   CARGO_HOME with source-replacement config.toml
+        #     Hash only changes when UE4SS rev / toolchain / deps change.
+        #
+        #   modDll / clientDll (pure, sandboxed) — build the DLLs with
+        #     zero network: xwin cache, FetchContent dirs and vendored
+        #     cargo registry all come from ue4ssNetDeps store paths.
+        #     src = cppSrc (C++ ONLY — Lua edits never invalidate it).
+        #
+        #   packages.<pkg> (pure) — zip packaging; inputs are Lua sources
+        #     + the cached DLL derivations. Lua-only change -> only this
+        #     rebuilds (seconds); DLL reused from the store/cache.
+        #
+        # CI builds `nix build .#packages.x86_64-linux.<pkg>`; the DLL
+        # derivation is a cache hit whenever no C++ file changed.
+        # ============================================================
+        # C++-ONLY source filter. Scripts/ and shared/ are deliberately
+        # excluded so a Lua edit leaves the DLL derivation inputs
+        # unchanged and nix reuses the cached build.
+        cppSrc = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: type:
+            let rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path); in
+            rel == "setup_cross_compile.sh"
+            || pkgs.lib.hasPrefix "src/" rel || rel == "src"
+            || pkgs.lib.hasPrefix "proxy_generator/" rel || rel == "proxy_generator"
+            || pkgs.lib.hasPrefix "tools/" rel || rel == "tools";
+        };
+
+        ue4ssNetDeps = pkgs.stdenv.mkDerivation {
+          name = "ue4ss-net-deps";
+          # Fixed-output derivation: network is permitted by nix for these.
+          # NOTE: hash is pinned after the first successful build (nix prints
+          # the got-hash on mismatch). Bump whenever UE4SS rev, toolchain,
+          # or third-party deps change.
+          outputHashAlgo = "sha256";
+          outputHashMode = "recursive";
+          outputHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+          src = cppSrc;
+          nativeBuildInputs = crossCompileBuildInputs;
+          SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+
+          configurePhase = ''
+            runHook preConfigure
+            ${crossCompileEnv}
+            export BUILD_TYPE="${buildType}"
+            export UE4SS_PROXY_PATH="${proxyPath}"
+            export BUILD_DIR="netdeps-build"
+            # FetchContent dirs are populated straight into $out/deps
+            export EXTRA_CMAKE_ARGS="-DFETCHCONTENT_BASE_DIR=$out/deps"
+            # force the setup script to download xwin into .xwin-cache
+            export XWIN_CACHE_DIR=""
+
+            cat > CMakeLists.txt <<EOF
+            cmake_minimum_required(VERSION 3.22)
+            project(UE4SSWrapper)
+            if(NOT UE4SS_SOURCE_DIR)
+                set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
+            endif()
+            add_subdirectory("''${UE4SS_SOURCE_DIR}" RE-UE4SS)
+            add_subdirectory("src" ${modName})
+            EOF
+
+            bash setup_cross_compile.sh
+            runHook postConfigure
+          '';
+
+          buildPhase = ''
+            runHook preBuild
+            # cargo vendor for the only Rust crate (patternsleuth_bind)
+            cargo vendor "$out/vendor" \
+              --manifest-path "$UE4SS_SOURCE_DIR/deps/first/patternsleuth_bind/Cargo.toml" \
+              > vendor-summary.txt
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/xwin $out/cargo
+            cp -r .xwin-cache/. $out/xwin/
+            cat > $out/cargo/config.toml <<EOF
+            [source.crates-io]
+            replace-with = "vendored-sources"
+
+            [source.vendored-sources]
+            directory = "$out/vendor"
+            EOF
+            runHook postInstall
+          '';
+        };
+
+        # Shared pure C++ build: proxy DLL + UE4SS.dll + mod DLL + PDBs.
+        # src is C++-only (cppSrc) so Lua edits never invalidate the cache.
+        mkDll = {name, proxyPath, buildDir}: pkgs.stdenv.mkDerivation {
+          inherit name;
+          src = cppSrc;
+          nativeBuildInputs = crossCompileBuildInputs;
+          configurePhase = ''
+            runHook preConfigure
+            ${crossCompileEnv}
+            export BUILD_TYPE="${buildType}"
+            export UE4SS_PROXY_PATH="${proxyPath}"
+            export BUILD_DIR="${buildDir}"
+            export XWIN_CACHE_DIR="${ue4ssNetDeps}/xwin"
+            export CARGO_HOME="${ue4ssNetDeps}/cargo"
+            export CARGO_NET_OFFLINE=true
+            export EXTRA_CMAKE_ARGS="-DFETCHCONTENT_BASE_DIR=${ue4ssNetDeps}/deps -DFETCHCONTENT_FULLY_DISCONNECTED=ON"
+
+            cat > CMakeLists.txt <<EOF
+            cmake_minimum_required(VERSION 3.22)
+            project(UE4SSWrapper)
+            if(NOT UE4SS_SOURCE_DIR)
+                set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
+            endif()
+            add_subdirectory("''${UE4SS_SOURCE_DIR}" RE-UE4SS)
+            add_subdirectory("src" ${modName})
+            EOF
+
+            bash setup_cross_compile.sh
+            runHook postConfigure
+          '';
+          buildPhase = ''
+            runHook preBuild
+            cmake --build "$BUILD_DIR" -j"$NIX_BUILD_CORES"
+            # Patch PE debug directories (lld-link bug; minidumps need it)
+            for dll in "$BUILD_DIR/${buildType}/bin/"*.dll "$BUILD_DIR/${modName}/${modName}.dll"; do
+              if [ -f "$dll" ]; then
+                python3 ${./tools/patch-pe-debug-dir.py} "$dll" || true
+              fi
+            done
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/bin $out/pdb
+            cp "$BUILD_DIR/${buildType}/bin/"*.dll $out/bin/
+            cp "$BUILD_DIR/${modName}/${modName}.dll" $out/bin/
+            for f in "$BUILD_DIR/${modName}/${modName}.pdb" "$BUILD_DIR/${buildType}/bin/"*.pdb; do
+              if [ -f "$f" ]; then cp "$f" $out/pdb/; fi
+            done
+            runHook postInstall
+          '';
+        };
+
+        modDll = mkDll {
+          name = "${modName}-dll";
+          proxyPath = proxyPath;
+          buildDir = "build-cross";
+        };
+
+        clientDll = mkDll {
+          name = "${clientModName}-dll";
+          proxyPath = clientProxyPath;
+          buildDir = clientBuildDir;
+        };
+
+        # Lua-only source filter for packaging. Changing Scripts/ or
+        # shared/ rebuilds ONLY this derivation — the DLL derivations
+        # never see Lua files.
+        serverLuaSrc = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: type:
+            let rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path); in
+            pkgs.lib.hasPrefix "Scripts/" rel || rel == "Scripts"
+            || pkgs.lib.hasPrefix "shared/" rel || rel == "shared"
+            || rel == "enabled.txt";
+        };
+
+        clientLuaSrc = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = path: type:
+            let rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path); in
+            pkgs.lib.hasPrefix "ClientScripts/" rel || rel == "ClientScripts"
+            || pkgs.lib.hasPrefix "shared/" rel || rel == "shared";
+        };
+
+        # Package derivation: runs the existing packaging script (single
+        # source of truth) with the DLL laid out where it expects
+        # build-cross/. Zip lands in $out/.
+        mkPackage = {name, luaSrc, dll, script, modPkgName, pkgBuildDir}: pkgs.stdenv.mkDerivation {
+          inherit name;
+          src = luaSrc;
+          nativeBuildInputs = with pkgs; [bash coreutils zip gnused findutils python3];
+          configurePhase = ''
+            runHook preConfigure
+            mkdir -p "${pkgBuildDir}/${buildType}/bin" "${pkgBuildDir}/${modPkgName}"
+            cp $dll/bin/*.dll "${pkgBuildDir}/${buildType}/bin/"
+            cp $dll/bin/${modPkgName}.dll "${pkgBuildDir}/${modPkgName}/"
+            runHook postConfigure
+          '';
+          buildPhase = ''
+            runHook preBuild
+            ${script}/bin/$(basename ${script})
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out
+            cp *.zip $out/
+            if [ -d symbols ] || [ -d symbols-client ]; then
+              mkdir -p $out/symbols
+              cp -r symbols symbols-client $out/symbols/ 2>/dev/null || true
+            fi
+            runHook postInstall
+          '';
+        };
+
+        serverPackage = mkPackage {
+          name = "${modName}-package";
+          luaSrc = serverLuaSrc;
+          dll = modDll;
+          script = packageScript;
+          modPkgName = modName;
+          pkgBuildDir = "build-cross";
+        };
+
+        clientPackage = mkPackage {
+          name = "${clientModName}-package";
+          luaSrc = clientLuaSrc;
+          dll = clientDll;
+          script = packageClientScript;
+          modPkgName = clientModName;
+          pkgBuildDir = clientBuildDir;
+        };
+
         configureScript = pkgs.writeShellApplication {
           name = "${modName}-configure";
           runtimeInputs = crossCompileBuildInputs;
@@ -666,6 +900,13 @@
           '';
         };
       in {
+        # Cached build outputs (see ue4ssNetDeps / mkDll / mkPackage above)
+        packages."ue4ss-net-deps" = ue4ssNetDeps;
+        packages."${modName}-dll" = modDll;
+        packages."${clientModName}-dll" = clientDll;
+        packages."${modName}-package" = serverPackage;
+        packages."${clientModName}-package" = clientPackage;
+
         # Development shell with all cross-compile tools
         devShells.default = pkgs.mkShell {
           buildInputs =
