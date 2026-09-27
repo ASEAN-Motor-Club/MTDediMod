@@ -163,40 +163,9 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerRespawnChara
   end
 end)
 
--- ServerResetVehicleAt: replace WorldLocation/Rotation with current vehicle transform
-SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(PC, Vehicle, WorldLocation, Rotation, bRemoveCargo, bResetCarriedVehicles)
-  if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerResetVehicleAt") end
-  local playerController = PC:get()
-  -- NOTE: the no-teleport flag deliberately does NOT apply here: this RPC
-  -- recovers the vehicle AT ITS CURRENT position (no escape value) and is
-  -- legitimate roadside/racetrack recovery.
-  -- Our own backend-initiated calls (tp2marker cargo-strip path) bypass the
-  -- anti-cheat below; the RP block still applies to them (unchanged).
-  local modInitiated = teleportAllow.Consume()
-  local isRP = IsRPPlayer(playerController)
-
-  if not isRP then
-    if modInitiated then
-      LogOutput("INFO", "[AntiCheat] Allowed ServerResetVehicleAt — mod-initiated (TeleportAllow)")
-      return
-    end
-    -- 2026-09-25 (freeman): ServerResetVehicleAt restrictions REMOVED for now —
-    -- the distance+bRemoveCargo gate (and its roadside road-proximity probe)
-    -- false-flagged legit roadside tows (prod 2026-09-25: 214-449 m pinned for
-    -- a non-RP, cargo-free player). No universal restrictions remain on this
-    -- RPC; RP/wanted/no-teleport enforcement below is unchanged.
-    if IsInServerEvent(playerController) then
-      LogOutput("INFO", string.format("[AntiCheat] Allowed ServerResetVehicleAt for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
-    end
-    return
-  end
-
-  -- Racetrack allowance: event members may reset (see IsInServerEvent)
-  if IsInServerEvent(playerController) then
-    LogOutput("INFO", string.format("[RPManager] Allowed ServerResetVehicleAt for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
-    return
-  end
-
+---Pin ServerResetVehicleAt to the vehicle's CURRENT transform (shared by the
+---RP block and the no-teleport-flag block below).
+local function PinResetToCurrentTransform(Vehicle, WorldLocation, Rotation, playerController)
   local veh = Vehicle:get()
   if veh and veh:IsValid() then
     local loc = veh:K2_GetActorLocation()
@@ -211,6 +180,52 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicle
     r.Roll = rot.Roll
     LogOutput("INFO", string.format("[RPManager] Blocked ServerResetVehicleAt for %s — replaced with current transform", GetPlayerName(playerController)))
   end
+end
+
+-- ServerResetVehicleAt: replace WorldLocation/Rotation with current vehicle transform
+SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(PC, Vehicle, WorldLocation, Rotation, bRemoveCargo, bResetCarriedVehicles)
+  if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerResetVehicleAt") end
+  local playerController = PC:get()
+  -- The backend-pushed no-teleport flag (wanted / on-duty police / admin
+  -- hold) DOES apply here. The old "no escape value" premise was wrong for
+  -- the roadside-service flow: roadside teleports the vehicle to the nearest
+  -- roadside (prod 2026-09-25 evidence: 214-449 m moves), so a flagged
+  -- player could still move their vehicle via roadside.
+  -- Our own backend-initiated calls (tp2marker cargo-strip path) bypass via
+  -- the TeleportAllow token, consumed first.
+  local modInitiated = teleportAllow.Consume()
+  local isRP = IsRPPlayer(playerController)
+  local notpFlagged = IsNoTeleportFlagged(playerController)
+
+  if not isRP then
+    if modInitiated then
+      LogOutput("INFO", "[AntiCheat] Allowed ServerResetVehicleAt — mod-initiated (TeleportAllow)")
+      return
+    end
+    if notpFlagged then
+      PinResetToCurrentTransform(Vehicle, WorldLocation, Rotation, playerController)
+      return
+    end
+    -- 2026-09-25 (freeman): ServerResetVehicleAt restrictions REMOVED for now —
+    -- the distance+bRemoveCargo gate (and its roadside road-proximity probe)
+    -- false-flagged legit roadside tows (prod 2026-09-25: 214-449 m pinned for
+    -- a non-RP, cargo-free player). No universal restrictions remain on this
+    -- RPC; RP/wanted/no-teleport enforcement below is unchanged.
+    if IsInServerEvent(playerController) then
+      LogOutput("INFO", string.format("[AntiCheat] Allowed ServerResetVehicleAt for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
+    end
+    return
+  end
+
+  -- Racetrack allowance: event members may reset (see IsInServerEvent) —
+  -- but the no-teleport flag beats the allowance (same precedence as the
+  -- other three movement hooks).
+  if not notpFlagged and IsInServerEvent(playerController) then
+    LogOutput("INFO", string.format("[RPManager] Allowed ServerResetVehicleAt for %s — event member (racetrack allowance)", GetPlayerName(playerController)))
+    return
+  end
+
+  PinResetToCurrentTransform(Vehicle, WorldLocation, Rotation, playerController)
 end)
 
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerVehicleExControl", function(PC, Vehicle, Control)
