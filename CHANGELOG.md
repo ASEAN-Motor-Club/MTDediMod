@@ -11,6 +11,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 #### Fixed
 - No-teleport flag now blocks `ServerResetVehicleAt` (roadside): flagged GUIDs (on-duty police / wanted / admin hold) had their vehicle teleport to the nearest roadside via the roadside-service flow because this RPC was exempted as "no escape value" — premise false (prod evidence: roadside moves 214-449 m). Flag outranks the racetrack event allowance, same precedence as the other three movement hooks; TeleportAllow token (backend tp2marker/garage-tow) still bypasses. Legit roadside for unflagged players untouched.
 
+#### Added
+- No-teleport flag MODES ("allow different types of teleport blocking", freeman 2026-09-27): `POST /players/{guid}/no_teleport` accepts `{"Mode": ...}` — `"all"` (default; blocks every movement RPC) or `"reset_cargo_keep"` (blocks ONLY `ServerResetVehicleAt` with `bRemoveCargo=false`; `bRemoveCargo=true` passes, and the other three movement hooks are unaffected). On-duty police get `reset_cargo_keep` (backend push). Absent body defaults to `all` (back-compat); unknown modes rejected with 400. `GET /players/no_teleport` now returns `[{Guid, Mode}]`.
+
 ### [server/v0.42.0-rc12] - 2026-09-25
 
 #### Removed
