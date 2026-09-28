@@ -1,62 +1,68 @@
 ---NoTeleportManager.lua
----Backend-pushed per-GUID no-teleport flag (freeman 2026-09-23).
+---Backend-pushed per-GUID no-teleport BLOCK SET (freeman 2026-09-23; block-set
+---schema freeman 2026-09-28: "no teleport should be agnostic — accept flags
+---for each type of teleport, whether they should be allowed or not").
 ---
----The mod is dumb: it keeps an IN-MEMORY map of character GUIDs -> lock MODE,
----written only by the backend via the webserver endpoints below. No
+---The mod is dumb: it keeps an IN-MEMORY map of character GUIDs -> block-set
+---table, written only by the backend via the webserver endpoints below. No
 ---display-name involvement — the flag is invisible to other players (unlike
----the [R] tag, which reveals wanted status).
+---the [R] tag, which reveals wanted status). No domain vocabulary (wanted /
+---police / modes) lives here; the backend composes the block set.
 ---
----Modes (freeman 2026-09-27: "allow different types of teleport blocking";
----"wanted_roadside" added 2026-09-28 for the roadside-reset distance gate):
----  "all"             — block every movement RPC (wanted while chased close /
----                      admin hold).
----  "wanted_roadside" — same full teleport lock as "all" EXCEPT
----                      ServerResetVehicleAt: the cargo-kept roadside flow
----                      (bRemoveCargo=false) passes, the cargo-strip flow
----                      (bRemoveCargo=true) is pinned. Backend pushes this
----                      for wanted suspects while every on-duty cop is
----                      beyond the 500 m roadside gate.
----  "reset_cargo_keep" — block ONLY ServerResetVehicleAt with bRemoveCargo=false
----                      (the roadside flow that teleports the vehicle with its
----                      cargo); bRemoveCargo=true passes. Used for on-duty police
----                      near an active wanted.
----Absent body / unknown-shape push defaults to "all" (back-compat with the
----pre-mode backend), so an old backend always yields the full lock.
+---Block flags (absent guid = unrestricted; absent key = allowed):
+---  block_teleport_character          — ServerTeleportCharacter
+---  block_teleport_vehicle            — ServerTeleportVehicle
+---  block_respawn_character           — ServerRespawnCharacter
+---  block_reset_vehicle_keep_cargo    — ServerResetVehicleAt with
+---                                      bRemoveCargo=false (roadside flow that
+---                                      moves the vehicle WITH its cargo)
+---  block_reset_vehicle_strip_cargo   — ServerResetVehicleAt with
+---                                      bRemoveCargo=true (cargo-strip reset)
 ---
 ---State is memory-only by design: the backend is the source of truth and
----re-asserts the flag on every player login, so a game restart simply clears
----it until the backend pushes again.
+---re-asserts the flags on every player login, so a game restart simply clears
+---them until the backend pushes again.
 ---
----RPManager.lua consults GetNoTeleportMode() in the four server-side movement
----hooks (ServerTeleportCharacter / ServerTeleportVehicle / ServerRespawnCharacter /
----ServerResetVehicleAt). The "all" flag blocks UNCONDITIONALLY — the racetrack
----event-member allowance that applies to RP-mode players does NOT apply here:
----the flag is a deliberate enforcement (wanted grace window / admin hold),
----not an RP immersion rule.
+---RPManager.lua consults GetNoTeleportBlocks() / IsBlocked() in the four
+---server-side movement hooks (ServerTeleportCharacter / ServerTeleportVehicle /
+---ServerRespawnCharacter / ServerResetVehicleAt). A full block set blocks
+---UNCONDITIONALLY — the racetrack event-member allowance that applies to
+---RP-mode players does NOT apply here: the set is deliberate enforcement
+---(chased-close wanted / admin hold), not an RP immersion rule.
 
 local json = require("JsonParser")
 
-local MODE_ALL = "all"
-local MODE_WANTED_ROADSIDE = "wanted_roadside"
-local MODE_RESET_CARGO_KEEP = "reset_cargo_keep"
+local BLOCK_KEYS = {
+  "block_teleport_character",
+  "block_teleport_vehicle",
+  "block_respawn_character",
+  "block_reset_vehicle_keep_cargo",
+  "block_reset_vehicle_strip_cargo",
+}
 
-local noTeleportModes = {}
+local BLOCK_KEY_SET = {}
+for _, k in ipairs(BLOCK_KEYS) do
+  BLOCK_KEY_SET[k] = true
+end
+
+local noTeleportBlocks = {}
 
 ---@param guid string character GUID
----@param enabled boolean
----@param string mode one of MODE_ALL / MODE_RESET_CARGO_KEEP
-local function SetNoTeleport(guid, enabled, mode)
+---@param blocks table|nil block-flag table (keys from BLOCK_KEYS); nil/empty clears
+local function SetNoTeleport(guid, blocks)
   if not guid or guid == "" then
     return false
   end
-  if enabled then
-    noTeleportModes[guid] = mode or MODE_ALL
-    LogOutput("INFO", string.format("[NoTeleport] ENABLED (%s) for %s", noTeleportModes[guid], guid))
+  if blocks and next(blocks) ~= nil then
+    noTeleportBlocks[guid] = blocks
+    local n = 0
+    for _ in pairs(blocks) do n = n + 1 end
+    LogOutput("INFO", string.format("[NoTeleport] ENABLED (%d flags) for %s", n, guid))
   else
-    if noTeleportModes[guid] then
+    if noTeleportBlocks[guid] then
       LogOutput("INFO", string.format("[NoTeleport] cleared for %s", guid))
     end
-    noTeleportModes[guid] = nil
+    noTeleportBlocks[guid] = nil
   end
   return true
 end
@@ -64,60 +70,107 @@ end
 ---@param guid string character GUID
 ---@return boolean
 local function IsNoTeleportGuid(guid)
-  return guid ~= nil and noTeleportModes[guid] ~= nil
+  return guid ~= nil and noTeleportBlocks[guid] ~= nil
 end
 
 ---@param guid string character GUID
----@return string mode or nil when not flagged
-local function GetNoTeleportMode(guid)
+---@return table block set or nil when not flagged
+local function GetNoTeleportBlocks(guid)
   if guid == nil then return nil end
-  return noTeleportModes[guid]
+  return noTeleportBlocks[guid]
 end
 
----@return table list of {Guid, Mode} currently flagged
+---@param guid string character GUID
+---@param key string one of BLOCK_KEYS
+---@return boolean
+local function IsBlocked(guid, key)
+  local blocks = GetNoTeleportBlocks(guid)
+  return blocks ~= nil and blocks[key] == true
+end
+
+---@return table list of {Guid, Blocks} currently flagged
 local function GetNoTeleportGuids()
   local result = {}
-  for guid, mode in pairs(noTeleportModes) do
-    table.insert(result, { Guid = guid, Mode = mode })
+  for guid, blocks in pairs(noTeleportBlocks) do
+    table.insert(result, { Guid = guid, Blocks = blocks })
   end
   table.sort(result, function(a, b) return a.Guid < b.Guid end)
   return result
 end
 
+---Legacy body mapping (deprecated; accepted for one release so the current
+---prod backend keeps working until its counterpart PR ships):
+---{"Enabled": bool, "Mode": "all"|"reset_cargo_keep"|"wanted_roadside"}.
+local function LegacyModeBlocks(mode)
+  if mode == "all" then
+    return {
+      block_teleport_character = true,
+      block_teleport_vehicle = true,
+      block_respawn_character = true,
+      block_reset_vehicle_keep_cargo = true,
+      block_reset_vehicle_strip_cargo = true,
+    }
+  elseif mode == "reset_cargo_keep" then
+    return { block_reset_vehicle_keep_cargo = true }
+  elseif mode == "wanted_roadside" then
+    return {
+      block_teleport_character = true,
+      block_teleport_vehicle = true,
+      block_respawn_character = true,
+      block_reset_vehicle_strip_cargo = true,
+    }
+  end
+  return nil
+end
+
 ---POST /players/{guid}/no_teleport
----Body (optional): {"Enabled": false} clears;
----absent/true enables with Mode (default "all", one of MODE_ALL /
----MODE_RESET_CARGO_KEEP; unknown modes are rejected so the mod never
----silently applies a weaker lock than intended).
+---Body: {"Blocks": {...}} — absent/empty Blocks clears the record; unknown
+---keys are rejected so a typo can never silently weaken a lock.
+---Legacy {"Enabled": bool, "Mode": ...} bodies are still accepted (mapped)
+---for one release.
 ---@type RequestPathHandler
 local function HandleSetPlayerNoTeleport(session)
   local guid = session.pathComponents[2]
   if not guid or guid == "" then
     return { error = "Invalid player GUID" }, nil, 400
   end
-  local enabled = true
-  local mode = nil
+
+  local blocks = nil
   if session.content and session.content ~= "" then
     local ok, data = pcall(json.parse, session.content)
-    if ok and type(data) == "table" then
-      if data.Enabled == false then
-        enabled = false
+    if not ok or type(data) ~= "table" then
+      return { error = "Invalid body" }, nil, 400
+    end
+    if data.Blocks ~= nil then
+      if type(data.Blocks) ~= "table" then
+        return { error = "Invalid Blocks" }, nil, 400
       end
-      if data.Mode ~= nil then
-        if type(data.Mode) ~= "string"
-            or (data.Mode ~= MODE_ALL
-                and data.Mode ~= MODE_WANTED_ROADSIDE
-                and data.Mode ~= MODE_RESET_CARGO_KEEP) then
-          return { error = "Invalid Mode" }, nil, 400
+      blocks = {}
+      for k, v in pairs(data.Blocks) do
+        if not BLOCK_KEY_SET[k] then
+          return { error = "Unknown block key: " .. tostring(k) }, nil, 400
         end
-        mode = data.Mode
+        if v == true then
+          blocks[k] = true
+        end
       end
+    elseif data.Mode ~= nil then
+      blocks = LegacyModeBlocks(data.Mode)
+      if blocks == nil then
+        return { error = "Invalid Mode" }, nil, 400
+      end
+      if data.Enabled == false then
+        blocks = nil
+      end
+    elseif data.Enabled == false then
+      blocks = nil
     end
   end
-  if not SetNoTeleport(guid, enabled, mode) then
+
+  if not SetNoTeleport(guid, blocks) then
     return { error = "Invalid GUID" }, nil, 400
   end
-  return { status = enabled and "no_teleport_enabled" or "no_teleport_cleared", Guid = guid, Mode = enabled and (mode or MODE_ALL) or nil }, nil, 200
+  return { status = blocks and "no_teleport_enabled" or "no_teleport_cleared", Guid = guid, Blocks = blocks }, nil, 200
 end
 
 ---DELETE /players/{guid}/no_teleport
@@ -127,7 +180,7 @@ local function HandleClearPlayerNoTeleport(session)
   if not guid or guid == "" then
     return { error = "Invalid player GUID" }, nil, 400
   end
-  SetNoTeleport(guid, false)
+  SetNoTeleport(guid, nil)
   return { status = "no_teleport_cleared", Guid = guid }, nil, 200
 end
 
@@ -138,11 +191,11 @@ local function HandleGetNoTeleportPlayers(session)
 end
 
 return {
-  MODE_ALL = MODE_ALL,
-  MODE_WANTED_ROADSIDE = MODE_WANTED_ROADSIDE,
-  MODE_RESET_CARGO_KEEP = MODE_RESET_CARGO_KEEP,
+  BLOCK_KEYS = BLOCK_KEYS,
   SetNoTeleport = SetNoTeleport,
   IsNoTeleportGuid = IsNoTeleportGuid,
+  GetNoTeleportBlocks = GetNoTeleportBlocks,
+  IsBlocked = IsBlocked,
   GetNoTeleportGuids = GetNoTeleportGuids,
   HandleSetPlayerNoTeleport = HandleSetPlayerNoTeleport,
   HandleClearPlayerNoTeleport = HandleClearPlayerNoTeleport,
