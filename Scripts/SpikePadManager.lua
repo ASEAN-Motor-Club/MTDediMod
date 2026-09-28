@@ -26,6 +26,7 @@
 -- probe answers P1-P9).
 
 local json = require("JsonParser")
+local UEHelpers = require("UEHelpers")
 
 local PREFIX = "[SpikePad]"
 
@@ -55,7 +56,9 @@ local function registryKeys()
 end
 
 local function log(level, msg)
-  LogOutput(level, PREFIX .. " " .. tostring(msg))
+  -- Logging.lua only knows ERROR/WARN/INFO/VERBOSE/DEBUG
+  local lvl = level == "WARNING" and "WARN" or level
+  LogOutput(lvl, PREFIX .. " " .. tostring(msg))
 end
 
 local function safeName(obj)
@@ -441,16 +444,18 @@ local function boot()
     log("WARNING", "initial hook registration incomplete (see /debug/spikepad/hooktest)")
   end
 
-  -- sweep fallback: RPManager notes boot-time NotifyOnNewObject may never fire
-  -- on some builds; start the loop deferred like BalanceManager does.
-  ExecuteInGameThreadWithDelay(5000, function()
-    ensureSweepLoop()
-    sweep()
-  end)
+  -- sweep start: BalanceManager's proven pattern — issue the loop directly at
+  -- load (an ExecuteInGameThreadWithDelay wrapper silently never fired on
+  -- staging 2026-09-28; the direct call demonstrably works).
+  pcall(ensureSweepLoop)
+  pcall(sweep)
 
   log("INFO", "module loaded")
 end
 
-pcall(boot)
+local okBoot, errBoot = pcall(boot)
+if not okBoot then
+  LogOutput("ERROR", PREFIX .. " boot FAILED: " .. tostring(errBoot))
+end
 
 return {}
