@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc14] - 2026-09-28
+
+#### Fixed
+- `GetNoTeleportMode` was defined but never exported from `NoTeleportManager.lua`'s return table — every no-teleport hook hit `attempt to call a nil value` on first invocation, silently killing ALL mod-side no-teleport enforcement (including the rc13 `ServerResetVehicleAt` pin). Found by the new smoke-load test before release.
+
+#### Changed
+- `reset_cargo_keep` mode now also blocks `ServerTeleportCharacter` (house TP): on-duty police were being teleported into houses while roadside was pinned, and the "cargo kept" semantics cover character TP with carried state. `MODE_ALL` behaviour unchanged (already blocked all four movement RPCs). TeleportAllow token still bypasses.
+
+#### Added
+- `tests/smoke_load.lua`: loads all Scripts in real Lua 5.4 with a stubbed UE4SS environment and invokes every `RegisterHook`ed callback with permissive stub args, failing on `attempt to call a nil value` — the missing-module-field bug class that `luac -p` cannot see. Includes an instruction watchdog so runaway load-time loops fail fast.
+
 ### [server/v0.42.0-rc13] - 2026-09-27
 
 #### Fixed
