@@ -29,6 +29,7 @@ local rpManager = require("RPManager")
 local criminalManager = require("CriminalManager")
 local noTeleportManager = require("NoTeleportManager")
 local balanceManager = require("BalanceManager")
+local spikePadManager = require("SpikePadManager")
 
 local function LoadWebserver()
   local status, err = pcall(function()
