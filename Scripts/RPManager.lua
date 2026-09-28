@@ -53,20 +53,18 @@ end
 ---reveals nothing about wanted status. Fails closed to "not flagged" on any
 ---GUID-resolution problem. Returns the lock MODE ("all" / "reset_cargo_keep")
 ---or nil when not flagged.
-local function GetNoTeleportMode(playerController)
+local function GetNoTeleportGuid(playerController)
   if not playerController or not playerController:IsValid() then return nil end
   local ok, guid = pcall(GetPlayerGuid, playerController)
-  if not ok or not guid then return nil end
-  return noTeleportManager.GetNoTeleportMode(guid)
+  if not ok then return nil end
+  return guid
 end
 
----Does the flag MODE block ServerResetVehicleAt for this call? "all" always
----blocks; "reset_cargo_keep" blocks only the cargo-kept roadside flow
----(bRemoveCargo=false) and allows the cargo-strip reset (bRemoveCargo=true).
-local function ModeBlocksResetVehicleAt(mode, bRemoveCargo)
-  if mode == noTeleportManager.MODE_ALL then return true end
-  if mode == noTeleportManager.MODE_RESET_CARGO_KEEP then return not bRemoveCargo end
-  return false
+---Is one movement type blocked for this player by the backend block set?
+---The block set is domain-agnostic (freeman 2026-09-28): each teleport type
+---is an independent flag pushed by the backend; the mod only looks the key up.
+local function IsMovementBlocked(playerController, blockKey)
+  return noTeleportManager.IsBlocked(GetNoTeleportGuid(playerController), blockKey)
 end
 
 ---Get the player's current pawn location.
@@ -96,11 +94,9 @@ end
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter", function(PC, AbsoluteLocation, bCharge, bIsRespawn)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportCharacter") end
   local playerController = PC:get()
-  -- Any no-teleport lock MODE blocks character teleport: "all" (wanted /
-  -- admin hold) and "reset_cargo_keep" (on-duty police — freeman 2026-09-28:
-  -- police must not use game-native house teleports on duty; backend /tp
-  -- stays refused via is_teleport_locked, this covers the game's own RPC).
-  if GetNoTeleportMode(playerController) == nil
+  -- Character teleport is blocked by its own flag; RP players are blocked
+  -- by the RP rules regardless of the block set.
+  if not IsMovementBlocked(playerController, "block_teleport_character")
       and not IsRPPlayer(playerController) then return end
 
   local loc = GetPawnLocation(playerController)
@@ -120,10 +116,10 @@ end)
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehicle", function(PC, Vehicle, AbsoluteLocation)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportVehicle") end
   local playerController = PC:get()
-  -- Full lock ("all") only: the game never calls this RPC itself, so the
-  -- universal anti-cheat pin applies to every player-initiated call anyway;
-  -- the narrow "reset_cargo_keep" mode (police) changes nothing here.
-  local notpFlagged = GetNoTeleportMode(playerController) == noTeleportManager.MODE_ALL
+  -- The game never calls this RPC itself, so the universal anti-cheat pin
+  -- applies to every player-initiated call anyway; the block set only
+  -- matters for the full-lock paths below.
+  local notpFlagged = IsMovementBlocked(playerController, "block_teleport_vehicle")
   -- Our own backend-initiated calls (tp2marker et al.) bypass everything.
   if teleportAllow.Consume() then
     LogOutput("INFO", "[AntiCheat] Allowed ServerTeleportVehicle — mod-initiated (TeleportAllow)")
@@ -167,7 +163,7 @@ end)
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerRespawnCharacter", function(PC, AbsoluteLocation)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerRespawnCharacter") end
   local playerController = PC:get()
-  local notpFlagged = GetNoTeleportMode(playerController) == noTeleportManager.MODE_ALL
+  local notpFlagged = IsMovementBlocked(playerController, "block_respawn_character")
   if not IsRPPlayer(playerController) and not notpFlagged then return end
   if not notpFlagged and IsInServerEvent(playerController) then return end
 
@@ -204,20 +200,26 @@ end
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(PC, Vehicle, WorldLocation, Rotation, bRemoveCargo, bResetCarriedVehicles)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerResetVehicleAt") end
   local playerController = PC:get()
-  -- The backend-pushed no-teleport flag DOES apply here (the old "no escape
-  -- value" premise was wrong: roadside teleports the vehicle to the nearest
-  -- roadside — prod 2026-09-25 evidence: 214-449 m moves). Lock MODES:
-  --   "all" (wanted / admin hold)              — always pin.
-  --   "reset_cargo_keep" (on-duty police)      — pin only when bRemoveCargo=false
-  --     (the cargo-kept roadside flow); bRemoveCargo=true passes.
+  -- The backend-pushed no-teleport block set DOES apply here (the old "no
+  -- escape value" premise was wrong: roadside teleports the vehicle to the
+  -- nearest roadside — prod 2026-09-25 evidence: 214-449 m moves). The
+  -- request's bRemoveCargo selects which reset-variant flag applies:
+  --   bRemoveCargo=false (cargo-kept roadside) — blocked by
+  --     block_reset_vehicle_keep_cargo.
+  --   bRemoveCargo=true (cargo-strip reset)    — blocked by
+  --     block_reset_vehicle_strip_cargo.
   -- Our own backend-initiated calls (tp2marker cargo-strip path) bypass via
   -- the TeleportAllow token, consumed first.
   local modInitiated = teleportAllow.Consume()
   local isRP = IsRPPlayer(playerController)
-  local notpMode = GetNoTeleportMode(playerController)
   local okBrc, bRemoveCargoVal = pcall(function() return bRemoveCargo:get() end)
   if not okBrc then bRemoveCargoVal = false end
-  local notpBlocksReset = ModeBlocksResetVehicleAt(notpMode, bRemoveCargoVal)
+  -- The two reset variants are independent block flags in the backend's
+  -- block set; the request's bRemoveCargo selects which one applies.
+  local resetBlockKey = bRemoveCargoVal
+      and "block_reset_vehicle_strip_cargo"
+      or "block_reset_vehicle_keep_cargo"
+  local notpBlocksReset = IsMovementBlocked(playerController, resetBlockKey)
 
   if not isRP then
     if modInitiated then
