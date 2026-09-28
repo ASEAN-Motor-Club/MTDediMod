@@ -8,9 +8,11 @@
 ---
 ---Modes (freeman 2026-09-27: "allow different types of teleport blocking"):
 ---  "all"             — block every movement RPC (wanted / admin hold).
----  "reset_cargo_keep" — block ONLY ServerResetVehicleAt with bRemoveCargo=false
+---  "reset_cargo_keep" — block ServerResetVehicleAt with bRemoveCargo=false
 ---                      (the roadside flow that teleports the vehicle with its
----                      cargo); bRemoveCargo=true passes. Used for on-duty police.
+---                      cargo; bRemoveCargo=true passes) AND the game-native
+---                      ServerTeleportCharacter house teleports. Used for
+---                      on-duty police.
 ---Absent body / unknown-shape push defaults to "all" (back-compat with the
 ---pre-mode backend), so an old backend always yields the full lock.
 ---

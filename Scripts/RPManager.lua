@@ -96,9 +96,11 @@ end
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter", function(PC, AbsoluteLocation, bCharge, bIsRespawn)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportCharacter") end
   local playerController = PC:get()
-  -- Only the FULL lock ("all") blocks character teleport — the narrow
-  -- "reset_cargo_keep" mode (on-duty police) does not.
-  if GetNoTeleportMode(playerController) ~= noTeleportManager.MODE_ALL
+  -- Any no-teleport lock MODE blocks character teleport: "all" (wanted /
+  -- admin hold) and "reset_cargo_keep" (on-duty police — freeman 2026-09-28:
+  -- police must not use game-native house teleports on duty; backend /tp
+  -- stays refused via is_teleport_locked, this covers the game's own RPC).
+  if GetNoTeleportMode(playerController) == nil
       and not IsRPPlayer(playerController) then return end
 
   local loc = GetPawnLocation(playerController)
