@@ -199,6 +199,17 @@ end
 --------------------------------------------------------------------------
 -- P1: BP overlap hooks on the pad class
 --------------------------------------------------------------------------
+---Resolve the BP function object first: RegisterHook on a missing BP function
+---aborts the whole Lua chunk (even inside pcall — observed live 2026-09-28:
+---Begin registered, End's attempted registration silenced everything after
+---it; endpoints never registered). Check existence, then register.
+local function findBPFunction(functionName)
+  local ok, fn = pcall(StaticFindObject,
+    "/Game/Objects/Mission/Police/SpikePad_01.SpikePad_01_C:" .. functionName)
+  if ok and fn and fn:IsValid() then return fn end
+  return nil
+end
+
 local function registerPadHooks()
   local results = {}
   local beginPath = "/Game/Objects/Mission/Police/SpikePad_01.SpikePad_01_C:ReceiveActorBeginOverlap"
@@ -213,17 +224,22 @@ local function registerPadHooks()
   hookStatus.begin = okB and "registered" or ("FAILED: " .. tostring(errB))
   table.insert(results, { hook = "ReceiveActorBeginOverlap", ok = okB, err = errB })
 
-  local endPath = "/Game/Objects/Mission/Police/SpikePad_01.SpikePad_01_C:ReceiveActorEndOverlap"
-  local okE, errE = pcall(RegisterHook, endPath, function(Context, OtherActor)
-    counters.endOverlaps = counters.endOverlaps + 1
-    if cfg.verboseOverlaps then
-      local actor = OtherActor:get()
-      log("INFO", string.format("pad END overlap #%d other=%s",
-        counters.endOverlaps, actor and safeName(actor) or "<nil>"))
-    end
-  end)
-  hookStatus.finish = okE and "registered" or ("FAILED: " .. tostring(errE))
-  table.insert(results, { hook = "ReceiveActorEndOverlap", ok = okE, err = errE })
+  if findBPFunction("ReceiveActorEndOverlap") then
+    local endPath = "/Game/Objects/Mission/Police/SpikePad_01.SpikePad_01_C:ReceiveActorEndOverlap"
+    local okE, errE = pcall(RegisterHook, endPath, function(Context, OtherActor)
+      counters.endOverlaps = counters.endOverlaps + 1
+      if cfg.verboseOverlaps then
+        local actor = OtherActor:get()
+        log("INFO", string.format("pad END overlap #%d other=%s",
+          counters.endOverlaps, actor and safeName(actor) or "<nil>"))
+      end
+    end)
+    hookStatus.finish = okE and "registered" or ("FAILED: " .. tostring(errE))
+    table.insert(results, { hook = "ReceiveActorEndOverlap", ok = okE, err = errE })
+  else
+    hookStatus.finish = "function not found on class (skipped — BP does not override it)"
+    table.insert(results, { hook = "ReceiveActorEndOverlap", ok = false, err = "not found" })
+  end
 
   for _, r in ipairs(results) do
     log(r.ok and "INFO" or "WARNING", string.format("hook %s: %s",
@@ -416,10 +432,14 @@ local function boot()
   log(okP and "INFO" or "WARNING", "NotifyOnNewObject MTSpikePad: "
     .. (okP and "registered" or tostring(errP)))
 
-  local okH, _ = pcall(registerPadHooks)
-  if not okH then log("WARNING", "initial hook registration errored (see /debug/spikepad/hooktest)") end
-
+  -- endpoints FIRST: a failed hook registration must never take the
+  -- debug surface down with it (observed live 2026-09-28).
   registerEndpoints()
+
+  pcall(registerPadHooks)
+  if not hookStatus.begin:find("registered") or not hookStatus.finish:find("registered") then
+    log("WARNING", "initial hook registration incomplete (see /debug/spikepad/hooktest)")
+  end
 
   -- sweep fallback: RPManager notes boot-time NotifyOnNewObject may never fire
   -- on some builds; start the loop deferred like BalanceManager does.
