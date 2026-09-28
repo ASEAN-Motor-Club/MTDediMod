@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc15] - 2026-09-28
+
+#### Changed
+- No-teleport is now a domain-agnostic per-GUID BLOCK SET (freeman: "no teleport should be agnostic — accept flags for each type of teleport, whether they should be allowed or not"): five independent flags per GUID — `block_teleport_character`, `block_teleport_vehicle`, `block_respawn_character`, `block_reset_vehicle_keep_cargo` (bRemoveCargo=false), `block_reset_vehicle_strip_cargo` (bRemoveCargo=true). The four movement hooks each consult one flag; the named MODES (`all` / `wanted_roadside` / `reset_cargo_keep`) are gone from the mod. Legacy `{"Enabled", "Mode"}` POST bodies are still mapped for one release; unknown block keys are rejected (400) so a typo can never silently weaken a lock.
+
 ### [server/v0.42.0-rc14] - 2026-09-28
 
 #### Fixed
