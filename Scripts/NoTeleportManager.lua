@@ -60,7 +60,7 @@ local function IsNoTeleportGuid(guid)
 end
 
 ---@param guid string character GUID
----@return string mode or nil when not flagged
+---@return string? mode the stored lock MODE, or nil when not flagged
 local function GetNoTeleportMode(guid)
   if guid == nil then return nil end
   return noTeleportModes[guid]
@@ -132,6 +132,7 @@ return {
   MODE_RESET_CARGO_KEEP = MODE_RESET_CARGO_KEEP,
   SetNoTeleport = SetNoTeleport,
   IsNoTeleportGuid = IsNoTeleportGuid,
+  GetNoTeleportMode = GetNoTeleportMode,
   GetNoTeleportGuids = GetNoTeleportGuids,
   HandleSetPlayerNoTeleport = HandleSetPlayerNoTeleport,
   HandleClearPlayerNoTeleport = HandleClearPlayerNoTeleport,
