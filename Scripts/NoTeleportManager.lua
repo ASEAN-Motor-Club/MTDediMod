@@ -6,11 +6,20 @@
 ---display-name involvement — the flag is invisible to other players (unlike
 ---the [R] tag, which reveals wanted status).
 ---
----Modes (freeman 2026-09-27: "allow different types of teleport blocking"):
----  "all"             — block every movement RPC (wanted / admin hold).
+---Modes (freeman 2026-09-27: "allow different types of teleport blocking";
+---"wanted_roadside" added 2026-09-28 for the roadside-reset distance gate):
+---  "all"             — block every movement RPC (wanted while chased close /
+---                      admin hold).
+---  "wanted_roadside" — same full teleport lock as "all" EXCEPT
+---                      ServerResetVehicleAt: the cargo-kept roadside flow
+---                      (bRemoveCargo=false) passes, the cargo-strip flow
+---                      (bRemoveCargo=true) is pinned. Backend pushes this
+---                      for wanted suspects while every on-duty cop is
+---                      beyond the 500 m roadside gate.
 ---  "reset_cargo_keep" — block ONLY ServerResetVehicleAt with bRemoveCargo=false
 ---                      (the roadside flow that teleports the vehicle with its
----                      cargo); bRemoveCargo=true passes. Used for on-duty police.
+---                      cargo); bRemoveCargo=true passes. Used for on-duty police
+---                      near an active wanted.
 ---Absent body / unknown-shape push defaults to "all" (back-compat with the
 ---pre-mode backend), so an old backend always yields the full lock.
 ---
@@ -28,6 +37,7 @@
 local json = require("JsonParser")
 
 local MODE_ALL = "all"
+local MODE_WANTED_ROADSIDE = "wanted_roadside"
 local MODE_RESET_CARGO_KEEP = "reset_cargo_keep"
 
 local noTeleportModes = {}
@@ -95,7 +105,9 @@ local function HandleSetPlayerNoTeleport(session)
       end
       if data.Mode ~= nil then
         if type(data.Mode) ~= "string"
-            or (data.Mode ~= MODE_ALL and data.Mode ~= MODE_RESET_CARGO_KEEP) then
+            or (data.Mode ~= MODE_ALL
+                and data.Mode ~= MODE_WANTED_ROADSIDE
+                and data.Mode ~= MODE_RESET_CARGO_KEEP) then
           return { error = "Invalid Mode" }, nil, 400
         end
         mode = data.Mode
@@ -127,6 +139,7 @@ end
 
 return {
   MODE_ALL = MODE_ALL,
+  MODE_WANTED_ROADSIDE = MODE_WANTED_ROADSIDE,
   MODE_RESET_CARGO_KEEP = MODE_RESET_CARGO_KEEP,
   SetNoTeleport = SetNoTeleport,
   IsNoTeleportGuid = IsNoTeleportGuid,

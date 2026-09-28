@@ -60,13 +60,28 @@ local function GetNoTeleportMode(playerController)
   return noTeleportManager.GetNoTeleportMode(guid)
 end
 
----Does the flag MODE block ServerResetVehicleAt for this call? "all" always
----blocks; "reset_cargo_keep" blocks only the cargo-kept roadside flow
----(bRemoveCargo=false) and allows the cargo-strip reset (bRemoveCargo=true).
+---Does the flag MODE block ServerResetVehicleAt for this call?
+---  "all"              — always blocks.
+---  "wanted_roadside"  — blocks only the cargo-strip flow (bRemoveCargo=true);
+---                       the cargo-kept roadside reset (bRemoveCargo=false)
+---                       passes (freeman 2026-09-28: wanted suspects may
+---                       roadside-recover cargo-free while cops are >500 m).
+---  "reset_cargo_keep" — blocks only the cargo-kept roadside flow
+---                       (bRemoveCargo=false); allows the cargo-strip reset
+---                       (bRemoveCargo=true). On-duty police near a wanted.
 local function ModeBlocksResetVehicleAt(mode, bRemoveCargo)
   if mode == noTeleportManager.MODE_ALL then return true end
+  if mode == noTeleportManager.MODE_WANTED_ROADSIDE then return bRemoveCargo end
   if mode == noTeleportManager.MODE_RESET_CARGO_KEEP then return not bRemoveCargo end
   return false
+end
+
+---Does this lock MODE block the three character/vehicle movement RPCs?
+---"all" and "wanted_roadside" both fully lock teleports; the narrow
+---"reset_cargo_keep" mode (on-duty police) does not.
+local function ModeBlocksTeleports(mode)
+  return mode == noTeleportManager.MODE_ALL
+      or mode == noTeleportManager.MODE_WANTED_ROADSIDE
 end
 
 ---Get the player's current pawn location.
@@ -96,9 +111,9 @@ end
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter", function(PC, AbsoluteLocation, bCharge, bIsRespawn)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportCharacter") end
   local playerController = PC:get()
-  -- Only the FULL lock ("all") blocks character teleport — the narrow
-  -- "reset_cargo_keep" mode (on-duty police) does not.
-  if GetNoTeleportMode(playerController) ~= noTeleportManager.MODE_ALL
+  -- Only the full locks ("all", "wanted_roadside") block character
+  -- teleport — the narrow "reset_cargo_keep" mode (on-duty police) does not.
+  if not ModeBlocksTeleports(GetNoTeleportMode(playerController))
       and not IsRPPlayer(playerController) then return end
 
   local loc = GetPawnLocation(playerController)
@@ -118,10 +133,11 @@ end)
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehicle", function(PC, Vehicle, AbsoluteLocation)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerTeleportVehicle") end
   local playerController = PC:get()
-  -- Full lock ("all") only: the game never calls this RPC itself, so the
-  -- universal anti-cheat pin applies to every player-initiated call anyway;
-  -- the narrow "reset_cargo_keep" mode (police) changes nothing here.
-  local notpFlagged = GetNoTeleportMode(playerController) == noTeleportManager.MODE_ALL
+  -- Full locks only ("all", "wanted_roadside"): the game never calls this
+  -- RPC itself, so the universal anti-cheat pin applies to every
+  -- player-initiated call anyway; the narrow "reset_cargo_keep" mode
+  -- (police) changes nothing here.
+  local notpFlagged = ModeBlocksTeleports(GetNoTeleportMode(playerController))
   -- Our own backend-initiated calls (tp2marker et al.) bypass everything.
   if teleportAllow.Consume() then
     LogOutput("INFO", "[AntiCheat] Allowed ServerTeleportVehicle — mod-initiated (TeleportAllow)")
@@ -165,7 +181,7 @@ end)
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerRespawnCharacter", function(PC, AbsoluteLocation)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerRespawnCharacter") end
   local playerController = PC:get()
-  local notpFlagged = GetNoTeleportMode(playerController) == noTeleportManager.MODE_ALL
+  local notpFlagged = ModeBlocksTeleports(GetNoTeleportMode(playerController))
   if not IsRPPlayer(playerController) and not notpFlagged then return end
   if not notpFlagged and IsInServerEvent(playerController) then return end
 
@@ -205,8 +221,10 @@ SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicle
   -- The backend-pushed no-teleport flag DOES apply here (the old "no escape
   -- value" premise was wrong: roadside teleports the vehicle to the nearest
   -- roadside — prod 2026-09-25 evidence: 214-449 m moves). Lock MODES:
-  --   "all" (wanted / admin hold)              — always pin.
-  --   "reset_cargo_keep" (on-duty police)      — pin only when bRemoveCargo=false
+  --   "all" (wanted chased close / admin hold)  — always pin.
+  --   "wanted_roadside" (wanted, cops >500 m)   — pin only when bRemoveCargo=true
+  --     (cargo-strip); the cargo-kept roadside reset passes.
+  --   "reset_cargo_keep" (on-duty police)       — pin only when bRemoveCargo=false
   --     (the cargo-kept roadside flow); bRemoveCargo=true passes.
   -- Our own backend-initiated calls (tp2marker cargo-strip path) bypass via
   -- the TeleportAllow token, consumed first.
