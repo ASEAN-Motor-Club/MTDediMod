@@ -29,7 +29,6 @@ local rpManager = require("RPManager")
 local criminalManager = require("CriminalManager")
 local noTeleportManager = require("NoTeleportManager")
 local balanceManager = require("BalanceManager")
-local cargoBlockManager = require("CargoBlockManager")
 local strapBlockManager = require("StrapBlockManager")
 
 local function LoadWebserver()
@@ -133,8 +132,8 @@ local function LoadWebserver()
     server.registerHandler("/delivery/points/*", "GET", cargoManager.HandleGetDeliveryPoints)
 
     -- Cargo strap blocking (StrapBlockManager)
-    server.registerHandler("/cargo/blocked_keys", "POST", cargoBlockManager.HandleSetBlockedCargoKeys)
-    server.registerHandler("/cargo/blocked_keys", "GET", cargoBlockManager.HandleGetBlockedCargoKeys)
+    server.registerHandler("/cargo/blocked_keys", "POST", strapBlockManager.HandleSetBlockedCargoKeys)
+    server.registerHandler("/cargo/blocked_keys", "GET", strapBlockManager.HandleGetBlockedCargoKeys)
     server.registerHandler("/player_contracts/*", "GET", cargoManager.HandleGetPlayerContracts)
 
 
