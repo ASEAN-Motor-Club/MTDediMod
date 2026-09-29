@@ -115,6 +115,7 @@ end
 --------------------------------------------------------------------------
 local function registerPad(padActor)
   counters.padSpawns = counters.padSpawns + 1
+  directPads[padActor] = true
   if cfg.disarmMethod ~= "none" then
     counters.disarmAttempts = counters.disarmAttempts + 1
     local applied, note = disarmPad(padActor)
@@ -307,6 +308,17 @@ local function sweep()
       registry[barrier] = nil
     end
   end
+  -- prune dead direct pads + their episodes
+  for pad in pairs(directPads) do
+    local okValid, valid = pcall(function() return pad:IsValid() end)
+    if not okValid or not valid then
+      directPads[pad] = nil
+      discoveryDone = false -- rescan on next contact tick
+      for key in pairs(episodes) do
+        if string.find(key, safeName(pad), 1, true) then episodes[key] = nil end
+      end
+    end
+  end
   -- enumerate live barriers
   local live = {}
   local ok, police = pcall(FindFirstOf, "MTPolice")
@@ -342,6 +354,230 @@ local function ensureSweepLoop()
     return false -- return TRUE stops the loop; FALSE keeps it running
   end)
   log("INFO", "sweep loop started (" .. tostring(cfg.sweepSeconds) .. "s)")
+end
+
+--------------------------------------------------------------------------
+-- Episode engine: per-(vehicle, wheel-slot, pad) contact episodes
+--
+-- Detection: the BP Begin-overlap hook demonstrably NEVER fires for vehicles
+-- (staging 2026-09-29: 8 events, all world geometry). So we detect contact
+-- ourselves on a game-thread tick: for every live pad, test player vehicles'
+-- wheels for horizontal proximity to the pad center, inside the pad radius.
+-- An "episode" opens on first detection and stays open while contact
+-- continues; the refractory window only elapses after contact ends, so
+-- rumble re-entries during one pass are absorbed, but leaving and returning
+-- later opens a fresh episode.
+--
+-- Damage: applied AT EPISODE OPEN (pre-expiry safety; part Damage writes via
+-- ServerSetPartDamage replicate natively). Gate: driver must be a vanilla
+-- suspect (AMTPolice.Net_Suspects membership) — innocents get bump only.
+--------------------------------------------------------------------------
+
+local episodes = {} -- key: tostring(veh) .. ":" .. wheelIndex .. ":" .. tostring(pad)
+local episodeSeq = 0
+local contactTickMs = 250
+
+---Resolve the vehicle's owning player controller (driver).
+local function vehicleToPlayerController(veh)
+  local okList, list = pcall(FindAllOf, "MotorTownPlayerController")
+  if okList and list then
+    for _, pc in ipairs(list) do
+      if pc and pc:IsValid() then
+        local okPawn, pawn = pcall(function() return pc.Pawn end)
+        if okPawn and pawn == veh then return pc end
+      end
+    end
+  end
+  return nil
+end
+
+---Is this vehicle's driver a vanilla suspect? (Net_Suspects Character match)
+local function isDriverSuspect(veh)
+  local ok, police = pcall(FindFirstOf, "MTPolice")
+  if not ok or not police or not police:IsValid() then return false, "no police" end
+  local okArr, arr = pcall(function() return police.Net_Suspects end)
+  if not okArr or not arr then return false, "suspects unreadable" end
+  local driver = nil
+  local okChar, char = pcall(function() return veh.Net_OwnerPlayerState end)
+  -- fall back: use player controller -> character identity via Pawn driver
+  for i = 1, #arr do
+    local s = arr[i]
+    local okS, isMatch = pcall(function()
+      local ch = s.Character
+      if ch and ch:IsValid() and veh:IsValid() then
+        -- suspect entries reference the CHARACTER; match by proximity of the
+        -- character to the vehicle (driver is the occupant) OR by owner state
+        local cloc = ch:K2_GetActorLocation()
+        local vloc = veh:K2_GetActorLocation()
+        local dx, dy = cloc.X - vloc.X, cloc.Y - vloc.Y
+        return (dx * dx + dy * dy) < 4000000 -- 2m horizontal
+      end
+      return false
+    end)
+    if okS and isMatch then return true, "suspect#" .. i end
+  end
+  return false, "not-suspect"
+end
+
+local function episodeKey(veh, wheelIndex, pad)
+  return string.format("%s|w%d|%s", safeName(veh), wheelIndex, safeName(pad))
+end
+
+---Apply damage to one tire part slot. Slot = EMTVehiclePartSlot Tire0..N (19+).
+local function applyTireDamage(veh, partSlot, value, reason)
+  local ok, res = pcall(function() veh:ServerSetPartDamage(partSlot, value) end)
+  log(ok and "INFO" or "WARNING", string.format(
+    "tire damage write: veh=%s slot=%d value=%.2f reason=%s applied=%s",
+    safeName(veh), partSlot, value, reason, tostring(ok)))
+  return ok
+end
+
+---All live pad actors (from the registry — barrier spawn path only).
+local directPads = {} --- pads spawned directly (no barrier)
+local discoveryDone = false --- one-shot FindAllOf sweep (NotifyOnNewObject fallback)
+
+local function livePads()
+  -- NotifyOnNewObject does not fire on this build (RPManager caveat, verified
+  -- live 2026-09-29: a spawned pad produced no registerPad log). Fallback:
+  -- discover pads by class scan, repeated until it finds at least one.
+  if not discoveryDone then
+    local okF, found = pcall(FindAllOf, "MTSpikePad")
+    if okF and found then
+      for _, pad in ipairs(found) do
+        local okP, validP = pcall(function() return pad and pad:IsValid() end)
+        if okP and validP then
+          directPads[pad] = true
+          counters.padSpawns = counters.padSpawns + 1
+          log("INFO", "pad discovered (class scan): " .. safeName(pad) .. " " .. safeLoc(pad))
+        end
+      end
+      discoveryDone = next(directPads) ~= nil
+    end
+  end
+  local pads = {}
+  for barrier, meta in pairs(registry) do
+    local okValid, valid = pcall(function() return barrier:IsValid() end)
+    if okValid and valid then
+      -- barrier.Server_SpikePads = the pads under this barrier
+      local okArr, arr = pcall(function() return barrier.Server_SpikePads end)
+      if okArr and arr then
+        for i = 1, #arr do
+          local pad = arr[i]
+          local okP, validP = pcall(function() return pad and pad:IsValid() end)
+          if okP and validP then table.insert(pads, { barrier = barrier, pad = pad }) end
+        end
+      end
+    end
+  end
+  -- also directly-spawned pads (no barrier): tracked via NotifyOnNewObject
+  for pad in pairs(directPads) do
+    local okP, validP = pcall(function() return pad and pad:IsValid() end)
+    if okP and validP then table.insert(pads, { barrier = nil, pad = pad }) end
+  end
+  return pads
+end
+
+---Contact test: horizontal distance of a wheel from the pad's box center.
+---The pad is roughly rectangular (road strip); use axis-aligned 2D extent
+---grown slightly for vehicle width, Z ignored (pad is on the road plane).
+local function wheelInPad(pad, wheel)
+  local okPL, padLoc = pcall(function() return pad:K2_GetActorLocation() end)
+  local okWL, wheelLoc = pcall(function() return wheel:K2_GetActorLocation() end)
+  if not okPL or not okWL then return false end
+  local dx = math.abs(wheelLoc.X - padLoc.X)
+  local dy = math.abs(wheelLoc.Y - padLoc.Y)
+  -- pad collision box ~500cm x 150cm (from BP parse); + 40cm tolerance
+  return dx <= 540 and dy <= 190
+end
+
+local function openEpisode(key, veh, wheelIndex, pad, partSlot)
+  episodeSeq = episodeSeq + 1
+  episodes[key] = {
+    seq = episodeSeq,
+    openedAt = os.time(),
+    partSlot = partSlot,
+    veh = veh,
+    pad = pad,
+    lastDamage = 0,
+  }
+  -- gate + damage
+  local isSuspect, why = isDriverSuspect(veh)
+  if not isSuspect then
+    log("INFO", string.format("episode %d OPEN (innocent, no damage): %s driver=%s",
+      episodeSeq, key, why))
+    return
+  end
+  -- read current damage to compute the write
+  local cur = 0
+  pcall(function()
+    local parts = veh.Net_Parts
+    for i = 1, #parts do
+      local p = parts[i]
+      if tonumber(tostring(p.Slot)) == partSlot then cur = p.Damage end
+    end
+  end)
+  local target
+  if cur >= 1.0 then
+    target = 1.0
+  elseif cur >= 0.5 then
+    target = 1.0  -- second episode: 50 -> 100 (native puncture at 100)
+  elseif cur > 0 then
+    target = math.min(1.0, cur + 0.5) -- worn vanilla tires keep stepping
+  else
+    target = 0.5  -- fresh: episode 1 = 50%
+  end
+  log("INFO", string.format("episode %d OPEN (suspect): %s cur=%.2f -> %.2f",
+    episodeSeq, key, cur, target))
+  applyTireDamage(veh, partSlot, target, "episode" .. episodeSeq)
+  episodes[key].lastDamage = target
+end
+
+local function closeEpisode(key, why)
+  local ep = episodes[key]
+  if ep then
+    log("INFO", string.format("episode %d CLOSE (%s): %s", ep.seq, why, key))
+    episodes[key] = nil
+  end
+end
+
+local function contactTick()
+  local pads = livePads()
+  if #pads == 0 and not next(episodes) then return end
+  -- for each player vehicle, iterate wheels
+  local okList, list = pcall(FindAllOf, "MotorTownPlayerController")
+  if not okList or not list then return end
+  for _, pc in ipairs(list) do
+    if pc and pc:IsValid() then
+      local okPawn, veh = pcall(function() return pc.Pawn end)
+      if okPawn and veh and veh:IsValid() then
+        local okW, wheels = pcall(function() return veh.Wheels end)
+        if okW and wheels then
+          for wi = 1, #wheels do
+            local wheel = wheels[wi]
+            local okWv, wv = pcall(function() return wheel and wheel:IsValid() end)
+            if okWv and wv then
+              local wheelSlot = nil
+              pcall(function() wheelSlot = wheel.WheelSlotIndex end)
+              -- map wheel component -> tire part slot: wheels are ordered;
+              -- assume wheel index i maps to Tire(i-1) = 19 + i - 1 for the
+              -- first four; extra wheels (trailers, 6+ axle) clamp to list end
+              local partSlot = 19 + (wi - 1)
+              if partSlot > 38 then partSlot = 38 end
+              for _, pr in ipairs(pads) do
+                local inPad = wheelInPad(pr.pad, wheel)
+                local key = episodeKey(veh, wi, pr.pad)
+                if inPad and not episodes[key] then
+                  openEpisode(key, veh, wi, pr.pad, partSlot)
+                elseif not inPad and episodes[key] then
+                  closeEpisode(key, "exit")
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
 end
 
 --------------------------------------------------------------------------
@@ -397,11 +633,17 @@ local function registerEndpoints()
   local reg = webserver.registerHandler
 
   reg("/debug/spikepad", "GET", function(session)
+    local eps = {}
+    for key, ep in pairs(episodes) do
+      table.insert(eps, { key = key, seq = ep.seq, slot = ep.partSlot, lastDamage = ep.lastDamage })
+    end
     return {
       config = cfg,
       counters = counters,
       hookStatus = hookStatus,
       liveRegistryCount = registryKeys(),
+      liveDirectPads = (function() local n = 0 for _ in pairs(directPads) do n = n + 1 end return n end)(),
+      openEpisodes = eps,
       suspects = dumpSuspects(),
       status = "ok",
     }
@@ -494,6 +736,14 @@ local function boot()
   -- staging 2026-09-28; the direct call demonstrably works).
   pcall(ensureSweepLoop)
   pcall(sweep)
+
+  -- contact/episode engine loop (game thread, 250ms)
+  LoopInGameThreadWithDelay(contactTickMs, function()
+    local okC, errC = pcall(contactTick)
+    if not okC then log("WARNING", "contactTick error: " .. tostring(errC)) end
+    return false
+  end)
+  log("INFO", "contact tick loop started (" .. contactTickMs .. "ms)")
 
   log("INFO", "module loaded")
 end
