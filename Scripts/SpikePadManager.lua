@@ -293,6 +293,13 @@ end
 --------------------------------------------------------------------------
 local function sweep()
   counters.sweepRuns = counters.sweepRuns + 1
+  -- boot-order self-heal: at boot the pad BP class isn't loaded yet, so the
+  -- Begin-overlap hook registration fails (UFunction::Func 0x0). Retry it on
+  -- every sweep until it sticks (once registered, RegisterHook is a no-op risk
+  -- — guard with hookStatus).
+  if hookStatus.begin ~= "registered" then
+    pcall(registerPadHooks)
+  end
   -- prune dead entries
   for barrier in pairs(registry) do
     local okValid, valid = pcall(function() return barrier:IsValid() end)
