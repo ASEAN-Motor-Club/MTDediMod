@@ -48,6 +48,7 @@ local counters = {
   sweepRuns = 0,
 }
 local hookStatus = { begin = "?", finish = "?" }
+local dumpSuspects ---@type function -- declared later; forward for registerBarrier
 
 local function registryKeys()
   local n = 0
@@ -136,8 +137,16 @@ local function registerBarrier(barrier)
     registry[barrier].spawner = (pc and pc:IsValid()) and safeName(pc) or "AI/native"
   end)
   if not okSp then registry[barrier].spawner = "<read-error>" end
-  log("INFO", string.format("barrier spawn: %s at %s spawner=%s (live=%d)",
-    safeName(barrier), safeLoc(barrier), registry[barrier].spawner, registryKeys()))
+  -- P5 instrument: snapshot the suspect list at spawn + keep it in the entry
+  local snap = dumpSuspects()
+  registry[barrier].suspectsAtSpawn = snap
+  log("INFO", string.format("barrier spawn: %s at %s spawner=%s suspects=%d (live=%d)",
+    safeName(barrier), safeLoc(barrier), registry[barrier].spawner,
+    snap.suspectCount or -1, registryKeys()))
+  for _, s in ipairs(snap.suspects or {}) do
+    log("INFO", string.format("  suspect@spawn #%d: %s lastSeen=%s",
+      s.index, tostring(s.character or s.error), tostring(s.location)))
+  end
 end
 
 --------------------------------------------------------------------------
@@ -178,25 +187,48 @@ local function firstPlayerVehicle()
   return veh, nil
 end
 
-local function dumpVehicleParts()
-  local veh, err = firstPlayerVehicle()
-  if not veh then return { error = err } end
-  local parts = {}
-  local okArr, arr = pcall(function() return veh.Net_Parts end)
-  if not okArr or not arr then return { error = "Net_Parts unreadable" } end
-  local n = #arr
-  for i = 1, n do
-    pcall(function()
-      local p = arr[i]
-      table.insert(parts, {
-        index = i,
-        key = p.Key and tostring(p.Key) or "<no-key>",
-        slot = tostring(p.Slot),
-        damage = p.Damage,
-      })
-    end)
+local function dumpVehicleParts(nameFilter)
+  local okList, list = pcall(FindAllOf, "MotorTownPlayerController")
+  if not okList or not list then return { error = "no player controllers" } end
+  local out = {}
+  for _, pc in ipairs(list) do
+    if pc and pc:IsValid() then
+      local name = "<unknown>"
+      pcall(function()
+        local ps = pc.PlayerState
+        if ps and ps:IsValid() then
+          local fs = ps:GetPlayerName()
+          name = type(fs) == "userdata" and fs:ToString() or tostring(fs)
+        end
+      end)
+      if not nameFilter or nameFilter == "" or string.find(name, nameFilter, 1, true) then
+        local veh = pc.Pawn
+        if veh and veh:IsValid() then
+          local parts = {}
+          local okArr, arr = pcall(function() return veh.Net_Parts end)
+          if okArr and arr then
+            local n = #arr
+            for i = 1, n do
+              pcall(function()
+                local p = arr[i]
+                local keyStr = "<no-key>"
+                pcall(function() keyStr = p.Key:ToString() end)
+                table.insert(parts, {
+                  index = i,
+                  key = keyStr,
+                  slot = tostring(p.Slot),
+                  damage = p.Damage,
+                })
+              end)
+            end
+            table.insert(out, { player = name, vehicle = safeName(veh), partCount = #arr, parts = parts })
+          end
+        end
+      end
+    end
   end
-  return { vehicle = safeName(veh), partCount = n, parts = parts }
+  if #out == 0 then return { error = "no matching player vehicle", filter = nameFilter } end
+  return { vehicles = out, count = #out }
 end
 
 --------------------------------------------------------------------------
@@ -220,8 +252,13 @@ local function registerPadHooks()
     counters.beginOverlaps = counters.beginOverlaps + 1
     if cfg.verboseOverlaps then
       local actor = OtherActor:get()
-      log("INFO", string.format("pad BEGIN overlap #%d other=%s",
-        counters.beginOverlaps, actor and safeName(actor) or "<nil>"))
+      local snap = dumpSuspects()
+      log("INFO", string.format("pad BEGIN overlap #%d other=%s suspects=%d",
+        counters.beginOverlaps, actor and safeName(actor) or "<nil>",
+        snap.suspectCount or -1))
+      for _, s in ipairs(snap.suspects or {}) do
+        log("INFO", string.format("  suspect@overlap #%d: %s", s.index, tostring(s.character or s.error)))
+      end
     end
   end)
   hookStatus.begin = okB and "registered" or ("FAILED: " .. tostring(errB))
@@ -396,7 +433,8 @@ local function registerEndpoints()
   end)
 
   reg("/debug/spikepad/vehicle", "GET", function(session)
-    return dumpVehicleParts()
+    local q = session.queryComponents or {}
+    return dumpVehicleParts(q.player or q.name)
   end)
 
   reg("/debug/spikepad/setdamage", "POST", function(session)
