@@ -1,15 +1,16 @@
 ---CargoBlockManager.lua
----Backend-pushed illicit-cargo KEY BLOCK SET (freeman 2026-09-29).
+---Backend-pushed cargo KEY BLOCK SET (freeman 2026-09-29).
 ---
----The mod is dumb: it keeps an IN-MEMORY set of cargo keys that must never
----stay strapped. Written only via the webserver endpoints below; the backend
----(or the operator) pushes the list directly. The reference list is
----ILLICIT_CARGO_KEYS in amc-backend's special_cargo.py.
+---The mod is dumb and domain-agnostic: it keeps an IN-MEMORY set of cargo
+---keys that must not stay strapped, written only by the pusher via the
+---webserver endpoints below. The mod does not know or care WHY a key is
+---blocked (illicit cargo, admin hold, anything else) — the pusher composes
+---the list and owns the meaning of the keys.
 ---
 ---State is memory-only by design: the pusher is the source of truth, so a
 ---game restart (or hot reload) clears the set until the list is pushed again.
 ---
----Enforcement lives in IllicitCargoManager.lua (ServerStrapCargo hook):
+---Enforcement lives in StrapBlockManager.lua (ServerStrapCargo hook):
 ---new strap attempts on a blocked key are unstrapped immediately. Already
 ---strapped cargo is NOT swept — only new strap attempts are enforced.
 

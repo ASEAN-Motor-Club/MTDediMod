@@ -1,7 +1,7 @@
----IllicitCargoManager.lua
----Force-unstrap illicit cargo on ServerStrapCargo (freeman 2026-09-29).
+---StrapBlockManager.lua
+---Force-unstrap cargo whose key is on the backend-pushed block list (freeman 2026-09-29). The mod is domain-agnostic: it only prevents certain cargo keys from staying strapped — it does not know or care why the keys are blocked..
 ---
----Mechanism: UE4SS hooks cannot cancel a server RPC, so the strap is allowed
+--Mechanism: UE4SS hooks cannot cancel a server RPC, so the strap is allowed
 ---to land and the POST-callback immediately calls ServerUnstrapCargo on the
 ---same PC. Two-callback RegisterHook form (same pattern as Webclient.lua).
 ---Registration uses a SafeRegisterHook wrapper (a bad top-level hook aborts
@@ -18,7 +18,7 @@ local cargoBlockManager = require("CargoBlockManager")
 local function SafeRegisterHook(path, preFn, postFn)
   local ok, err = pcall(RegisterHook, path, preFn, postFn)
   if not ok then
-    LogOutput("WARNING", "[IllicitCargo] RegisterHook FAILED for %s: %s", tostring(path), tostring(err))
+    LogOutput("WARNING", "[StrapBlock] RegisterHook FAILED for %s: %s", tostring(path), tostring(err))
   end
   return ok
 end
@@ -55,7 +55,7 @@ local function GetCargoKey(cargo)
   return key
 end
 
----Pre-hook marks illicit straps in this per-call pending table (keyed on the
+---Pre-hook marks block-list straps in this per-call pending table (keyed on the
 ---cargo's full instance name) so the post-hook knows which call to act on.
 local pendingStraps = {}
 
@@ -79,11 +79,11 @@ hookStatus = SafeRegisterHook(
 
       local cargoName = cargo:GetFullName()
       pendingStraps[cargoName] = key
-      LogOutput("INFO", "[IllicitCargo] Strap attempt on blocked cargo %s by %s — unstrapping",
+      LogOutput("INFO", "[StrapBlock] Strap attempt on blocked cargo %s by %s — unstrapping",
         key, GetPlayerName(playerController))
     end)
     if not ok then
-      LogOutput("ERROR", "[IllicitCargo] Pre-hook error: %s", tostring(err))
+      LogOutput("ERROR", "[StrapBlock] Pre-hook error: %s", tostring(err))
     end
   end,
   function(PC, Cargo)
@@ -106,11 +106,11 @@ hookStatus = SafeRegisterHook(
       end)
       if unstrapOk then
         cargoBlockManager.RecordStrapBlocked()
-        LogOutput("INFO", "[IllicitCargo] Unstrapped blocked cargo %s for %s",
+        LogOutput("INFO", "[StrapBlock] Unstrapped blocked cargo %s for %s",
           key, GetPlayerName(playerController))
       else
         cargoBlockManager.RecordUnstrapFailure()
-        LogOutput("ERROR", "[IllicitCargo] ServerUnstrapCargo FAILED for %s: %s",
+        LogOutput("ERROR", "[StrapBlock] ServerUnstrapCargo FAILED for %s: %s",
           key, tostring(unstrapErr))
       end
 
@@ -118,19 +118,19 @@ hookStatus = SafeRegisterHook(
       local playerGuid = nil
       pcall(function() playerId = GetPlayerUniqueId(playerController) end)
       pcall(function() playerGuid = GetPlayerGuid(playerController) end)
-      EnqueueWebhookEvent("IllicitStrapBlocked", {
+      EnqueueWebhookEvent("StrapBlocked", {
         PlayerId = playerId,
         CharacterGuid = playerGuid,
         CargoKey = key,
       })
     end)
     if not ok then
-      LogOutput("ERROR", "[IllicitCargo] Post-hook error: %s", tostring(err))
+      LogOutput("ERROR", "[StrapBlock] Post-hook error: %s", tostring(err))
     end
   end
 )
 
-LogOutput("INFO", "[IllicitCargo] Loaded (hookStatus=%s)", hookStatus and "registered" or "failed")
+LogOutput("INFO", "[StrapBlock] Loaded (hookStatus=%s)", hookStatus and "registered" or "failed")
 
 return {
   GetHookStatus = function() return hookStatus end,
