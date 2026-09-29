@@ -439,19 +439,17 @@ local discoveryDone = false --- one-shot FindAllOf sweep (NotifyOnNewObject fall
 local function livePads()
   -- NotifyOnNewObject does not fire on this build (RPManager caveat, verified
   -- live 2026-09-29: a spawned pad produced no registerPad log). Fallback:
-  -- discover pads by class scan, repeated until it finds at least one.
-  if not discoveryDone then
-    local okF, found = pcall(FindAllOf, "MTSpikePad")
-    if okF and found then
-      for _, pad in ipairs(found) do
-        local okP, validP = pcall(function() return pad and pad:IsValid() end)
-        if okP and validP then
-          directPads[pad] = true
-          counters.padSpawns = counters.padSpawns + 1
-          log("INFO", "pad discovered (class scan): " .. safeName(pad) .. " " .. safeLoc(pad))
-        end
+  -- discover pads by class scan — rescan continuously (cheap, few actors) and
+  -- add any unknown instance; prune handles removals.
+  local okF, found = pcall(FindAllOf, "MTSpikePad")
+  if okF and found then
+    for _, pad in ipairs(found) do
+      local okP, validP = pcall(function() return pad and pad:IsValid() end)
+      if okP and validP and not directPads[pad] then
+        directPads[pad] = true
+        counters.padSpawns = counters.padSpawns + 1
+        log("INFO", "pad discovered (class scan): " .. safeName(pad) .. " " .. safeLoc(pad))
       end
-      discoveryDone = next(directPads) ~= nil
     end
   end
   local pads = {}
@@ -583,7 +581,7 @@ end
 --------------------------------------------------------------------------
 -- Spawn pad directly (testing without a police officer)
 --------------------------------------------------------------------------
-local function spawnPadAt(x, y, z)
+local function spawnPadAt(x, y, z, yaw)
   local okRes, res = pcall(function()
     local gr = FindFirstOf("MTGameResource")
     if not gr or not gr:IsValid() then return { error = "no MTGameResource" } end
@@ -592,17 +590,18 @@ local function spawnPadAt(x, y, z)
     local world = UEHelpers.GetWorld()
     if not world or not world:IsValid() then return { error = "no world" } end
     local loc = { X = x or 0, Y = y or 0, Z = z or 200 }
+    local rot = { Roll = 0, Pitch = 0, Yaw = tonumber(yaw) or 0 }
     -- TSubclassOf wrapper: adapt to the usable UClass (direct / Get() / GetClass())
     local actor = nil
-    local okSpawn = pcall(function() actor = world:SpawnActor(cls, loc, { Roll = 0, Pitch = 0, Yaw = 0 }) end)
+    local okSpawn = pcall(function() actor = world:SpawnActor(cls, loc, rot) end)
     if not okSpawn or not actor then
       local okGet, clsU = pcall(function() return cls:Get() end)
       if okGet and clsU and clsU:IsValid() then
-        pcall(function() actor = world:SpawnActor(clsU, loc, { Roll = 0, Pitch = 0, Yaw = 0 }) end)
+        pcall(function() actor = world:SpawnActor(clsU, loc, rot) end)
       else
         local okGC, clsU2 = pcall(function() return cls:GetClass() end)
         if okGC and clsU2 and clsU2:IsValid() then
-          pcall(function() actor = world:SpawnActor(clsU2, loc, { Roll = 0, Pitch = 0, Yaw = 0 }) end)
+          pcall(function() actor = world:SpawnActor(clsU2, loc, rot) end)
         end
       end
     end
@@ -666,7 +665,7 @@ local function registerEndpoints()
 
   reg("/debug/spikepad/spawn", "POST", function(session)
     local body = parseBody(session)
-    return spawnPadAt(tonumber(body.x), tonumber(body.y), tonumber(body.z))
+    return spawnPadAt(tonumber(body.x), tonumber(body.y), tonumber(body.z), body.yaw)
   end)
 
   reg("/debug/spikepad/disarmnow", "POST", function(session)
