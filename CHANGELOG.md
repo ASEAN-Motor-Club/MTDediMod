@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.42.0-rc16] - 2026-09-29
+
+#### Added
+- Cargo strap blocking (`StrapBlockManager.lua`): a backend-pushed blocked cargo KEY list (`POST/GET /cargo/blocked_keys`, full replace, memory-only) — strap attempts on a blocked key land and are immediately unstrapped via `ServerUnstrapCargo` from the post-callback of a two-callback `ServerStrapCargo` hook. Domain-agnostic: the mod only knows which cargo keys must not stay strapped, not why. Webhook event `StrapBlocked`; malformed list bodies are rejected (400) fail-closed.
+
 ### [server/v0.42.0-rc15] - 2026-09-28
 
 #### Changed
