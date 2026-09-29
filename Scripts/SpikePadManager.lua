@@ -49,6 +49,9 @@ local counters = {
 }
 local hookStatus = { begin = "?", finish = "?" }
 local dumpSuspects ---@type function -- declared later; forward for registerBarrier
+-- declared early: referenced by sweep (prune) and livePads (registry)
+local directPads = {} --- padKey -> {actor = pad}; key = full instance name @ loc
+local episodes = {}
 
 local function registryKeys()
   local n = 0
@@ -309,13 +312,14 @@ local function sweep()
     end
   end
   -- prune dead direct pads + their episodes
-  for pad in pairs(directPads) do
-    local okValid, valid = pcall(function() return pad:IsValid() end)
+  for padKey, meta in pairs(directPads) do
+    local okValid, valid = pcall(function()
+      return meta.actor and meta.actor:IsValid() and meta.actor:GetFullName() == padKey
+    end)
     if not okValid or not valid then
-      directPads[pad] = nil
-      discoveryDone = false -- rescan on next contact tick
+      directPads[padKey] = nil
       for key in pairs(episodes) do
-        if string.find(key, safeName(pad), 1, true) then episodes[key] = nil end
+        if string.find(key, padKey, 1, true) then episodes[key] = nil end
       end
     end
   end
@@ -373,7 +377,6 @@ end
 -- suspect (AMTPolice.Net_Suspects membership) — innocents get bump only.
 --------------------------------------------------------------------------
 
-local episodes = {} -- key: tostring(veh) .. ":" .. wheelIndex .. ":" .. tostring(pad)
 local episodeSeq = 0
 local contactTickMs = 250
 
@@ -432,10 +435,7 @@ local function applyTireDamage(veh, partSlot, value, reason)
   return ok
 end
 
----All live pad actors (from the registry — barrier spawn path only).
-local directPads = {} --- pads spawned directly (no barrier)
-local discoveryDone = false --- one-shot FindAllOf sweep (NotifyOnNewObject fallback)
-
+---All live pad actors: registry path + direct-spawn class scan
 local function livePads()
   -- NotifyOnNewObject does not fire on this build (RPManager caveat, verified
   -- live 2026-09-29: a spawned pad produced no registerPad log). Fallback:
@@ -445,10 +445,16 @@ local function livePads()
   if okF and found then
     for _, pad in ipairs(found) do
       local okP, validP = pcall(function() return pad and pad:IsValid() end)
-      if okP and validP and not directPads[pad] then
-        directPads[pad] = true
-        counters.padSpawns = counters.padSpawns + 1
-        log("INFO", "pad discovered (class scan): " .. safeName(pad) .. " " .. safeLoc(pad))
+      if okP and validP then
+        -- key by full instance name: UObject userdata identity is NOT stable
+        -- across FindAllOf calls on this build (dedupe by address re-added
+        -- the same pad every scan, ballooning padSpawns)
+        local padKey = safeName(pad) .. "@" .. safeLoc(pad)
+        if not directPads[padKey] then
+          directPads[padKey] = { actor = pad }
+          counters.padSpawns = counters.padSpawns + 1
+          log("INFO", "pad discovered (class scan): " .. padKey)
+        end
       end
     end
   end
@@ -467,10 +473,12 @@ local function livePads()
       end
     end
   end
-  -- also directly-spawned pads (no barrier): tracked via NotifyOnNewObject
-  for pad in pairs(directPads) do
-    local okP, validP = pcall(function() return pad and pad:IsValid() end)
-    if okP and validP then table.insert(pads, { barrier = nil, pad = pad }) end
+  -- also directly-spawned pads (no barrier): class-scan registry
+  for padKey, meta in pairs(directPads) do
+    local okP, validP = pcall(function()
+      return meta.actor and meta.actor:IsValid() and meta.actor:GetFullName() == padKey
+    end)
+    if okP and validP then table.insert(pads, { barrier = nil, pad = meta.actor }) end
   end
   return pads
 end
@@ -549,9 +557,13 @@ local function contactTick()
       local okPawn, veh = pcall(function() return pc.Pawn end)
       if okPawn and veh and veh:IsValid() then
         local okW, wheels = pcall(function() return veh.Wheels end)
+        -- TArray userdata wraps a UArray; iterate with TArrayNum/Get instead
+        -- of # (which errors on UObject userdata on this UE4SS build)
         if okW and wheels then
-          for wi = 1, #wheels do
-            local wheel = wheels[wi]
+          local okN, nWheels = pcall(function() return wheels:Number() end)
+          if not okN or not nWheels then nWheels = 0 end
+          for wi = 0, nWheels - 1 do
+            local okWheel, wheel = pcall(function() return wheels:GetRef(wi) end)
             local okWv, wv = pcall(function() return wheel and wheel:IsValid() end)
             if okWv and wv then
               local wheelSlot = nil
@@ -559,7 +571,7 @@ local function contactTick()
               -- map wheel component -> tire part slot: wheels are ordered;
               -- assume wheel index i maps to Tire(i-1) = 19 + i - 1 for the
               -- first four; extra wheels (trailers, 6+ axle) clamp to list end
-              local partSlot = 19 + (wi - 1)
+              local partSlot = 19 + wi
               if partSlot > 38 then partSlot = 38 end
               for _, pr in ipairs(pads) do
                 local inPad = wheelInPad(pr.pad, wheel)
@@ -641,7 +653,8 @@ local function registerEndpoints()
       counters = counters,
       hookStatus = hookStatus,
       liveRegistryCount = registryKeys(),
-      liveDirectPads = (function() local n = 0 for _ in pairs(directPads) do n = n + 1 end return n end)(),
+      liveDirectPads = (function() local n = 0 for k,_ in pairs(directPads) do n = n + 1 end return n end)(),
+      directPads = (function() local t={} for k,_ in pairs(directPads) do table.insert(t,k) end return t end)(),
       openEpisodes = eps,
       suspects = dumpSuspects(),
       status = "ok",
@@ -672,7 +685,31 @@ local function registerEndpoints()
     local body = parseBody(session)
     if body.method then cfg.disarmMethod = tostring(body.method) end
     local live = sweep()
-    return { method = cfg.disarmMethod, live = live, status = "ok" }
+    -- also apply to live discovered pads (spawn-time disarm only covers new)
+    local applied = {}
+    for _, pr in ipairs(livePads()) do
+      local okA, note = disarmPad(pr.pad)
+      table.insert(applied, { pad = safeName(pr.pad), ok = okA, note = tostring(note) })
+    end
+    return { method = cfg.disarmMethod, live = live, applied = applied, status = "ok" }
+  end)
+
+  reg("/debug/spikepad/despawn", "POST", function(session)
+    local body = parseBody(session)
+    local target = body.name -- optional: substring match; absent = all direct pads
+    local destroyed = {}
+    for padKey, meta in pairs(directPads) do
+      if not target or string.find(padKey, target, 1, true) then
+        local okD, errD = pcall(function() meta.actor:K2_DestroyActor() end)
+        if okD then
+          directPads[padKey] = nil
+          table.insert(destroyed, padKey)
+        else
+          table.insert(destroyed, "FAILED " .. padKey .. ": " .. tostring(errD))
+        end
+      end
+    end
+    return { destroyed = destroyed, status = "ok" }
   end)
 
   reg("/debug/spikepad/hooktest", "POST", function(session)
