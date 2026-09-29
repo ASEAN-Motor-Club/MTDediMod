@@ -209,10 +209,45 @@ local function dumpVehicleParts(nameFilter)
         local veh = pc.Pawn
         if veh and veh:IsValid() then
           local parts = {}
+    local wheelsInfo = { hasProp = false, count = -1, items = {}, errs = {} }
+    pcall(function()
+      local okProp = pcall(function() return veh.Wheels end)
+      wheelsInfo.hasProp = okProp
+      local ws = veh.Wheels
+      local okN, n = pcall(function() return #ws end)
+      wheelsInfo.count = okN and n or -1
+      if not okN then
+        -- try UEHelpers getArray Num
+        local okN2, n2 = pcall(function() return ws:GetArrayNum() end)
+        if okN2 then wheelsInfo.count = n2; n = n2 end
+      end
+      for wi = 1, (n or 0) do
+        local okW2, w = pcall(function() return ws[wi] end)
+        if not okW2 then
+          wheelsInfo.errs[#wheelsInfo.errs+1] = "idx"..wi
+          w = nil
+        end
+        wheelsInfo.errs[#wheelsInfo.errs+1] = "raw"..tostring(w)..(w and ("valid:"..tostring(pcall(function() return w:IsValid() end))) or "nil")
+        if w and w:IsValid() then
+          local okL, L = pcall(function() return w:K2_GetComponentLocation() end)
+          if not okL then
+            local okA, LA = pcall(function() return w:K2_GetActorLocation() end)
+            okL, L = okA, LA
+            if not okA then wheelsInfo.errs[#wheelsInfo.errs+1] = "loc:"..tostring(LA) end
+          end
+          if okL and L then
+            wheelsInfo.items[#wheelsInfo.items + 1] = { i = wi, loc = tostring(L) }
+          else
+            wheelsInfo.items[#wheelsInfo.items + 1] = { i = wi, loc = "<loc-fail>" }
+          end
+        end
+      end
+    end)
           local okArr, arr = pcall(function() return veh.Net_Parts end)
           if okArr and arr then
-            local n = #arr
-            for i = 1, n do
+            local okN, nArr = pcall(function() return #arr end)
+            if not okN or not nArr then nArr = 0 end
+            for i = 1, nArr do
               pcall(function()
                 local p = arr[i]
                 local keyStr = "<no-key>"
@@ -225,7 +260,7 @@ local function dumpVehicleParts(nameFilter)
                 })
               end)
             end
-            table.insert(out, { player = name, vehicle = safeName(veh), partCount = #arr, parts = parts })
+            table.insert(out, { player = name, vehicle = safeName(veh), partCount = nArr, parts = parts, wheels = wheelsInfo })
           end
         end
       end
@@ -314,7 +349,7 @@ local function sweep()
   -- prune dead direct pads + their episodes
   for padKey, meta in pairs(directPads) do
     local okValid, valid = pcall(function()
-      return meta.actor and meta.actor:IsValid() and meta.actor:GetFullName() == padKey
+      return meta.actor and meta.actor:IsValid()
     end)
     if not okValid or not valid then
       directPads[padKey] = nil
@@ -476,7 +511,7 @@ local function livePads()
   -- also directly-spawned pads (no barrier): class-scan registry
   for padKey, meta in pairs(directPads) do
     local okP, validP = pcall(function()
-      return meta.actor and meta.actor:IsValid() and meta.actor:GetFullName() == padKey
+      return meta.actor and meta.actor:IsValid()
     end)
     if okP and validP then table.insert(pads, { barrier = nil, pad = meta.actor }) end
   end
@@ -488,10 +523,13 @@ end
 ---grown slightly for vehicle width, Z ignored (pad is on the road plane).
 local function wheelInPad(pad, wheel)
   local okPL, padLoc = pcall(function() return pad:K2_GetActorLocation() end)
-  local okWL, wheelLoc = pcall(function() return wheel:K2_GetActorLocation() end)
-  if not okPL or not okWL then return false end
-  local dx = math.abs(wheelLoc.X - padLoc.X)
-  local dy = math.abs(wheelLoc.Y - padLoc.Y)
+  local okWL, wheelLoc = pcall(function() return wheel:K2_GetComponentLocation() end)
+  if not okPL or not okWL or not padLoc or not wheelLoc then return false end
+  local px, py = tonumber(padLoc.X), tonumber(padLoc.Y)
+  local wx, wy = tonumber(wheelLoc.X), tonumber(wheelLoc.Y)
+  if not px or not py or not wx or not wy then return false end
+  local dx = math.abs(wx - px)
+  local dy = math.abs(wy - py)
   -- pad collision box ~500cm x 150cm (from BP parse); + 40cm tolerance
   return dx <= 540 and dy <= 190
 end
@@ -560,10 +598,12 @@ local function contactTick()
         -- TArray userdata wraps a UArray; iterate with TArrayNum/Get instead
         -- of # (which errors on UObject userdata on this UE4SS build)
         if okW and wheels then
-          local okN, nWheels = pcall(function() return wheels:Number() end)
-          if not okN or not nWheels then nWheels = 0 end
-          for wi = 0, nWheels - 1 do
-            local okWheel, wheel = pcall(function() return wheels:GetRef(wi) end)
+          local wi = 0
+          local okN2, nWheels = pcall(function() return #wheels end)
+          if okN2 then
+          for wi_i = 1, nWheels do
+            wi = wi_i - 1
+            local okWheel, wheel = pcall(function() return wheels[wi_i] end)
             local okWv, wv = pcall(function() return wheel and wheel:IsValid() end)
             if okWv and wv then
               local wheelSlot = nil
@@ -583,6 +623,7 @@ local function contactTick()
                 end
               end
             end
+          end
           end
         end
       end
