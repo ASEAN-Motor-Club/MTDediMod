@@ -25,7 +25,10 @@
 ---
 ---RPManager.lua consults GetNoTeleportBlocks() / IsBlocked() in the four
 ---server-side movement hooks (ServerTeleportCharacter / ServerTeleportVehicle /
----ServerRespawnCharacter / ServerResetVehicleAt). A full block set blocks
+---ServerRespawnCharacter / ServerResetVehicleAt) plus the roadside-service
+---hook (ServerVehicleExControl, block_roadside_service — wanted players'
+---names are blanked so the [R*] name-match can no longer carry that block).
+---A full block set blocks
 ---UNCONDITIONALLY — the racetrack event-member allowance that applies to
 ---RP-mode players does NOT apply here: the set is deliberate enforcement
 ---(chased-close wanted / admin hold), not an RP immersion rule.
@@ -38,6 +41,7 @@ local BLOCK_KEYS = {
   "block_respawn_character",
   "block_reset_vehicle_keep_cargo",
   "block_reset_vehicle_strip_cargo",
+  "block_roadside_service",
 }
 
 local BLOCK_KEY_SET = {}

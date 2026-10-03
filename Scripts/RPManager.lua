@@ -255,7 +255,14 @@ end)
 SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerVehicleExControl", function(PC, Vehicle, Control)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerVehicleExControl") end
   local playerController = PC:get()
-  if not IsRPPlayer(playerController) then return end
+  -- Name-match backstop removed for wanted players (display name is BLANKED
+  -- while wanted, so IsRPPlayer can no longer see the [R*] tag): roadside
+  -- service for wanted/locked players now rides the GUID-keyed
+  -- block_roadside_service flag pushed by the backend (amc-backend PR #332).
+  if not IsRPPlayer(playerController)
+      and not IsMovementBlocked(playerController, "block_roadside_service") then
+    return
+  end
   -- Event members: roadside service allowed (RaceSetup can enable roadside
   -- towing to garage — races legitimately use it; racetrack allowance)
   if IsInServerEvent(playerController) then return end
