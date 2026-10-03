@@ -419,6 +419,74 @@ local function HandleGetCompanies(session)
   return { data = company }
 end
 
+
+---Convert company depot to JSON serializable table
+---Fields read individually (no nested struct conversion) to avoid the
+---known UE4SS struct-to-table GC crash path.
+---@param depot FMTCompanyDepot
+local function DepotToTable(depot)
+  local data = {}
+
+  data.BuildingGuid = GuidToString(depot.BuildingGuid)
+  data.Name = depot.Name:ToString()
+  data.OwnerCharacterId = CharacterIdToTable(depot.OwnerCharacterId)
+  data.CompanyGuid = GuidToString(depot.CompanyGuid)
+  data.bIsUnderConstruction = depot.bIsUnderConstruction
+  data.Storage = depot.Storage
+  data.StorageMultiplier = depot.StorageMultiplier
+  data.NumActiveVehicles = depot.NumActiveVehicles
+
+  return data
+end
+
+---Get all depots or depots of one company by GUID
+---@param companyGuid string?
+---@param limit integer?
+local function GetDepots(companyGuid, limit)
+  local data = {}
+
+  local gameState = GetMotorTownGameState()
+  if gameState:IsValid() then
+    local comp = gameState.Net_CompanySystem
+    if comp:IsValid() then
+      for i = 1, #comp.Net_Depots, 1 do
+        if limit and limit <= #data then
+          break
+        end
+
+        local depot = comp.Net_Depots[i]
+        if depot:IsValid() then
+          if companyGuid and companyGuid:upper() ~= GuidToString(depot.CompanyGuid) then
+            goto continue
+          end
+
+          table.insert(data, DepotToTable(depot))
+        end
+
+        ::continue::
+      end
+    end
+  end
+
+  return data
+end
+
+---Handle request to get all or specific company's depots
+---@type RequestPathHandler
+local function HandleGetDepots(session)
+  local companyGuid = session.pathComponents[2]
+  local limit = tonumber(session.queryComponents.limit)
+
+  local depots = GetDepots(companyGuid, limit)
+
+  if companyGuid and #depots == 0 then
+    return { message = string.format("Depots for company %s not found", companyGuid) }, nil, 404
+  end
+
+  return { data = depots }
+end
+
 return {
-  HandleGetCompanies = HandleGetCompanies
+  HandleGetCompanies = HandleGetCompanies,
+  HandleGetDepots = HandleGetDepots
 }
