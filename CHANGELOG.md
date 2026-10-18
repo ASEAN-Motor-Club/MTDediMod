@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.43.0-rc1] - 2026-10-18
+
+#### Added
+- Cargo weight fallback (`ResolveCargoUnitWeight` in C++ hooks, `EffectiveCargoWeight` in CargoManager.lua): when the game's replicated `Net_Weight` is 0 (pallet/box-class cargo — 60 of 87 spawnable), report the cargo actor's runtime root-component mass via reflective `GetMass()` in the same `Net_Weight` payload field. Same payload schema, backend unchanged; containers unaffected (always nonzero). Lets the backend weight-banded fraud consensus engage for pallet cargo.
+
 ### [server/v0.42.0-rc16] - 2026-09-29
 
 #### Added
