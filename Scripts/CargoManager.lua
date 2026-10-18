@@ -15,6 +15,23 @@ local function GetDeliverySystem()
   return _deliverySystem ---@type AMTDeliverySystem
 end
 
+---Effective unit weight (kg) of a cargo actor. The game leaves the replicated
+---Net_Weight at 0 for pallet/box-class cargo; the true mass lives on the
+---actor's physics body (stored MassInKgOverride for most, engine-computed
+---from the physical material for beds). Falls back to the root component's
+---runtime GetMass() so the backend fraud model gets the weight the game
+---prices from. Containers always carry a nonzero Net_Weight and never hit
+---the fallback.
+---@param cargo AMTCargo
+---@return number
+local function EffectiveCargoWeight(cargo)
+  local w = cargo.Net_Weight
+  if w ~= nil and w > 0 then return w end
+  local ok, mass = pcall(function() return cargo.RootComponent:GetMass() end)
+  if ok and mass ~= nil and mass > 0 then return mass end
+  return 0
+end
+
 ---Convert FMTNameAndNumber to JSON serializable table
 ---@param nan FMTNameAndNumber
 local function NameAndNumberToTable(nan)
@@ -388,7 +405,7 @@ local function CargoToTable(cargo)
   -- data.DestinationInteractionActor = cargo.DestinationInteractionActor
   data.Net_CargoKey = cargo.Net_CargoKey:ToString()
   data.Net_ColorIndex = cargo.Net_ColorIndex
-  data.Net_Weight = cargo.Net_Weight
+  data.Net_Weight = EffectiveCargoWeight(cargo)
   data.Net_Damage = cargo.Net_Damage
   data.Net_CargoActorFlags = cargo.Net_CargoActorFlags
   -- data.Net_SenderActor = cargo.Net_SenderActor
@@ -422,7 +439,7 @@ local function CargoToTableSummary(cargo)
 
   data.EmptyContainerMass = cargo.EmptyContainerMass
   data.Net_CargoKey = cargo.Net_CargoKey:ToString()
-  data.Net_Weight = cargo.Net_Weight
+  data.Net_Weight = EffectiveCargoWeight(cargo)
   data.Net_Damage = cargo.Net_Damage
   data.Net_CargoActorFlags = cargo.Net_CargoActorFlags
   data.Net_DeliveryId = cargo.Net_DeliveryId
