@@ -116,6 +116,34 @@ static std::pair<std::optional<FVector>, std::optional<std::string>> get_player_
 	return {loc, name};
 }
 
+// Returns the cargo's effective unit weight in kg. The game leaves the
+// replicated Net_Weight at 0 for pallet/box-class cargo (no WeightRange in
+// the Cargos row); the true mass only exists on the spawned actor's physics
+// body (stored MassInKgOverride for most, engine-computed from the physical
+// material for beds). Read the runtime root-component mass via GetMass so
+// the fraud payment model gets the same weight the game prices from.
+// Containers always carry a nonzero Net_Weight, so they never hit the
+// fallback and stay weight-blind by design.
+static std::optional<float> ResolveCargoUnitWeight(UObject* cargo, const float* NetWeight)
+{
+	if (!cargo) return std::nullopt;
+	if (NetWeight && *NetWeight > 0.0f) return *NetWeight;
+
+	auto RootProp = static_cast<FObjectProperty*>(cargo->GetPropertyByNameInChain(STR("RootComponent")));
+	if (!RootProp) return std::nullopt;
+	auto rc_slot = RootProp->ContainerPtrToValuePtr<UObject*>(cargo);
+	if (!rc_slot || *rc_slot == nullptr) return std::nullopt;
+
+	UObject* root = *rc_slot;
+	UFunction* GetMassFn = root->GetFunctionByNameInChain(STR("GetMass"));
+	if (!GetMassFn) return std::nullopt;
+
+	float mass = 0.0f;
+	root->ProcessEvent(GetMassFn, &mass);
+	if (mass > 0.0f) return mass;
+	return std::nullopt;
+}
+
 auto MotorTownMods::on_unreal_init() -> void
 {
 	HookManager::UnregisterAllHooks(); // Prevent duplicate hooks on hot-reload if destructor wasn't fully processed
@@ -191,6 +219,7 @@ auto MotorTownMods::on_unreal_init() -> void
 					Output::send<LogLevel::Warning>(STR("Skipping cargo in ServerCargoArrived hook due to null property."));
 					continue;
 				}
+				const float effective_weight = ResolveCargoUnitWeight(cargo, Weight).value_or(0.0f);
 
 				json::object destination_location_obj;
 				destination_location_obj["X"] = static_cast<int>(std::round(DestinationLocation->X()));
@@ -206,7 +235,7 @@ auto MotorTownMods::on_unreal_init() -> void
 					{"Net_DeliveryId", *DeliveryId},
 					{"Net_Payment", *BasePayment},
 					{"Net_Damage", *Damage},
-					{"Net_Weight", *Weight},
+					{"Net_Weight", effective_weight},
 					{"Net_TimeLeftSeconds", *TimeLeftSeconds},
 					{"Net_DestinationLocation", destination_location_obj},
 					{"Net_SenderAbsoluteLocation", sender_location_obj}
@@ -269,7 +298,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			cargo_obj["Net_CargoKey"] = json::string(to_string(CargoKey->ToString()));
 			if (DeliveryId) cargo_obj["Net_DeliveryId"] = *DeliveryId;
 			if (Damage) cargo_obj["Net_Damage"] = *Damage;
-			if (Weight) cargo_obj["Net_Weight"] = *Weight;
+			if (Weight) cargo_obj["Net_Weight"] = ResolveCargoUnitWeight(cargo, Weight).value_or(0.0f);
 			if (TimeLeftSeconds) cargo_obj["Net_TimeLeftSeconds"] = *TimeLeftSeconds;
 
 			// --- Extract Payment (optional) ---
@@ -374,6 +403,7 @@ auto MotorTownMods::on_unreal_init() -> void
 				Output::send<LogLevel::Warning>(STR("ServerDespawnCargo: missing cargo property\n"));
 				return false;
 			}
+			const float effective_weight = ResolveCargoUnitWeight(cargo, Weight).value_or(0.0f);
 
 			json::object destination_location_obj;
 			destination_location_obj["X"] = static_cast<int>(std::round(DestinationLocation->X()));
@@ -389,7 +419,7 @@ auto MotorTownMods::on_unreal_init() -> void
 			cargo_obj["Net_DeliveryId"] = *DeliveryId;
 			cargo_obj["Net_Payment"] = *BasePayment;
 			cargo_obj["Net_Damage"] = *Damage;
-			cargo_obj["Net_Weight"] = *Weight;
+			cargo_obj["Net_Weight"] = effective_weight;
 			cargo_obj["Net_TimeLeftSeconds"] = *TimeLeftSeconds;
 			cargo_obj["Net_DestinationLocation"] = destination_location_obj;
 			cargo_obj["Net_SenderAbsoluteLocation"] = sender_location_obj;
