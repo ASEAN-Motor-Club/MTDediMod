@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.43.0-rc2] - 2026-10-19
+
+#### Fixed
+- Welded/strapped cargo weight fallback: welded or strapped cargo merges into the carrier's physics body, so `GetMass()` reported vehicle + parts + cargo (Tavan 2672 kg for one 174 kg CornPallet, payment scaling off the inflated weight). Resolution order is now: cargo `BodyInstance.MassInKgOverride` (exact, welding-proof), then unwelded `GetMass()`, then welded `GetMass()` minus carrier self mass (chassis + default parts table generated from gamedata, 165 vehicles). Falls back to the raw combined mass with a warning when implausible - never returns 0, so no false claw path is reintroduced.
+
 ### [server/v0.43.0-rc1] - 2026-10-18
 
 #### Added
