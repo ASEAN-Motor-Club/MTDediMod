@@ -24,12 +24,43 @@ end
 ---the fallback.
 ---@param cargo AMTCargo
 ---@return number
+local massData = require("VehicleMassData")
+
+local function VehicleSelfMass(vehicle)
+  local ok, name = pcall(function() return vehicle:GetClass():GetName() end)
+  if not ok or type(name) ~= "string" then return nil end
+  local base = name:gsub("_C$", "")
+  local entry = massData.vehicles[base]
+  if not entry then return nil end
+  return entry[1] + entry[2]
+end
+
 local function EffectiveCargoWeight(cargo)
   local w = cargo.Net_Weight
   if w ~= nil and w > 0 then return w end
   local ok, mass = pcall(function() return cargo.RootComponent:GetMass() end)
-  if ok and mass ~= nil and mass > 0 then return mass end
-  return 0
+  if not (ok and mass ~= nil and mass > 0) then return 0 end
+
+  -- Welded/strapped cargo merges into the carrier's physics body, so GetMass
+  -- reports vehicle + parts + cargo. Subtract the carrier's estimated self
+  -- mass; fall back to the raw mass when the carrier can't be identified.
+  local parent_ok, attach_parent = pcall(function() return cargo.RootComponent:GetAttachParent() end)
+  if not (parent_ok and attach_parent ~= nil and attach_parent ~= 0) then return mass end
+
+  local owner_ok, vehicle = pcall(function() return attach_parent:GetOwner() end)
+  if not (owner_ok and vehicle ~= nil and vehicle ~= 0) then return mass end
+
+  local self_mass = VehicleSelfMass(vehicle)
+  if not self_mass then
+    LogOutput("WARN", "EffectiveCargoWeight: welded cargo on unknown vehicle %s, returning combined mass %s", tostring(vehicle:GetFullName()), tostring(mass))
+    return mass
+  end
+  local cargo_mass = mass - self_mass
+  if cargo_mass <= 0 then
+    LogOutput("WARN", "EffectiveCargoWeight: welded cargo subtraction implausible (body=%s, self=%s), returning combined mass", tostring(mass), tostring(self_mass))
+    return mass
+  end
+  return cargo_mass
 end
 
 ---Convert FMTNameAndNumber to JSON serializable table
