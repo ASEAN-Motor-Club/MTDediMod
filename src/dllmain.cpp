@@ -124,6 +124,32 @@ static std::pair<std::optional<FVector>, std::optional<std::string>> get_player_
 // the fraud payment model gets the same weight the game prices from.
 // Containers always carry a nonzero Net_Weight, so they never hit the
 // fallback and stay weight-blind by design.
+//
+// Resolution order:
+//  1. BodyInstance.MassInKgOverride on the cargo's own root component — the
+//     static per-cargo mass the game ships for pallet/box cargo. Exact and
+//     unaffected by welding/strapping (which merges the cargo body into the
+//     carrier's aggregate, breaking runtime GetMass).
+//  2. Runtime GetMass when the cargo body is free-standing (not attached).
+//  3. Runtime GetMass minus the carrier's estimated self mass when welded —
+//     best-effort (default-parts estimate; see vehicle_mass_data.h). Only
+//     used when the subtraction is plausible (positive); otherwise the raw
+//     combined mass is returned and a warning is logged.
+#include "vehicle_mass_data.h"
+
+static const MTVehicleSelfMass* FindVehicleSelfMass(const std::string& class_name)
+{
+	std::string base = class_name;
+	if (base.size() > 2 && base.compare(base.size() - 2, 2, "_C") == 0)
+		base.resize(base.size() - 2);
+	for (const auto& entry : kVehicleSelfMasses)
+	{
+		if (base == entry.id)
+			return &entry;
+	}
+	return nullptr;
+}
+
 static std::optional<float> ResolveCargoUnitWeight(UObject* cargo, const float* NetWeight)
 {
 	if (!cargo) return std::nullopt;
@@ -135,13 +161,75 @@ static std::optional<float> ResolveCargoUnitWeight(UObject* cargo, const float* 
 	if (!rc_slot || *rc_slot == nullptr) return std::nullopt;
 
 	UObject* root = *rc_slot;
+
+	// 1) Static mass override on the cargo's own body.
+	auto BodyProp = static_cast<FStructProperty*>(root->GetPropertyByNameInChain(STR("BodyInstance")));
+	if (BodyProp)
+	{
+		void* body = BodyProp->ContainerPtrToValuePtr<void>(root);
+		auto OvrProp = PropertyCache::GetStructField(BodyProp->GetStruct(), STR("MassInKgOverride"));
+		if (body && OvrProp)
+		{
+			auto ovr = OvrProp->ContainerPtrToValuePtr<float>(body);
+			if (ovr && *ovr > 0.0f) return *ovr;
+		}
+	}
+
 	UFunction* GetMassFn = root->GetFunctionByNameInChain(STR("GetMass"));
 	if (!GetMassFn) return std::nullopt;
 
 	float mass = 0.0f;
 	root->ProcessEvent(GetMassFn, &mass);
-	if (mass > 0.0f) return mass;
-	return std::nullopt;
+	if (mass <= 0.0f) return std::nullopt;
+
+	// 2) Free-standing cargo body: the runtime mass is the cargo alone.
+	UObject* attach_parent = nullptr;
+	if (UFunction* AttachParentFn = root->GetFunctionByNameInChain(STR("GetAttachParent")))
+		root->ProcessEvent(AttachParentFn, &attach_parent);
+	if (!attach_parent) return mass;
+
+	// 3) Welded/strapped: GetMass returned the carrier's aggregate body mass.
+	// Walk the attachment chain to the owning vehicle and subtract its
+	// estimated self mass (chassis + default parts).
+	UObject* parent = attach_parent;
+	UObject* vehicle = nullptr;
+	for (int hops = 0; hops < 8 && parent; ++hops)
+	{
+		UObject* owner = nullptr;
+		if (UFunction* OwnerFn = parent->GetFunctionByNameInChain(STR("GetOwner")))
+			parent->ProcessEvent(OwnerFn, &owner);
+		if (!owner) break;
+		vehicle = owner;
+		if (FindVehicleSelfMass(owner->GetClass()->GetName()))
+			break;
+		UObject* next_actor = nullptr;
+		if (UFunction* Fn = owner->GetFunctionByNameInChain(STR("GetAttachParentActor")))
+			owner->ProcessEvent(Fn, &next_actor);
+		parent = next_actor;
+	}
+
+	if (!vehicle)
+	{
+		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo has no resolvable carrier, returning combined mass {}\n"), mass);
+		return mass;
+	}
+
+	const MTVehicleSelfMass* self = FindVehicleSelfMass(vehicle->GetClass()->GetName());
+	if (!self)
+	{
+		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo on unknown vehicle {}, returning combined mass {}\n"), vehicle->GetClass()->GetName(), mass);
+		return mass;
+	}
+
+	const float self_mass = self->chassis_kg + self->default_parts_kg;
+	const float cargo_mass = mass - self_mass;
+	if (cargo_mass <= 0.0f)
+	{
+		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo subtraction implausible (body={}, self={} on {}), returning combined mass\n"), mass, self_mass, vehicle->GetClass()->GetName());
+		return mass;
+	}
+	Output::send<LogLevel::Verbose>(STR("ResolveCargoUnitWeight: welded cargo {} body={} self={} -> {}\n"), vehicle->GetClass()->GetName(), mass, self_mass, cargo_mass);
+	return cargo_mass;
 }
 
 auto MotorTownMods::on_unreal_init() -> void
