@@ -225,7 +225,7 @@ static std::optional<float> ResolveCargoUnitWeight(UObject* cargo, const float* 
 	const MTVehicleSelfMass* self = FindVehicleSelfMass(vehicle);
 	if (!self)
 	{
-		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo on unknown vehicle {}, returning combined mass {}\n"), to_string(vehicle->GetClassPrivate()->GetFullName().c_str()), mass);
+		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo on unknown vehicle {}, returning combined mass {}\n"), vehicle->GetClassPrivate()->GetFullName(), mass);
 		return mass;
 	}
 
@@ -233,10 +233,10 @@ static std::optional<float> ResolveCargoUnitWeight(UObject* cargo, const float* 
 	const float cargo_mass = mass - self_mass;
 	if (cargo_mass <= 0.0f)
 	{
-		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo subtraction implausible (body={}, self={} on {}), returning combined mass\n"), mass, self_mass, to_string(vehicle->GetClassPrivate()->GetFullName().c_str()));
+		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo subtraction implausible (body={}, self={} on {}), returning combined mass\n"), mass, self_mass, vehicle->GetClassPrivate()->GetFullName());
 		return mass;
 	}
-	Output::send<LogLevel::Verbose>(STR("ResolveCargoUnitWeight: welded cargo {} body={} self={} -> {}\n"), to_string(vehicle->GetClassPrivate()->GetFullName().c_str()), mass, self_mass, cargo_mass);
+	Output::send<LogLevel::Verbose>(STR("ResolveCargoUnitWeight: welded cargo {} body={} self={} -> {}\n"), vehicle->GetClassPrivate()->GetFullName(), mass, self_mass, cargo_mass);
 	return cargo_mass;
 }
 
