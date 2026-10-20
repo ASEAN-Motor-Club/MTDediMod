@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.43.0-rc3] - 2026-10-20
+
+#### Fixed
+- Welded-cargo fallback vehicle id lookup used `GetClass()`, which does not exist on RC::Unreal::UObject and broke the rc2 CI build; resolve the id from the class full name's Blueprint leaf instead.
+
 ### [server/v0.43.0-rc2] - 2026-10-19
 
 #### Fixed
