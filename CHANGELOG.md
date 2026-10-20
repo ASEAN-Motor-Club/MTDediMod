@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.43.0-rc4] - 2026-10-20
+
+#### Fixed
+- rc3 build failure: UE4SS's `StringType` is `basic_string<wchar_t>`, so the vehicle-id lookup compiled against `std::u16string` failed; use `std::wstring` and `to_string()` directly.
+
 ### [server/v0.43.0-rc3] - 2026-10-20
 
 #### Fixed
