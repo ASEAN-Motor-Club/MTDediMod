@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.43.0-rc5] - 2026-10-20
+
+#### Fixed
+- rc4 build failure: `Output::send` formats in a wide-char fmt context — narrow `to_string()`-wrapped arguments fail the character-type static assert; pass `GetFullName()` (already `std::wstring`) through unconverted.
+
 ### [server/v0.43.0-rc4] - 2026-10-20
 
 #### Fixed
