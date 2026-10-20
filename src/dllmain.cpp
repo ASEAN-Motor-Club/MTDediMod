@@ -137,11 +137,19 @@ static std::pair<std::optional<FVector>, std::optional<std::string>> get_player_
 //     combined mass is returned and a warning is logged.
 #include "vehicle_mass_data.h"
 
-static const MTVehicleSelfMass* FindVehicleSelfMass(const std::string& class_name)
+static const MTVehicleSelfMass* FindVehicleSelfMass(const UObject* obj)
 {
-	std::string base = class_name;
-	if (base.size() > 2 && base.compare(base.size() - 2, 2, "_C") == 0)
-		base.resize(base.size() - 2);
+	if (!obj) return nullptr;
+	const auto cls = obj->GetClassPrivate();
+	if (!cls) return nullptr;
+	// GetFullName() -> "/Game/.../Vehicles/Tavan.Tavan_C"; take the tail after
+	// the object separator and strip the Blueprint _C suffix.
+	std::u16string full = cls->GetFullName();
+	const size_t dot = full.find_last_of('.');
+	std::u16string leaf = (dot == std::u16string::npos) ? full : full.substr(dot + 1);
+	if (leaf.size() > 2 && leaf.compare(leaf.size() - 2, 2, STR("_C")) == 0)
+		leaf.resize(leaf.size() - 2);
+	const std::string base = to_string(leaf.c_str());
 	for (const auto& entry : kVehicleSelfMasses)
 	{
 		if (base == entry.id)
@@ -200,7 +208,7 @@ static std::optional<float> ResolveCargoUnitWeight(UObject* cargo, const float* 
 			parent->ProcessEvent(OwnerFn, &owner);
 		if (!owner) break;
 		vehicle = owner;
-		if (FindVehicleSelfMass(owner->GetClass()->GetName()))
+		if (FindVehicleSelfMass(owner))
 			break;
 		UObject* next_actor = nullptr;
 		if (UFunction* Fn = owner->GetFunctionByNameInChain(STR("GetAttachParentActor")))
@@ -214,10 +222,10 @@ static std::optional<float> ResolveCargoUnitWeight(UObject* cargo, const float* 
 		return mass;
 	}
 
-	const MTVehicleSelfMass* self = FindVehicleSelfMass(vehicle->GetClass()->GetName());
+	const MTVehicleSelfMass* self = FindVehicleSelfMass(vehicle);
 	if (!self)
 	{
-		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo on unknown vehicle {}, returning combined mass {}\n"), vehicle->GetClass()->GetName(), mass);
+		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo on unknown vehicle {}, returning combined mass {}\n"), to_wstring(to_string(vehicle->GetClassPrivate()->GetFullName())), mass);
 		return mass;
 	}
 
@@ -225,10 +233,10 @@ static std::optional<float> ResolveCargoUnitWeight(UObject* cargo, const float* 
 	const float cargo_mass = mass - self_mass;
 	if (cargo_mass <= 0.0f)
 	{
-		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo subtraction implausible (body={}, self={} on {}), returning combined mass\n"), mass, self_mass, vehicle->GetClass()->GetName());
+		Output::send<LogLevel::Warning>(STR("ResolveCargoUnitWeight: welded cargo subtraction implausible (body={}, self={} on {}), returning combined mass\n"), mass, self_mass, to_wstring(to_string(vehicle->GetClassPrivate()->GetFullName())));
 		return mass;
 	}
-	Output::send<LogLevel::Verbose>(STR("ResolveCargoUnitWeight: welded cargo {} body={} self={} -> {}\n"), vehicle->GetClass()->GetName(), mass, self_mass, cargo_mass);
+	Output::send<LogLevel::Verbose>(STR("ResolveCargoUnitWeight: welded cargo {} body={} self={} -> {}\n"), to_wstring(to_string(vehicle->GetClassPrivate()->GetFullName())), mass, self_mass, cargo_mass);
 	return cargo_mass;
 }
 
