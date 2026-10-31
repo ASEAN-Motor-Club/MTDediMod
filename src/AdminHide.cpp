@@ -1,22 +1,21 @@
 #include "AdminHide.h"
 
-// windows.h defines min/max as macros, which breaks the UE4SS/Unreal headers
-// (std::numeric_limits<T>::max()). Must be set before any include.
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-
-#include <windows.h>
-#include <cstdint>
-#include <cstring>
-
+// UE4SS/Unreal headers must be parsed before windows.h: windows.h defines
+// min/max as macros, which breaks std::numeric_limits<T>::max() inside them.
+// (Same include order as TickProfiler.cpp.)
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <Unreal/UObjectGlobals.hpp>
 #include <Unreal/UClass.hpp>
 #include <Unreal/FProperty.hpp>
+
+// Workaround against multiple 'check' definitions, as in TickProfiler.cpp.
+#pragma push_macro("check")
+#undef check
+#include <windows.h>
+#pragma pop_macro("check")
+
+#include <cstdint>
+#include <cstring>
 
 using namespace RC;
 using namespace RC::Unreal;
