@@ -1,5 +1,14 @@
 #include "AdminHide.h"
 
+// windows.h defines min/max as macros, which breaks the UE4SS/Unreal headers
+// (std::numeric_limits<T>::max()). Must be set before any include.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include <windows.h>
 #include <cstdint>
 #include <cstring>
