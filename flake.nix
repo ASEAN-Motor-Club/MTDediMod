@@ -53,6 +53,9 @@
           llvmPackages.bintools
           llvmPackages.llvm
           rustToolchain
+          # Host C/C++ toolchain: cargo build scripts link with `cc` on the
+          # build host even when the final target is Windows/MSVC.
+          gcc
           git
           xwin
           openssl

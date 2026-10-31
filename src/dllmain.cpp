@@ -22,6 +22,7 @@
 #include "LocationSampler.h"
 #include "TickProfiler.h"
 #include "PropertyCache.h"
+#include "AdminHide.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -244,6 +245,13 @@ auto MotorTownMods::on_unreal_init() -> void
 {
 	HookManager::UnregisterAllHooks(); // Prevent duplicate hooks on hot-reload if destructor wasn't fully processed
 	PropertyCache::Clear(); // Drop stale FProperty* pointers from previous session
+
+	// Optional: force the replicated bIsAdmin flag to false so no client ever
+	// renders the admin star / "(Admin)" suffix. Server-side only, env gated.
+	if (const char* hide = getenv("MOD_HIDE_ADMIN_FLAG"); hide && std::string(hide) == "1")
+	{
+		AdminHide::Install();
+	}
 
 	// Init API server
 	auto server = Webserver::Get();
