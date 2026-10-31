@@ -33,6 +33,7 @@ FetchContent_MakeAvailable(Boost)
 # Source files - listed explicitly for proper compile_commands.json export
 # (file(GLOB) doesn't work reliably with external add_subdirectory)
 set(SRC_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/AdminHide.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dllmain.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/EventManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/EventsRoute.cpp"
@@ -47,6 +48,7 @@ set(SRC_FILES
 )
 
 set(HDR_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/AdminHide.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/dllmain.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/EventManager.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/EventsRoute.h"
