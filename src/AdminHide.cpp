@@ -45,7 +45,6 @@ namespace
     // and no other bool property is affected; the cost is one extra call on the
     // single property that would otherwise replicate.
     constexpr size_t kVTableSlots = 64;
-    constexpr size_t kNetSerializeItemFallback = 0x98; // UE 4.26/4.27
 
     using NetSerializeItemFn = bool (*)(const void* self, void* ar, void* map, void* data, void* meta);
 
@@ -83,12 +82,16 @@ namespace AdminHide
             return false;
         }
 
-        size_t slot_bytes = kNetSerializeItemFallback;
+        // The offset is engine-version specific (4.26/5.0: 0x98, 5.1/5.2: 0xC0,
+        // 5.5: 0xD8 ...). UE4SS fills this map for the detected version; guessing
+        // would patch an unrelated virtual, so refuse to install without it.
         auto it = FProperty::VTableLayoutMap.find(STR("NetSerializeItem"));
-        if (it != FProperty::VTableLayoutMap.end())
+        if (it == FProperty::VTableLayoutMap.end())
         {
-            slot_bytes = it->second;
+            Output::send<LogLevel::Error>(STR("[AdminHide] NetSerializeItem vtable offset unknown; not installing\n"));
+            return false;
         }
+        const size_t slot_bytes = it->second;
 
         auto** vtable = *reinterpret_cast<void***>(prop);
         if (!vtable)
