@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.43.0-rc6] - 2026-10-31
+
+#### Added
+- AdminHide: env-gated (`MOD_HIDE_ADMIN_FLAG=1`) hook that forces `AMotorTownPlayerState.bIsAdmin` to serialize as `false`. Clients never render the admin star or the ` (Admin)` suffix; the server keeps the real value, so the admin panel and every admin RPC keep their authority.
+
+#### Fixed
+- Cross-compile: add `gcc` to the build inputs so cargo build scripts can link on a Linux build host (`cc` not found otherwise).
+
 ### [server/v0.43.0-rc5] - 2026-10-20
 
 #### Fixed
