@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.43.0-rc7] - 2026-11-02
+
+#### Fixed
+- LocationSampler: an empty `PlayerArray` (null data pointer) no longer aborts the sample. The sampler stopped publishing the moment the last player logged out, so `/players/locations` kept serving a frozen snapshot (`seq`/`timestamp_ms` frozen) and every stream surface replayed that departed player as a nameless phantom entry until someone else joined. Empty rosters now publish a normal `count: 0` snapshot at the usual cadence.
+
 ### [server/v0.43.0-rc6] - 2026-10-31
 
 #### Added
