@@ -159,12 +159,20 @@ void LocationSampler::Tick()
     }
 
     auto players = PlayerArrayProp->ContainerPtrToValuePtr<FScriptArray>(gameState);
-    if (!players || !players->GetData()) return;
+    if (!players) return;
 
     auto inner = PlayerArrayProp->GetInner();
     if (!inner) return;
     const int32 elemSize = inner->GetElementSize();
     const int32 n = players->Num();
+
+    // An EMPTY PlayerArray has a null data pointer — that is a valid
+    // zero-player snapshot, not a reason to skip publishing. Bailing out here
+    // left the broadcaster serving the last non-empty snapshot forever: the
+    // feed froze at the moment the final player logged out (frozen seq /
+    // timestamp_ms), and every consumer replayed that departed player as a
+    // nameless phantom entry until someone else joined.
+    if (n > 0 && !players->GetData()) return;
 
     auto snap = std::make_shared<LocationSnapshot>();
     snap->entries.reserve(static_cast<size_t>(std::max(0, n)));
