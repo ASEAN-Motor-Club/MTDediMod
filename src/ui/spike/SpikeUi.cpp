@@ -91,6 +91,14 @@ namespace
 
     bool g_open = true; // start open: a crash on the first frame should be immediate and logged
     bool g_keyHeld = false;
+    // Coarse progress marker for the present detour; the exception filter prints
+    // it so a fault names the call that failed instead of "somewhere in Present".
+    volatile int g_stage = 0;
+    // ImGui's current context is THREAD-LOCAL (imgui.cpp: `thread_local GImGui`).
+    // Present and WndProc can run on different threads, so a fresh context on the
+    // Present thread had no DX12 backend data and NewFrame dereferenced null —
+    // EXCEPTION_ACCESS_VIOLATION at 0x329. One context, made current explicitly.
+    ImGuiContext* g_ctx = nullptr;
     double g_fpsAccum = 0.0;
     int g_fpsFrames = 0;
     int g_totalFrames = 0;
@@ -140,8 +148,9 @@ namespace
 
     LRESULT CALLBACK HookedWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     {
-        if (g_open && g_r.imguiWin32Ready)
+        if (g_open && g_r.imguiWin32Ready && g_ctx)
         {
+            ImGui::SetCurrentContext(g_ctx); // wndproc may run on another thread
             if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam))
             {
                 return 1;
@@ -303,6 +312,7 @@ namespace
 
     void RenderDX12(IDXGISwapChain* swapchain)
     {
+        g_stage = 10;
         IDXGISwapChain3* sc3 = nullptr;
         if (FAILED(swapchain->QueryInterface(__uuidof(IDXGISwapChain3), reinterpret_cast<void**>(&sc3))))
         {
@@ -318,18 +328,23 @@ namespace
         const UINT slot = index % g_r.framesInFlight;
 
         // Wait for the frame that used this allocator slot.
+        g_stage = 11;
         if (g_r.frameFence[slot] != 0 && g_r.fence->GetCompletedValue() < g_r.frameFence[slot])
         {
             g_r.fence->SetEventOnCompletion(g_r.frameFence[slot], g_r.fenceEvent);
             WaitForSingleObject(g_r.fenceEvent, 1000);
         }
 
+        g_stage = 12;
         g_r.alloc[slot]->Reset();
+        g_stage = 13;
         g_r.list->Reset(g_r.alloc[slot], nullptr);
 
+        g_stage = 14;
         ID3D12DescriptorHeap* heaps[] = {g_r.srvHeap};
         g_r.list->SetDescriptorHeaps(1, heaps);
 
+        g_stage = 15;
         D3D12_RESOURCE_BARRIER barrier{};
         barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         barrier.Transition.pResource = g_r.backbuffers[index];
@@ -338,21 +353,28 @@ namespace
         barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
         g_r.list->ResourceBarrier(1, &barrier);
 
+        g_stage = 16;
         g_r.list->OMSetRenderTargets(1, &g_r.rtvHandle[index], FALSE, nullptr);
+        g_stage = 17;
         ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), g_r.list);
 
+        g_stage = 18;
         barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
         barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
         g_r.list->ResourceBarrier(1, &barrier);
 
+        g_stage = 19;
         g_r.list->Close();
+        g_stage = 20;
         ID3D12CommandList* lists[] = {g_r.list};
         g_r.queue12->ExecuteCommandLists(1, lists);
+        g_stage = 21;
         if (FAILED(g_r.queue12->Signal(g_r.fence, ++g_r.fenceValue)))
         {
             RC::Output::send<RC::LogLevel::Warning>(L"[spike] DX12: fence signal failed\n");
         }
         g_r.frameFence[slot] = g_r.fenceValue;
+        g_stage = 0;
 
         SafeRelease(sc3);
     }
@@ -409,13 +431,15 @@ namespace
 
         if (!g_r.imguiWin32Ready)
         {
-            if (!ImGui::GetCurrentContext())
+            if (!g_ctx)
             {
-                ImGui::CreateContext();
+                g_ctx = ImGui::CreateContext();
+                ImGui::SetCurrentContext(g_ctx);
                 ImGuiIO& io = ImGui::GetIO();
                 io.IniFilename = nullptr; // spike: no stray imgui.ini next to the exe
                 io.LogFilename = nullptr;
             }
+            ImGui::SetCurrentContext(g_ctx); // this thread may never have set it
             if (ImGui_ImplWin32_Init(desc.OutputWindow))
             {
                 g_r.imguiWin32Ready = true;
@@ -469,10 +493,12 @@ namespace
 
     void DrawFrame(IDXGISwapChain* swapchain)
     {
+        g_stage = 1;
         ImGuiIO& io = ImGui::GetIO();
         io.MouseDrawCursor = g_open;
 
         ImGui_ImplWin32_NewFrame();
+        g_stage = 2;
         if (g_r.api == Renderer::Api::D3D12)
         {
             ImGui_ImplDX12_NewFrame();
@@ -481,8 +507,10 @@ namespace
         {
             ImGui_ImplDX11_NewFrame();
         }
+        g_stage = 3;
         ImGui::NewFrame();
 
+        g_stage = 4;
         ImGui::SetNextWindowSize(ImVec2(900.0f, 500.0f), ImGuiCond_FirstUseEver);
         ImGui::Begin("AMC spike — S1a");
         ImGui::Text("RHI: %s", g_r.api == Renderer::Api::D3D12 ? "D3D12" : "D3D11");
@@ -497,8 +525,10 @@ namespace
         ImGui::Text("typed: %s", buffer);
         ImGui::End();
 
+        g_stage = 5;
         ImGui::Render();
 
+        g_stage = 6;
         if (g_r.api == Renderer::Api::D3D12)
         {
             RenderDX12(swapchain);
@@ -507,11 +537,16 @@ namespace
         {
             RenderDX11();
         }
+        g_stage = 0;
         ++g_totalFrames;
     }
 
     void PresentBody(IDXGISwapChain* swapchain)
     {
+        if (g_ctx)
+        {
+            ImGui::SetCurrentContext(g_ctx); // present may switch threads (fullscreen, device reset)
+        }
         const bool down = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
         if (down && !g_keyHeld)
         {
@@ -549,22 +584,32 @@ namespace
     }
 
     // Present detour. __try lives in a thin wrapper with no unwinding locals so
-    // clang-cl accepts it.
+    // clang-cl accepts it. The filter records where the fault happened: the
+    // previous build only logged "exception in present detour", which named
+    // nothing.
+    LONG SpikeExceptFilter(EXCEPTION_POINTERS* info)
+    {
+        static bool logged = false;
+        if (!logged)
+        {
+            logged = true;
+            const DWORD code = (info && info->ExceptionRecord) ? info->ExceptionRecord->ExceptionCode : 0;
+            const void* addr = (info && info->ExceptionRecord) ? info->ExceptionRecord->ExceptionAddress : nullptr;
+            RC::Output::send<RC::LogLevel::Error>(
+                L"[spike] fault in present detour: code=0x{:08X} addr={} stage={} overlay disabled\n",
+                static_cast<unsigned>(code), addr, g_stage);
+        }
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+
     HRESULT STDMETHODCALLTYPE HookedPresent(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags)
     {
         __try
         {
             PresentBody(swapchain);
         }
-        __except (EXCEPTION_EXECUTE_HANDLER)
+        __except (SpikeExceptFilter(GetExceptionInformation()))
         {
-            static bool logged = false;
-            if (!logged)
-            {
-                logged = true;
-                RC::Output::send<RC::LogLevel::Error>(
-                    L"[spike] exception in present detour — overlay disabled\n");
-            }
             g_open = false;
         }
 
@@ -704,9 +749,11 @@ namespace SpikeUi
             ImGui_ImplWin32_Shutdown();
             g_r.imguiWin32Ready = false;
         }
-        if (ImGui::GetCurrentContext())
+        if (g_ctx)
         {
-            ImGui::DestroyContext();
+            ImGui::SetCurrentContext(g_ctx);
+            ImGui::DestroyContext(g_ctx);
+            g_ctx = nullptr;
         }
         if (g_r.hwnd && g_r.origWndProc)
         {
