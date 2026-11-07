@@ -554,6 +554,17 @@
                           SCRIPT_COUNT=$(find "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts" -name "*.lua" | wc -l)
                           echo "✓ Copied $SCRIPT_COUNT client Lua scripts"
 
+                          # S1a spike: ship the C++ mod DLL (carries the ImGui overlay).
+                          # Stock client packages are Lua-only; remove this block to
+                          # return to the previous behaviour.
+                          if [ -f "$BUILD_DIR/$MOD_NAME/$MOD_NAME.dll" ]; then
+                            mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/dlls"
+                            cp "$BUILD_DIR/$MOD_NAME/$MOD_NAME.dll" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/dlls/main.dll"
+                            echo "✓ Copied $MOD_NAME.dll -> ue4ss/Mods/$MOD_NAME/dlls/main.dll (SPIKE_UI build)"
+                          else
+                            echo "⚠ Warning: $MOD_NAME.dll not found in $BUILD_DIR/$BUILD_TYPE — client package will be Lua-only"
+                          fi
+
                           # Copy enabled.txt
                           if [ -f "$LUA_SCRIPTS_DIR/enabled.txt" ]; then
                             cp "$LUA_SCRIPTS_DIR/enabled.txt" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/enabled.txt"

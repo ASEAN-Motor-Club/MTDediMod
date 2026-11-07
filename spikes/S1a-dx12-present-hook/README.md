@@ -59,12 +59,16 @@ nix run --no-update-lock-file .#build-client
 
 ## Install for the test
 
-The client package does **not** ship the C++ mod DLL (scripts only). Add it:
+The spike branch also ships the C++ mod DLL inside the client package (stock
+packages are Lua-only), so the artefact is directly installable:
 
-1. Back up the existing tree, then place the built DLL at
-   `...\MotorTown\Binaries\Win64\ue4ss\Mods\MotorTownClientMod\dlls\main.dll`
-   (create `dlls\` if absent; `enabled.txt` already exists from the package).
-2. Launch normally — **DX12**, frame generation / DLSS off.
+1. Take `MotorTownClientMod-package.zip` from the workflow run artefact
+   (Actions → run → `client-mod-package`).
+2. Replace your existing client-mod files with it — the DLL lands at
+   `...\MotorTown\Binaries\Win64\ue4ss\Mods\MotorTownClientMod\dlls\main.dll`,
+   next to the usual `Scripts\` folder and `enabled.txt`.
+3. Launch normally — **DX12**, frame generation / DLSS off.
+4. Keep the previous package zip around: reverting is reinstalling the old one.
 
 ## Tester script (Meehoi, then freeman)
 
