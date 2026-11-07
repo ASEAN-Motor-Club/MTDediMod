@@ -112,6 +112,19 @@ packages are Lua-only), so the artefact is directly installable:
 - DX11 path is written but untested; that is S1b.
 - No D3D12 debug-layer validation was run (layer is absent on the test machine).
 
+## Research already done for the follow-on spikes
+
+- **S3 (input capture)** — the functions exist and are already typed for Lua:
+  `AController:SetIgnoreMoveInput` / `ResetIgnoreMoveInput`
+  (`types/Engine.lua:872-877`), `APlayerController.bShowMouseCursor`
+  (`types/Engine.lua:2012`), and `UWidgetBlueprintLibrary:SetInputMode_UIOnlyEx`
+  / `SetInputMode_GameOnly` (`types/UMG.lua:2916-2925`) if a focus target turns
+  out to be needed.
+- **S4 (Lua bridge)** — the mod already keeps the main Lua state:
+  `LuaHttpServer::Get()->SetLuaState(main_lua.get_lua_state())`
+  (`src/dllmain.cpp:1485`). C++ can push a global on that state instead of
+  walking the VM itself.
+
 ## Verdict
 
 _To be filled in after the tester round — VALIDATED / PARTIAL / INVALIDATED with
