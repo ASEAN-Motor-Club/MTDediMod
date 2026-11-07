@@ -42,6 +42,19 @@ jobs:
           submodules: recursive
           token: ${{ secrets.UEPSEUDO_PAT }}
 
+      - name: Stash UE4SS source (submodules included) for local builds
+        # UEPseudo is private, so this tarball is the only way a workstation can
+        # reproduce the build without holding UEPSEUDO_PAT. Retention is short on
+        # purpose; it is a build input, not a release artefact.
+        run: tar czf ue4ss-src.tgz -C .ue4ss-src --exclude=.git .
+
+      - name: Upload UE4SS source
+        uses: actions/upload-artifact@v4
+        with:
+          name: ue4ss-src
+          path: ue4ss-src.tgz
+          retention-days: 7
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
