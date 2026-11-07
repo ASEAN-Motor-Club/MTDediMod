@@ -556,13 +556,16 @@
 
                           # S1a spike: ship the C++ mod DLL (carries the ImGui overlay).
                           # Stock client packages are Lua-only; remove this block to
-                          # return to the previous behaviour.
-                          if [ -f "$BUILD_DIR/$MOD_NAME/$MOD_NAME.dll" ]; then
+                          # return to the previous behaviour. The built target is
+                          # ${modName}.dll (same C++ target as the server), while the
+                          # client mod folder is $MOD_NAME — do not conflate them.
+                          SPIKE_DLL="${clientBuildDir}/${modName}/${modName}.dll"
+                          if [ -f "$SPIKE_DLL" ]; then
                             mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/dlls"
-                            cp "$BUILD_DIR/$MOD_NAME/$MOD_NAME.dll" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/dlls/main.dll"
-                            echo "✓ Copied $MOD_NAME.dll -> ue4ss/Mods/$MOD_NAME/dlls/main.dll (SPIKE_UI build)"
+                            cp "$SPIKE_DLL" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/dlls/main.dll"
+                            echo "✓ Copied $(basename "$SPIKE_DLL") -> ue4ss/Mods/$MOD_NAME/dlls/main.dll (SPIKE_UI build)"
                           else
-                            echo "⚠ Warning: $MOD_NAME.dll not found in $BUILD_DIR/$BUILD_TYPE — client package will be Lua-only"
+                            echo "⚠ Warning: no DLL at $SPIKE_DLL — client package will be Lua-only"
                           fi
 
                           # Copy enabled.txt
