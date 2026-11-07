@@ -375,6 +375,9 @@
                           export BUILD_TYPE="${buildType}"
                           export BUILD_DIR="${clientBuildDir}"
                           export UE4SS_PROXY_PATH="${clientProxyPath}"
+                          # S1a spike: build the ImGui overlay into the client mod DLL.
+                          # Remove this line to return to a stock client build.
+                          export EXTRA_CMAKE_ARGS="-DSPIKE_UI=ON"
 
                           # Create CMakeLists.txt wrapper (same as server — mod DLL will be built but not packaged)
                           cat > CMakeLists.txt <<EOF

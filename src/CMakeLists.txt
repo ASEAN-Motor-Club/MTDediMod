@@ -100,3 +100,45 @@ target_compile_definitions(MotorTownMods PRIVATE _CRT_SECURE_NO_WARNINGS)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(MotorTownMods PRIVATE _DEBUG)
 endif()
+
+# ---------------------------------------------------------------------------
+# S1a spike: in-game ImGui overlay. CLIENT BUILDS ONLY (default OFF).
+#   nix run .#configure-client  -> passes -DSPIKE_UI=ON
+#   nix run .#build-client
+# The ImGui copy lives in THIS module (MotorTownMods.dll), not UE4SS.dll, so
+# there is no symbol collision with UE4SS's own vendored ImGui — separate
+# modules have separate statics. Do not link this target into UE4SS.
+# ---------------------------------------------------------------------------
+option(SPIKE_UI "Build the ImGui overlay spike (client builds only)" OFF)
+if(SPIKE_UI)
+    include(FetchContent)
+    FetchContent_Declare(imgui_spike
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG v1.91.8
+        GIT_SHALLOW TRUE
+        GIT_PROGRESS TRUE)
+    FetchContent_GetProperties(imgui_spike)
+    if(NOT imgui_spike_POPULATED)
+        FetchContent_Populate(imgui_spike)
+    endif()
+
+    add_library(imgui_spike STATIC
+        ${imgui_spike_SOURCE_DIR}/imgui.cpp
+        ${imgui_spike_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_spike_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_spike_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_spike_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+        ${imgui_spike_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+        ${imgui_spike_SOURCE_DIR}/backends/imgui_impl_dx12.cpp)
+    target_include_directories(imgui_spike PUBLIC
+        ${imgui_spike_SOURCE_DIR}
+        ${imgui_spike_SOURCE_DIR}/backends)
+    target_compile_features(imgui_spike PUBLIC cxx_std_17)
+    target_link_libraries(imgui_spike PUBLIC d3d11 d3d12 dxgi d3dcompiler)
+
+    target_sources(MotorTownMods PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/ui/spike/SpikeUi.cpp)
+    target_compile_definitions(MotorTownMods PRIVATE SPIKE_UI)
+    target_link_libraries(MotorTownMods PRIVATE imgui_spike)
+    message(STATUS "SPIKE_UI: ImGui overlay spike enabled (from ${imgui_spike_SOURCE_DIR})")
+endif()

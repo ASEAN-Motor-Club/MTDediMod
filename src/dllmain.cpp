@@ -24,6 +24,10 @@
 #include "PropertyCache.h"
 #include "AdminHide.h"
 
+#ifdef SPIKE_UI
+#include "ui/spike/SpikeUi.h"
+#endif
+
 using namespace RC;
 using namespace RC::Unreal;
 
@@ -245,6 +249,11 @@ auto MotorTownMods::on_unreal_init() -> void
 {
 	HookManager::UnregisterAllHooks(); // Prevent duplicate hooks on hot-reload if destructor wasn't fully processed
 	PropertyCache::Clear(); // Drop stale FProperty* pointers from previous session
+
+#ifdef SPIKE_UI
+	// S1a spike: install the swap-chain hooks (worker thread, returns immediately).
+	SpikeUi::Start();
+#endif
 
 	// Optional: force the replicated bIsAdmin flag to false so no client ever
 	// renders the admin star / "(Admin)" suffix. Server-side only, env gated.

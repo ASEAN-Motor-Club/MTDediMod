@@ -108,6 +108,13 @@ if [ -n "${UE4SS_SOURCE_DIR:-}" ]; then
     CMAKE_ARGS+=(-DUE4SS_SOURCE_DIR="$UE4SS_SOURCE_DIR")
 fi
 
+# Extra flags (e.g. -DSPIKE_UI=ON for the ImGui spike client build)
+if [ -n "${EXTRA_CMAKE_ARGS:-}" ]; then
+    echo "Extra CMake args: $EXTRA_CMAKE_ARGS"
+    # shellcheck disable=SC2206
+    CMAKE_ARGS+=(${EXTRA_CMAKE_ARGS})
+fi
+
 # Set XWIN_DIR for UE4SS's internal toolchain (requires absolute path)
 XWIN_DIR="$(pwd)/.xwin-cache"
 export XWIN_DIR
