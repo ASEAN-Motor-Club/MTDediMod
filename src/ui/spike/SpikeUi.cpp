@@ -29,6 +29,11 @@
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_dx12.h>
 
+// imgui_impl_win32.h keeps this declaration inside an '#if 0' block on purpose
+// (it does not want to pull in <windows.h>); ImGui's own examples forward-declare
+// it in the .cpp. We already include <windows.h>, so declare it here.
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 #include <DynamicOutput/DynamicOutput.hpp>
 
 namespace
@@ -587,8 +592,11 @@ namespace
     {
         if (!g_gameQueue.load())
         {
-            D3D12_COMMAND_QUEUE_DESC desc{};
-            if (SUCCEEDED(queue->GetDesc(&desc)) && desc.Type == D3D12_COMMAND_LIST_TYPE_DIRECT)
+            // Identify the render queue from the command list type rather than
+            // ID3D12CommandQueue::GetDesc — the xwin/MSVC header shape for
+            // GetDesc varies, GetType() on the list does not.
+            if (lists && count > 0 && lists[0] &&
+                lists[0]->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT)
             {
                 queue->AddRef();
                 g_gameQueue.store(queue);
@@ -616,7 +624,7 @@ namespace
                                                      reinterpret_cast<void*>(&HookedExecuteCommandLists),
                                                      reinterpret_cast<void**>(&g_origExecuteCommandLists));
                     RC::Output::send<RC::LogLevel::Default>(L"[spike] ExecuteCommandLists hook: {}\n",
-                                                            ok ? "ok" : "FAILED");
+                                                            ok ? L"ok" : L"FAILED");
                     queue->Release();
                 }
                 device->Release();
@@ -663,7 +671,7 @@ namespace
                                       reinterpret_cast<void**>(&g_origResizeBuffers));
             }
             RC::Output::send<RC::LogLevel::Default>(L"[spike] Present/ResizeBuffers hook: {}\n",
-                                                    ok ? "ok" : "FAILED");
+                                                    ok ? L"ok" : L"FAILED");
 
             SafeRelease(swapchain);
             SafeRelease(context);
@@ -684,7 +692,7 @@ namespace SpikeUi
     {
         std::thread([] {
             const bool ok = InstallHooks();
-            RC::Output::send<RC::LogLevel::Default>(L"[spike] install {}\n", ok ? "complete" : "FAILED");
+            RC::Output::send<RC::LogLevel::Default>(L"[spike] install {}\n", ok ? L"complete" : L"FAILED");
         }).detach();
     }
 
