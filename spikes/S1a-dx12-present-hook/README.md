@@ -125,6 +125,17 @@ packages are Lua-only), so the artefact is directly installable:
   (`src/dllmain.cpp:1485`). C++ can push a global on that state instead of
   walking the VM itself.
 
+## Tester machine caveat (read before judging a failure)
+
+The desktop client already stacks three Present/swap-chain consumers in the same
+`Win64` folder: **OptiScaler** (`dxgi.dll`, `OptiScaler.ini`,
+`D3D12_Optiscaler/`), **ReShade**, and an **IGCS** camera tool (its own
+`imgui.ini` + `IGCS_ImGuiSettings.ini`). So this box is a *harder* target than a
+clean install: our `Present` hook lands on top of theirs and must chain
+correctly. A pass here is stronger evidence than a pass on a vanilla client; a
+crash here is not automatically our fault — check `ReShade.log` and
+`OptiScaler.ini` overlay settings before blaming the spike.
+
 ## Verdict
 
 _To be filled in after the tester round — VALIDATED / PARTIAL / INVALIDATED with
