@@ -52,20 +52,46 @@ jobs:
         uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Cache xwin
+        if: false # superseded by ue4ss-net-deps fixed-output derivation
         uses: actions/cache@v4
         with:
           path: .xwin-cache
           key: xwin-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: xwin-${{ runner.os }}-
 
-      - name: Configure client
-        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#configure-client
+      - name: Restore net-deps cache
+        id: netdeps
+        uses: actions/cache@v4
+        with:
+          path: net-deps-artifact
+          key: netdeps-${{ runner.os }}-${{ steps.ue4ss-rev.outputs.rev }}
 
-      - name: Build client
-        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-client
+      # Network-bound but only re-run when the UE4SS rev changes
+      # (xwin MSVC SDK, CMake FetchContent deps, cargo vendor)
+      - name: Generate net-deps
+        if: steps.netdeps.outputs.cache-hit != 'true'
+        run: |
+          nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#regen-net-deps
+          cp -r net-deps net-deps-artifact
 
-      - name: Package client
-        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package-client
+      # Single pure nix build: DLL derivation is a cache hit
+      # (magic-nix-cache) whenever no C++ file changed; Lua-only tags
+      # rebuild only the packaging derivation (seconds).
+      - name: Build client package
+        run: |
+          if [ ! -d net-deps-artifact/xwin ]; then
+            nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#regen-net-deps
+            cp -r net-deps net-deps-artifact
+          fi
+          # path inputs inside a git tree are filtered to tracked files —
+          # the override target must live outside the checkout
+          rm -rf "$RUNNER_TEMP/net-deps-override"
+          cp -r net-deps-artifact "$RUNNER_TEMP/net-deps-override"
+          nix build --no-update-lock-file --print-out-paths \
+            --override-input ue4ss "path:$PWD/.ue4ss-src" \
+            --override-input netdeps "path:$RUNNER_TEMP/net-deps-override" \
+            ".#packages.x86_64-linux.MotorTownClientMod-package" | tee out-path.txt
+          cp "$(cat out-path.txt)/MotorTownClientMod-package.zip" .
 
       - name: Extract version
         id: version

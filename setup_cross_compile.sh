@@ -9,9 +9,14 @@ set -e
 # fi
 
 # 2. Download MSVC headers
-echo "Downloading MSVC headers to .xwin-cache..."
-mkdir -p .xwin-cache
-xwin --accept-license splat --output .xwin-cache
+if [ -n "${XWIN_CACHE_DIR:-}" ] && [ -d "$XWIN_CACHE_DIR" ]; then
+    echo "Using pre-fetched xwin cache: $XWIN_CACHE_DIR"
+    ln -sfn "$XWIN_CACHE_DIR" .xwin-cache
+else
+    echo "Downloading MSVC headers to .xwin-cache..."
+    mkdir -p .xwin-cache
+    xwin --accept-license splat --output .xwin-cache
+fi
 
 # 3. Create Toolchain file
 echo "Creating toolchain.cmake..."
@@ -106,6 +111,13 @@ fi
 if [ -n "${UE4SS_SOURCE_DIR:-}" ]; then
     echo "Using UE4SS source from: $UE4SS_SOURCE_DIR"
     CMAKE_ARGS+=(-DUE4SS_SOURCE_DIR="$UE4SS_SOURCE_DIR")
+fi
+
+# Extra args from the caller (e.g. FETCHCONTENT_BASE_DIR for cached builds)
+if [ -n "${EXTRA_CMAKE_ARGS:-}" ]; then
+    echo "Extra CMake args: $EXTRA_CMAKE_ARGS"
+    read -r -a EXTRA_ARGS <<< "$EXTRA_CMAKE_ARGS"
+    CMAKE_ARGS+=("${EXTRA_ARGS[@]}")
 fi
 
 # Set XWIN_DIR for UE4SS's internal toolchain (requires absolute path)
