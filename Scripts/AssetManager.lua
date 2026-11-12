@@ -59,8 +59,16 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
     if actor:IsValid() then
       LogOutput("DEBUG", "Spawned actor %s", actor:GetFullName())
       actor:SetReplicates(true)
-      -- Increase network relevancy distance so remote players can see this actor (~500m)
-      actor:SetNetCullDistanceSquared(2500000000) -- 50000^2
+      -- Motor Town replicates through MTReplicationGraph, and its cull distance is a per-class
+      -- value in the graph's FClassReplicationInfo table, not AActor::NetCullDistanceSquared.
+      -- Setting cull properties on the actor is a no-op under a replication-graph driver (the
+      -- graph never calls IsNetRelevantFor), which is why spawned StaticMeshActors stay hidden
+      -- past a few metres. Marking the actor always-relevant routes it to AlwaysRelevantNode
+      -- instead of the spatial grid, so the per-class cull never applies. Must be set before
+      -- the graph registers the actor, i.e. before the next net update after spawn.
+      actor.bAlwaysRelevant = true
+      LogOutput("INFO", "Spawned actor always-relevant=%s net-cull-sq=%s",
+        tostring(actor.bAlwaysRelevant), tostring(actor.NetCullDistanceSquared))
 
       if not assetTag then
         local str = SplitString(actor:GetFullName())
