@@ -179,6 +179,8 @@ local function LoadWebserver()
 
     -- Company management
     server.registerHandler("/companies", "GET", companyManager.HandleGetCompanies)
+    server.registerHandler("/companies/*/depots", "GET", companyManager.HandleGetDepots)
+    server.registerHandler("/depots", "GET", companyManager.HandleGetDepots)
 
     -- Character management
     server.registerHandler("/characters", "GET", characterManager.HandleGetCharacters)
