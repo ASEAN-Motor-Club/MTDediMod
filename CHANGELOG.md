@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc2] - 2026-11-14
+
+#### Fixed
+- Cross-compile: `nix run .#configure` died at `Downloading MSVC headers` with `unable to find x86_64 headers for Win11SDK_10.0.26100`. Recent Visual Studio manifests ship that SDK's headers under a payload name xwin cannot map to an architecture, and the xwin in the nixpkgs pin (0.7.0) has no way to select an older SDK. Adds a `nixpkgs-xwin` input pinned to a revision carrying xwin 0.9.0 and pins the SDK to `10.0.22621` in `setup_cross_compile.sh`, which resolves to `Win11SDK_10.0.22621_x64_headers` and is the SDK UE5 targets anyway. rc1 never produced an artifact because of this.
+### [server/v0.44.0-rc1] - 2026-11-14
+
+#### Added
+- TimeOfDay (`src/TimeOfDay.cpp`): native bridge to the world clock, registered on the mod's own Lua state from `on_lua_start` as `MTTimeGetHour`, `MTTimeSetHour` and `MTTimeStatus`. The world hour has no UPROPERTY anywhere in the reflected API, so no Lua property write, RPC, config actor or cheat can move it; it is a plain float on a clock-owner object, reached through `GetTimeOfDay`'s native getter. Writes hold and the clock runs on from the new hour (live: wrote 22.0 into a 10.041 clock, +1 s = 22.008, reflected read 22.74 minutes later). Guarded per game build: the getter prologue is checked and the field displacement is derived at runtime, so a patch that only moves the field still resolves and a wrong build returns `rva_mismatch` instead of writing.
+- TimeManager (`Scripts/TimeManager.lua`): `GET /time`, `POST /time`, `POST /time/offset`, `POST /time/speed` — read and apply with a live verdict. Applies try the native bridge first and fall back to the config actor; every apply answers `before` / `ShortSample` / `SettleSample` / `Moved` / `Held`, and reports `no_mechanism` when nothing could write rather than returning a bare 200.
 ### [server/v0.43.0-rc7] - 2026-11-02
 
 #### Fixed

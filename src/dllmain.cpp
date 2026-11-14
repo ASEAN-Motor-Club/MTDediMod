@@ -23,6 +23,7 @@
 #include "TickProfiler.h"
 #include "PropertyCache.h"
 #include "AdminHide.h"
+#include "TimeOfDay.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -1486,6 +1487,9 @@ auto MotorTownMods::on_lua_start(
 	{
 		TickProfiler::Get().Start();
 	}
+
+	// World clock: the only supported read/write path (native, RVA-guarded).
+	TimeOfDay::RegisterLuaFunctions(lua);
 
 	lua.register_function("ExportStructAsText", [](const LuaMadeSimple::Lua& lua_net) -> int {
 		int32_t stack_size = lua_net.get_stack_size();

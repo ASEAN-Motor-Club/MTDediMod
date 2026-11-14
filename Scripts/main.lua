@@ -30,6 +30,7 @@ local criminalManager = require("CriminalManager")
 local noTeleportManager = require("NoTeleportManager")
 local balanceManager = require("BalanceManager")
 local strapBlockManager = require("StrapBlockManager")
+local timeManager = require("TimeManager")
 
 local function LoadWebserver()
   local status, err = pcall(function()
@@ -135,6 +136,14 @@ local function LoadWebserver()
     server.registerHandler("/cargo/blocked_keys", "POST", strapBlockManager.HandleSetBlockedCargoKeys)
     server.registerHandler("/cargo/blocked_keys", "GET", strapBlockManager.HandleGetBlockedCargoKeys)
     server.registerHandler("/player_contracts/*", "GET", cargoManager.HandleGetPlayerContracts)
+
+    -- World clock (TimeManager)
+    -- GET is a pure read. The POSTs write the time-of-day config actor and
+    -- verify asynchronously; read the verdict back from GET /time.
+    server.registerHandler("/time", "GET", timeManager.HandleGetTime)
+    server.registerHandler("/time", "POST", timeManager.HandleSetTime)
+    server.registerHandler("/time/offset", "POST", timeManager.HandleOffsetTime)
+    server.registerHandler("/time/speed", "POST", timeManager.HandleSetTimeSpeed)
 
 
     -- Vehicle management
