@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc1] - 2026-11-14
+
+#### Added
+- TimeOfDay (`src/TimeOfDay.cpp`): native bridge to the world clock, registered on the mod's own Lua state from `on_lua_start` as `MTTimeGetHour`, `MTTimeSetHour` and `MTTimeStatus`. The world hour has no UPROPERTY anywhere in the reflected API, so no Lua property write, RPC, config actor or cheat can move it; it is a plain float on a clock-owner object, reached through `GetTimeOfDay`'s native getter. Writes hold and the clock runs on from the new hour (live: wrote 22.0 into a 10.041 clock, +1 s = 22.008, reflected read 22.74 minutes later). Guarded per game build: the getter prologue is checked and the field displacement is derived at runtime, so a patch that only moves the field still resolves and a wrong build returns `rva_mismatch` instead of writing.
+- TimeManager (`Scripts/TimeManager.lua`): `GET /time`, `POST /time`, `POST /time/offset`, `POST /time/speed` — read and apply with a live verdict. Applies try the native bridge first and fall back to the config actor; every apply answers `before` / `ShortSample` / `SettleSample` / `Moved` / `Held`, and reports `no_mechanism` when nothing could write rather than returning a bare 200.
 ### [server/v0.43.0-rc7] - 2026-11-02
 
 #### Fixed
