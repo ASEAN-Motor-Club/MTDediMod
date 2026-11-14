@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc2] - 2026-11-14
+
+#### Fixed
+- Cross-compile: `nix run .#configure` died at `Downloading MSVC headers` with `unable to find x86_64 headers for Win11SDK_10.0.26100`. Recent Visual Studio manifests ship that SDK's headers under a payload name xwin cannot map to an architecture, and the xwin in the nixpkgs pin (0.7.0) has no way to select an older SDK. Adds a `nixpkgs-xwin` input pinned to a revision carrying xwin 0.9.0 and pins the SDK to `10.0.22621` in `setup_cross_compile.sh`, which resolves to `Win11SDK_10.0.22621_x64_headers` and is the SDK UE5 targets anyway. rc1 never produced an artifact because of this.
 ### [server/v0.44.0-rc1] - 2026-11-14
 
 #### Added
