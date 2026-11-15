@@ -31,7 +31,7 @@ local realRequire = require
 require = function(name)
   if name == "VehicleManager" then return {} end
   if name == "TeleportAllow" then return { Take = function() end, Release = function() end } end
-  if name == "JsonParser" or name == "TeleportLocations" then
+  if name == "JsonParser" or name == "TeleportLocations" or name == "RepairManager" then
     local chunk = assert(loadfile(scriptDir .. "/" .. name .. ".lua"))
     return chunk()
   end
