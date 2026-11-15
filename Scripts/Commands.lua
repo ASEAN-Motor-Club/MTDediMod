@@ -65,6 +65,17 @@ local function Reply(PC, message)
   end)
 end
 
+-- Listings go to a POPUP: a six-place list is unreadable as a chat system
+-- message. One-line confirmations stay on the system message.
+local function ReplyPopup(PC, message)
+  local ok, err = pcall(function()
+    PC:ClientShowPopupMessage(FText(message))
+  end)
+  if not ok then
+    LogOutput("ERROR", "ClientShowPopupMessage failed: %s", tostring(err))
+  end
+end
+
 --- Teleport the caller to a named destination from the locations file.
 --- /tp <name> teleports; /tp with no argument lists the destinations.
 Commands["/tp"] = function(PC, args)
@@ -75,13 +86,13 @@ Commands["/tp"] = function(PC, args)
     return
   end
   if name == nil then
-    Reply(PC, "Usage: /tp <" .. table.concat(names, "|") .. ">")
+    ReplyPopup(PC, "Teleport places (use /tp <name>):\n" .. table.concat(names, "\n"))
     return
   end
 
   local target = teleportLocations.Get(name)
   if target == nil then
-    Reply(PC, "Unknown place '" .. name .. "'. Try: " .. table.concat(names, ", "))
+    ReplyPopup(PC, "Unknown place '" .. name .. "'. Available:\n" .. table.concat(names, "\n"))
     return
   end
 
@@ -124,7 +135,12 @@ Commands["/tp"] = function(PC, args)
 end
 
 Commands["/tps"] = function(PC, args)
-  Reply(PC, "Places: " .. table.concat(teleportLocations.Names(), ", "))
+  local names = teleportLocations.Names()
+  if #names == 0 then
+    ReplyPopup(PC, "No teleport places are configured on this server.")
+    return
+  end
+  ReplyPopup(PC, "Teleport places (use /tp <name>):\n" .. table.concat(names, "\n"))
 end
 
 local function HandleCommand(PC, message)
