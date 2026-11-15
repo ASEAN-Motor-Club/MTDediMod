@@ -69,14 +69,19 @@ end
 --- /tp <name> teleports; /tp with no argument lists the destinations.
 Commands["/tp"] = function(PC, args)
   local name = args[1]
+  local names = teleportLocations.Names()
+  if #names == 0 then
+    Reply(PC, "No teleport places are configured on this server.")
+    return
+  end
   if name == nil then
-    Reply(PC, "Usage: /tp <" .. table.concat(teleportLocations.Names(), "|") .. ">")
+    Reply(PC, "Usage: /tp <" .. table.concat(names, "|") .. ">")
     return
   end
 
   local target = teleportLocations.Get(name)
   if target == nil then
-    Reply(PC, "Unknown place '" .. name .. "'. Try: " .. table.concat(teleportLocations.Names(), ", "))
+    Reply(PC, "Unknown place '" .. name .. "'. Try: " .. table.concat(names, ", "))
     return
   end
 
@@ -108,8 +113,9 @@ Commands["/tp"] = function(PC, args)
   teleportAllow.Release()
 
   if ok then
-    LogOutput("INFO", "/tp %s -> %s (%d %d %d)",
-      PC.PlayerState:GetPlayerName():ToString(), name, target.x, target.y, target.z)
+    LogOutput("INFO", "/tp %s -> %s (%s %s %s)",
+      PC.PlayerState:GetPlayerName():ToString(), name,
+      tostring(target.x), tostring(target.y), tostring(target.z))
     Reply(PC, "Teleported to " .. name .. ".")
   else
     LogOutput("ERROR", "/tp %s failed: %s", name, tostring(err))
