@@ -1,4 +1,6 @@
 local vehicleManager = require("VehicleManager")
+local teleportLocations = require("TeleportLocations")
+local teleportAllow = require("TeleportAllow")
 
 local Commands = {}
 
@@ -57,6 +59,68 @@ end
 
 Commands["/d"] = Commands["/despawn"]
 
+local function Reply(PC, message)
+  pcall(function()
+    PC:ClientShowSystemMessage(FText(message))
+  end)
+end
+
+--- Teleport the caller to a named destination from the locations file.
+--- /tp <name> teleports; /tp with no argument lists the destinations.
+Commands["/tp"] = function(PC, args)
+  local name = args[1]
+  if name == nil then
+    Reply(PC, "Usage: /tp <" .. table.concat(teleportLocations.Names(), "|") .. ">")
+    return
+  end
+
+  local target = teleportLocations.Get(name)
+  if target == nil then
+    Reply(PC, "Unknown place '" .. name .. "'. Try: " .. table.concat(teleportLocations.Names(), ", "))
+    return
+  end
+
+  local pawn = PC:K2_GetPawn()
+  if not pawn:IsValid() then
+    Reply(PC, "Cannot teleport right now (no pawn).")
+    return
+  end
+
+  local location = { X = target.x, Y = target.y, Z = target.z }
+  local rotation = pawn:K2_GetActorRotation()
+
+  local charClass = StaticFindObject("/Script/MotorTown.MTCharacter")
+  local vehicleClass = StaticFindObject("/Script/MotorTown.MTVehicle")
+
+  -- Mark this as a mod-initiated teleport so the anti-teleport-with-cargo
+  -- hook does not undo it (take before, release after; the hook is synchronous).
+  teleportAllow.Take()
+  local ok, err = pcall(function()
+    if pawn:IsA(vehicleClass) then
+      -- Client-side reset keeps the vehicle + trailer chain together.
+      PC:ClientResetVehicleAt(pawn, location, rotation, true, true)
+    elseif pawn:IsA(charClass) then
+      PC:ServerTeleportCharacter(location, false, false)
+    else
+      error("unsupported pawn class")
+    end
+  end)
+  teleportAllow.Release()
+
+  if ok then
+    LogOutput("INFO", "/tp %s -> %s (%d %d %d)",
+      PC.PlayerState:GetPlayerName():ToString(), name, target.x, target.y, target.z)
+    Reply(PC, "Teleported to " .. name .. ".")
+  else
+    LogOutput("ERROR", "/tp %s failed: %s", name, tostring(err))
+    Reply(PC, "Teleport failed: " .. tostring(err))
+  end
+end
+
+Commands["/tps"] = function(PC, args)
+  Reply(PC, "Places: " .. table.concat(teleportLocations.Names(), ", "))
+end
+
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then
     local parts = SplitString(message, " ")
@@ -78,14 +142,33 @@ local function HandleCommand(PC, message)
   return false
 end
 
--- TEMPORARILY DISABLED: Investigating crash stability
--- RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerSendChat", function(PC, Message, Category)
---   local playerController = PC:get()
---   local message = Message:get():ToString()
---
---   if not playerController:IsValid() or not playerController.PlayerState:IsValid() then
---     return
---   end
---
---   HandleCommand(playerController, message)
--- end)
+-- Chat commands are OPT-IN per instance. Production gets its commands from
+-- amc-backend's registry, and this hook was previously disabled repo-wide for
+-- crash stability, so it arms only where the operator asked for it
+-- (MOD_CHAT_COMMANDS=1) or where a teleport locations file exists — i.e. an
+-- instance with no backend of its own, such as the Shuto test server.
+local chatCommandsEnabled = os.getenv("MOD_CHAT_COMMANDS") == "1" or teleportLocations.Available()
+
+if chatCommandsEnabled then
+  -- Resolve the UFunction BEFORE registering: RegisterHook on a function the
+  -- class does not override aborts the entire Lua chunk, even inside pcall.
+  local sendChat = StaticFindObject("/Script/MotorTown.MotorTownPlayerController:ServerSendChat")
+  if sendChat == nil then
+    LogOutput("ERROR", "chat commands: ServerSendChat not found on this build; /tp disabled")
+  else
+    local ok, err = pcall(RegisterHook,
+      "/Script/MotorTown.MotorTownPlayerController:ServerSendChat",
+      function(PC, Message, Category)
+        local playerController = PC:get()
+        local message = Message:get():ToString()
+
+        if not playerController:IsValid() or not playerController.PlayerState:IsValid() then
+          return
+        end
+
+        HandleCommand(playerController, message)
+      end,
+      function() end)
+    LogOutput(ok and "INFO" or "ERROR", "chat commands hook: %s", ok and "registered" or tostring(err))
+  end
+end
