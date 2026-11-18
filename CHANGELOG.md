@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc3] - 2026-11-18
+
+#### Added
+- Chat `/tp` with named destinations. `TeleportLocations` reads `MOD_TP_LOCATIONS_FILE` (a store JSON, so the list is declarative) or `tp_locations.json` in the instance state dir, and re-reads it per command — editing the file takes effect with no reload and no restart. `/tp <name>` teleports the player (on foot, or the vehicle they are seated in), `/tps` lists the destinations as a popup, one per line. The `ServerSendChat` hook arms only when `MOD_CHAT_COMMANDS=1` or a locations file exists, so backend-driven production servers are unchanged; a missing or malformed file fails closed.
+
+#### Fixed
+- Motor Town 0.7.20 changed 24 RPC signatures and removed others. The vehicle-reset family gained a trailing `ResetOperationId` (`ServerResetVehicleAt`, `ClientResetVehicleAt`, `MulticastResetVehicle`, `ServerResetVehicleAtResponse`), so every mod call site now passes one, built by `NewResetOperationId()` as a per-process random salt plus a monotonic counter — unique within a process by construction, and not repeating across processes. `AMTVehicle:ServerSetEngineColdState` moved to `AMotorTownPlayerController:ServerSetVehicleEngineColdState(Vehicle, Generation, State)`; the admin engine shortcut now sends an incrementing generation, since the RPC orders cold-state writes by it.
+- `/tp` in a vehicle no longer fails silently: the reset RPC rejects the call when the id is missing, and the mod previously reported success regardless.
+
 ### [server/v0.43.0-rc7] - 2026-11-02
 
 #### Fixed
