@@ -20,6 +20,10 @@ local lastDoorToggleTime = 0
 local lastEngineToggleTime = 0
 local despawnDialogOpen = false
 
+--- Writer generation for ServerSetVehicleEngineColdState (0.7.20). The RPC
+--- orders cold-state writes by generation, so it must increase per call.
+local engineColdStateGeneration = 0
+
 --- Impulse strength for the aimed impulse shortcut
 local IMPULSE_STRENGTH = 100000.0
 
@@ -373,8 +377,13 @@ local function TriggerDespawnAimed()
 end
 
 ---Toggle the engine of the vehicle the player is aiming at (Ctrl+Shift+E)
----Flips NetLC_EngineColdState.bDisabled via the ServerSetEngineColdState RPC.
----When disabled, the vehicle cannot be started until toggled back.
+---Flips NetLC_EngineColdState.bDisabled via the controller's
+---ServerSetVehicleEngineColdState RPC. When disabled, the vehicle cannot be
+---started until toggled back.
+---0.7.20 moved this off the vehicle (AMTVehicle:ServerSetEngineColdState is
+---gone) and added a writer Generation (uint64) to the new
+---ServerSetVehicleEngineColdState(Vehicle, Generation, State); we send a
+---locally increasing counter.
 local function TriggerEngineToggleAimed()
     if not IsAdmin() then
         LogOutput("WARN", "Engine toggle shortcut: Admin only")
@@ -425,7 +434,8 @@ local function TriggerEngineToggleAimed()
             bOverHeated = coldState ~= nil and coldState.bOverHeated == true or false,
             bDisabled = not wasDisabled,
         }
-        actor:ServerSetEngineColdState(newState)
+        engineColdStateGeneration = engineColdStateGeneration + 1
+        PC:ServerSetVehicleEngineColdState(actor, engineColdStateGeneration, newState)
         LogOutput("INFO", "Engine toggle shortcut: %s engine on %s (bDisabled %s -> %s)",
             newState.bDisabled and "Stopped" or "Started",
             actor:GetFullName(),

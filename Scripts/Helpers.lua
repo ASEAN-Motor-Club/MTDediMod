@@ -606,3 +606,17 @@ function ExecuteInGameThreadSync(exec, label, maxMs)
   end
   return true
 end
+
+---Build a fresh FGuid for the 0.7.20 vehicle-reset RPCs
+---(ServerResetVehicleAt / ClientResetVehicleAt / MulticastResetVehicle all
+---gained a trailing ResetOperationId in 0.7.20). The game uses it to pair a
+---reset request with its response and to drop resent duplicates, so it has to
+---be unique per call — reusing one value (or a zero GUID) would make the second
+---teleport look like a replay of the first.
+---@return FGuid
+function NewResetOperationId()
+  local function part()
+    return math.random(0, 0x7fffffff)
+  end
+  return { A = part(), B = part(), C = part(), D = part() }
+end

@@ -700,7 +700,8 @@ local function HandleTeleportPlayer(session)
               -- on the game thread).
               teleportAllow.Take()
               local ok, err = pcall(function()
-                PC:ServerResetVehicleAt(pawn, location, rotation, data.bRemoveCargo, bResetCarriedVehicles)
+                -- 0.7.20: +ResetOperationId (FGuid) — must be unique per call.
+                PC:ServerResetVehicleAt(pawn, location, rotation, data.bRemoveCargo, bResetCarriedVehicles, NewResetOperationId())
               end)
               teleportAllow.Release()
               if not ok then error(err) end
@@ -715,7 +716,8 @@ local function HandleTeleportPlayer(session)
               if data.bResetCarriedVehicles ~= nil then
                 bResetCarriedVehicles = data.bResetCarriedVehicles
               end
-              PC:ClientResetVehicleAt(pawn, location, rotation, bResetTrailers, bResetCarriedVehicles)
+              -- 0.7.20: +bApplyRoadsideTowParkingBrake, +ResetOperationId.
+              PC:ClientResetVehicleAt(pawn, location, rotation, bResetTrailers, bResetCarriedVehicles, false, NewResetOperationId())
             end
           else
             error("Failed to teleport player")

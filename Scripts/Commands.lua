@@ -114,7 +114,8 @@ Commands["/tp"] = function(PC, args)
   local ok, err = pcall(function()
     if pawn:IsA(vehicleClass) then
       -- Client-side reset keeps the vehicle + trailer chain together.
-      PC:ClientResetVehicleAt(pawn, location, rotation, true, true)
+      -- 0.7.20: +bApplyRoadsideTowParkingBrake, +ResetOperationId.
+      PC:ClientResetVehicleAt(pawn, location, rotation, true, true, false, NewResetOperationId())
     elseif pawn:IsA(charClass) then
       PC:ServerTeleportCharacter(location, false, false)
     else
