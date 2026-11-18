@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc4] - 2026-11-18
+
+#### Fixed
+- Cross-compile: `nix run .#configure` died at the header download with `Error: unable to find x86_64 headers for Win11SDK_10.0.26100`, so `server/v0.44.0-rc3` produced no artifact. Recent VS2022 manifests ship that SDK's headers under a payload name xwin cannot map to an architecture, and xwin 0.7.0 (the nixpkgs pin) cannot select an older SDK at all. Adds a `nixpkgs-xwin` input carrying xwin 0.9.0 and pins `--sdk-version 10.0.22621` in `setup_cross_compile.sh`, which resolves to `Win11SDK_10.0.22621_x64_headers` and is the SDK UE5 targets anyway. No mod code changes; contents are identical to rc3.
+
 ### [server/v0.44.0-rc3] - 2026-11-18
 
 #### Added

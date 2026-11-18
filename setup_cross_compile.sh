@@ -9,9 +9,16 @@ set -e
 # fi
 
 # 2. Download MSVC headers
+#
+# The SDK version is pinned on purpose. Letting xwin take the newest SDK from the
+# VS2022 manifest now fails with:
+#   Error: unable to find x86_64 headers for Win11SDK_10.0.26100
+# because that release ships its headers under a payload name xwin does not map
+# to an architecture. 10.0.22621 resolves cleanly (Win11SDK_10.0.22621_x64_headers)
+# and is what UE5 targets anyway. Revisit when xwin learns the 26100 layout.
 echo "Downloading MSVC headers to .xwin-cache..."
 mkdir -p .xwin-cache
-xwin --accept-license splat --output .xwin-cache
+xwin --accept-license --sdk-version 10.0.22621 splat --output .xwin-cache
 
 # 3. Create Toolchain file
 echo "Creating toolchain.cmake..."

@@ -16,6 +16,12 @@
       flake = false;
     };
 
+    # xwin 0.7.0 (the version in the nixpkgs pin above) cannot resolve the
+    # current Windows SDK manifest: "unable to find x86_64 headers for
+    # Win11SDK_10.0.26100". Take a newer xwin from its own pin rather than
+    # moving the whole cross toolchain.
+    nixpkgs-xwin.url = "github:NixOS/nixpkgs/d4f25a3e562008648d45bcf2d70bcc7422cad84e";
+
     ue4ss-prebuilt = {
       url = "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip";
       flake = false;
@@ -44,6 +50,9 @@
             minimal.toolchain
             targets.x86_64-pc-windows-msvc.latest.rust-std
           ];
+
+        # Newer xwin: 0.7.0 chokes on the current SDK manifest.
+        xwin = inputs.nixpkgs-xwin.legacyPackages.${system}.xwin;
 
         # Dependencies required for cross-compilation
         crossCompileBuildInputs = with pkgs; [
