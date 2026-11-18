@@ -90,7 +90,8 @@ local function DoTeleport(PC, location, withVehicle)
       if withVehicle then
         ---@cast pawn AMTVehicle
         local rotation = pawn:K2_GetActorRotation()
-        PC:ServerResetVehicleAt(pawn, location, rotation, false, false)
+        -- 0.7.20: +ResetOperationId (FGuid).
+        PC:ServerResetVehicleAt(pawn, location, rotation, false, false, NewResetOperationId())
       else
         LogOutput("INFO", "Exit your vehicle first")
         return

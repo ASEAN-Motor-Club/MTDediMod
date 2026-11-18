@@ -197,7 +197,10 @@ local function PinResetToCurrentTransform(Vehicle, WorldLocation, Rotation, play
 end
 
 -- ServerResetVehicleAt: replace WorldLocation/Rotation with current vehicle transform
-SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(PC, Vehicle, WorldLocation, Rotation, bRemoveCargo, bResetCarriedVehicles)
+-- 0.7.20 signature: (Vehicle, WorldLocation, Rotation, bRemoveCargo,
+-- bResetCarriedVehicles, ResetOperationId) — the trailing FGuid is declared
+-- here only so the hook keeps documenting the full param list.
+SafeRegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(PC, Vehicle, WorldLocation, Rotation, bRemoveCargo, bResetCarriedVehicles, ResetOperationId)
   if EnsureAutopilotPoll then EnsureAutopilotPoll("hook:ServerResetVehicleAt") end
   local playerController = PC:get()
   -- The backend-pushed no-teleport block set DOES apply here (the old "no
