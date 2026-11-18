@@ -298,13 +298,26 @@ function ExecuteInGameThreadSync(exec)
 end
 
 ---Build a fresh FGuid for the 0.7.20 vehicle-reset RPCs
----(ServerResetVehicleAt gained a trailing ResetOperationId; client-side resets
----pass one too). The game uses it to pair a reset request with its response and
----to drop resent duplicates, so it has to be unique per call.
+---(ServerResetVehicleAt gained a trailing ResetOperationId in 0.7.20, and the
+---client-side reset flow passes one too). An FGuid carries no ordering, so the
+---only property that matters is uniqueness: the game echoes the id back in
+---ServerResetVehicleAtResponse, making it a correlation/de-dupe key rather than
+---a sequence. A per-process random salt plus a monotonic counter keeps two
+---processes from ever emitting the same id (each client generates ids for its
+---own ServerResetVehicleAt calls).
 ---@return FGuid
+local resetOperationSalt = nil
+local resetOperationCounter = 0
+
 function NewResetOperationId()
-  local function part()
-    return math.random(0, 0x7fffffff)
+  if resetOperationSalt == nil then
+    resetOperationSalt = math.random(0, 0x7fffffff)
   end
-  return { A = part(), B = part(), C = part(), D = part() }
+  resetOperationCounter = (resetOperationCounter % 0x7fffffff) + 1
+  return {
+    A = resetOperationSalt,
+    B = resetOperationCounter,
+    C = math.random(0, 0x7fffffff),
+    D = math.random(0, 0x7fffffff),
+  }
 end

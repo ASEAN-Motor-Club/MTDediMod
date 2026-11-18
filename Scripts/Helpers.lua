@@ -608,15 +608,34 @@ function ExecuteInGameThreadSync(exec, label, maxMs)
 end
 
 ---Build a fresh FGuid for the 0.7.20 vehicle-reset RPCs
----(ServerResetVehicleAt / ClientResetVehicleAt / MulticastResetVehicle all
----gained a trailing ResetOperationId in 0.7.20). The game uses it to pair a
----reset request with its response and to drop resent duplicates, so it has to
----be unique per call — reusing one value (or a zero GUID) would make the second
----teleport look like a replay of the first.
+---(ServerResetVehicleAt / ClientResetVehicleAt / MulticastResetVehicle /
+---ServerRoadsideTowVehicleAt all gained a trailing ResetOperationId in 0.7.20).
+---
+---What the id has to be: an FGuid carries no ordering, so the only property the
+---game can require of it is uniqueness — it echoes the id back in
+---ServerResetVehicleAtResponse, so it is a correlation/de-dupe key, not a
+---sequence. Reusing one value (or a zero GUID) is what breaks: the second reset
+---then cannot be told apart from a replay of the first.
+---
+---Randomness alone would satisfy that, but not provably: if the Lua state's RNG
+---ever ran unseeded, two processes would emit the same n-th value and collide on
+---the same vehicle. So a per-process random salt plus a monotonic counter — the
+---counter alone guarantees within-process uniqueness, the salt keeps two
+---processes (each client generates ids for its own ServerResetVehicleAt calls)
+---from running the same sequence.
 ---@return FGuid
+local resetOperationSalt = nil
+local resetOperationCounter = 0
+
 function NewResetOperationId()
-  local function part()
-    return math.random(0, 0x7fffffff)
+  if resetOperationSalt == nil then
+    resetOperationSalt = math.random(0, 0x7fffffff)
   end
-  return { A = part(), B = part(), C = part(), D = part() }
+  resetOperationCounter = (resetOperationCounter % 0x7fffffff) + 1
+  return {
+    A = resetOperationSalt,
+    B = resetOperationCounter,
+    C = math.random(0, 0x7fffffff),
+    D = math.random(0, 0x7fffffff),
+  }
 end
