@@ -1,8 +1,9 @@
 function Register()
-    return "48 8D 0D ?? ?? ?? ?? 48 8B D7 89 5C 24 20 44 8D 4B ??"
+    return "89 47 08 33 DB 48 8D 0D ?? ?? ?? ??"
 end
 
 function OnMatchFound(matchAddress)
-    local displacement = DerefToInt32(matchAddress + 0x3)
-    return matchAddress + 0x7 + displacement
+    local lea = matchAddress + 0x5
+    local displacement = DerefToInt32(lea + 0x3)
+    return lea + 0x7 + displacement
 end
