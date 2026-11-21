@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc6] - 2026-11-21
+
+#### Fixed
+- `ServerAcceptDelivery` now reaches the backend: the hook used the deprecated `webhook.RegisterEventHook` path, which is gated by `MOD_WEBHOOK_ENABLE_EVENTS` and queues into a table whose HTTP dispatch loop was removed, so accept events were never emitted on any configuration. It now registers with `RegisterHook` and emits through `EnqueueWebhookEvent` — the same stream `ServerCargoArrived` uses. Payload unchanged (`PlayerId`, `DeliveryId`), so no backend change is required.
+
 ### [server/v0.44.0-rc5] - 2026-11-21
 
 #### Added
