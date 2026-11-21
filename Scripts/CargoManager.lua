@@ -535,14 +535,23 @@ end
 
 -- Register event hooks
 
-webhook.RegisterEventHook(
-  "ServerAcceptDelivery",
+RegisterHook(
+  "/Script/MotorTown.MotorTownPlayerController:ServerAcceptDelivery",
   function(PC, DeliveryId)
     ---@cast PC APlayerController
-    return {
-      PlayerId = GetPlayerUniqueId(PC),
-      DeliveryId = DeliveryId,
-    }
+    -- Emit on the C++ EventManager stream. The deprecated
+    -- webhook.RegisterEventHook path is gated by MOD_WEBHOOK_ENABLE_EVENTS and
+    -- its Lua dispatch loop was removed, so accepts never reached the backend
+    -- (queued into a table nothing drains). EnqueueWebhookEvent is the same
+    -- path ServerCargoArrived uses.
+    local playerController = PC:get()
+    if not playerController:IsValid() then
+      return
+    end
+    EnqueueWebhookEvent("ServerAcceptDelivery", {
+      PlayerId = GetPlayerUniqueId(playerController),
+      DeliveryId = DeliveryId:get(),
+    })
   end
 )
 
