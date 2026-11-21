@@ -1,4 +1,5 @@
 local vehicleManager = require("VehicleManager")
+local repairManager = require("RepairManager")
 local teleportLocations = require("TeleportLocations")
 local teleportAllow = require("TeleportAllow")
 
@@ -143,6 +144,45 @@ Commands["/tps"] = function(PC, args)
   end
   ReplyPopup(PC, "Teleport places (use /tp <name>):\n" .. table.concat(names, "\n"))
 end
+
+--- Repair the caller's own vehicle: zero every damaged part, fill the tank.
+--- Uses LastVehicle (or the vehicle they are sitting in), so it works on foot
+--- with a parked car as well as while driving.
+Commands["/repair"] = function(PC, args)
+  local playerName = "unknown"
+  pcall(function() playerName = PC.PlayerState:GetPlayerName():ToString() end)
+  LogOutput("INFO", "/repair requested by %s", playerName)
+
+  local result = repairManager.RepairPlayerVehicle(PC)
+
+  if not result.ok and result.error == "no_vehicle" then
+    Reply(PC, "No vehicle found. Sit in a car or spawn one first.")
+    return
+  end
+
+  local parts = result.parts or {}
+  local fuel = result.fuel or {}
+  local message = string.format("Repaired %d of %d damaged parts.",
+    parts.repaired or 0, parts.damaged or 0)
+
+  if fuel.method == "skipped" or fuel.method == "no_capacity" then
+    message = message .. " Tank not changed."
+  elseif fuel.method == "rpc_failed" then
+    message = message .. " Tank fill failed."
+  else
+    message = message .. " Tank filled."
+  end
+
+  if (parts.failed or 0) > 0 then
+    message = message .. string.format(" (%d parts failed)", parts.failed)
+  end
+
+  LogOutput("INFO", "/repair %s: vehicleId=%s damaged=%d repaired=%d fuel=%s",
+    playerName, tostring(result.vehicleId),
+    parts.damaged or 0, parts.repaired or 0, tostring(fuel.method))
+  Reply(PC, message)
+end
+
 
 local function HandleCommand(PC, message)
   if string.sub(message, 1, 1) == "/" then

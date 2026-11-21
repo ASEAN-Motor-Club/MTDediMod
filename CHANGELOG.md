@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc5] - 2026-11-21
+
+#### Added
+- Chat `/repair` for backend-less instances: zero every damaged vehicle part through `ServerSetPartDamage` and fill the tank through `ServerSetFuel`, with per-player confirmation. Adds `GET/POST /repair` and `POST /repair/fuel_probe` for host-side verification; the chat gate remains opt-in through `MOD_CHAT_COMMANDS` or the teleport-locations file.
+
 ### [server/v0.44.0-rc4] - 2026-11-18
 
 #### Fixed

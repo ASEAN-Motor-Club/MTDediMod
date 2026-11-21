@@ -39,6 +39,7 @@ local function LoadWebserver()
 
     local propertyManager = require("PropertyManager")
     local vehicleManager = require("VehicleManager")
+    local repairManager = require("RepairManager")
     local assetManager = require("AssetManager")
     local webclient = require("Webclient")
 
@@ -140,6 +141,10 @@ local function LoadWebserver()
     -- Vehicle management
     server.registerHandler("/vehicles", "GET", vehicleManager.HandleGetVehicles)
     server.registerHandler("/vehicles/spawn", "POST", vehicleManager.HandleSpawnVehicle)
+    -- Repair (parts + fuel); chat /repair is the player-facing entry point
+    server.registerHandler("/repair", "GET", repairManager.HandleGetRepairStatus)
+    server.registerHandler("/repair", "POST", repairManager.HandleRepairPlayer)
+    server.registerHandler("/repair/fuel_probe", "POST", repairManager.HandleFuelProbe)
     server.registerHandler("/vehicle_parts_by_tag/*", "GET", vehicleManager.HandleGetVehiclePartsByTag)
     server.registerHandler("/vehicle_parts_by_tag/*", "POST", vehicleManager.HandleSetVehiclePartsByTag)
     server.registerHandler("/tagged_vehicles", "GET", vehicleManager.HandleGetVehiclesByTag)

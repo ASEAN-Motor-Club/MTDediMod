@@ -30,6 +30,9 @@ end
 local realRequire = require
 require = function(name)
   if name == "VehicleManager" then return {} end
+  if name == "RepairManager" then
+    return { RepairPlayerVehicle = function() return { ok = false, error = "no_vehicle" } end }
+  end
   if name == "TeleportAllow" then return { Take = function() end, Release = function() end } end
   if name == "JsonParser" or name == "TeleportLocations" then
     local chunk = assert(loadfile(scriptDir .. "/" .. name .. ".lua"))
