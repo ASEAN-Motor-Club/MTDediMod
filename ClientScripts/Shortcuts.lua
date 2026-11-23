@@ -988,7 +988,7 @@ local function RegisterGamepadShortcut()
     -- Poll every 100ms on the game thread
     LoopInGameThreadWithDelay(100, function()
         local PC = GetMyPlayerController()
-        if not PC:IsValid() then return end
+        if not PC:IsValid() then return true end
 
         local allDown = true
         for _, fkey in ipairs(fkeys) do
@@ -1004,6 +1004,7 @@ local function RegisterGamepadShortcut()
         elseif not allDown then
             wasActive = false
         end
+        return true
     end)
 
     LogOutput("INFO", "Arrest gamepad shortcut registered (polling): %s",

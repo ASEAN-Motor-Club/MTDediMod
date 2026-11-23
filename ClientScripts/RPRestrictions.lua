@@ -162,7 +162,7 @@ local function BlockTeleportHooks()
         end
     end)
 
-    RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(Context, Vehicle, WorldLocation, Rotation, bRemoveCargo, bResetCarriedVehicles)
+    RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", function(Context, Vehicle, WorldLocation, Rotation, bRemoveCargo, bResetCarriedVehicles, ResetOperationId)
         if not IsRPPlayer() then return end
         local veh = Vehicle:get()
         if veh and veh:IsValid() then
@@ -191,9 +191,14 @@ end
 BlockTeleportHooks()
 
 LoopInGameThreadWithDelay(1000, function()
-    DisableAutoPilotWidgets()
-    SuppressAutoPilot()
-    ClearTeleportPoints()
+    -- return true: UE4SS callback GC frees loops that do not opt in, and a
+    -- freed callback firing is a C++ crash no pcall can catch.
+    pcall(function()
+        DisableAutoPilotWidgets()
+        SuppressAutoPilot()
+        ClearTeleportPoints()
+    end)
+    return true
 end)
 
 LogOutput("INFO", "[RPRestrictions] Loaded (v%s)", statics.ModVersion)

@@ -152,8 +152,9 @@ local function StartPolling()
     if pollHandle then return end
 
     pollHandle = LoopInGameThreadWithDelay(POLL_INTERVAL_MS, function()
-        if not isVisible then return end
-        if not widgetRoot or not widgetRoot:IsValid() then return end
+        -- return true: UE4SS callback GC frees loops that do not opt in
+        if not isVisible then return true end
+        if not widgetRoot or not widgetRoot:IsValid() then return true end
 
         local now = os.clock() * 1000
 
@@ -169,6 +170,7 @@ local function StartPolling()
                 end
             end
         end
+        return true
     end)
 
     LogOutput("INFO", "[EmoteWidget] Polling loop started")
