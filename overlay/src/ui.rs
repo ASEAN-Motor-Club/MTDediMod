@@ -28,6 +28,7 @@ struct WindowDef {
     flag: &'static AtomicBool,
 }
 
+#[cfg(feature = "admin")]
 const ADMIN: WindowDef = WindowDef { key: "admin", flag: &crate::ADMIN_OPEN };
 const TELEPORT: WindowDef = WindowDef { key: "teleport", flag: &crate::TELEPORT_OPEN };
 
@@ -51,22 +52,36 @@ pub struct Panels {
 /// Queue the command for Lua and apply it to our copy of the state at once,
 /// so the panel does not show the old value until the next poll (~50 ms).
 fn apply(cmd: Command) {
+    #[cfg(feature = "admin")]
     if let Ok(mut s) = bridge::SHARED.lock() {
         let st = &mut s.state;
         match &cmd {
+            #[cfg(feature = "admin")]
             Command::SetImpulseMode(v) => st.impulse_mode = v.clone(),
+            #[cfg(feature = "admin")]
             Command::SetImpulseStrength(v) => st.impulse_strength = *v,
+            #[cfg(feature = "admin")]
             Command::SetSpeedKmh(v) => st.speed_kmh = *v,
+            #[cfg(feature = "admin")]
             Command::SetDirection(v) => st.direction = v.clone(),
+            #[cfg(feature = "admin")]
             Command::SetOrigin(v) => st.origin = v.clone(),
+            #[cfg(feature = "admin")]
             Command::SetRightClick(v) => st.right_click = v.clone(),
-            Command::Trigger(_) | Command::Teleport(_) | Command::Emote(_) => {}
+            #[cfg(feature = "admin")]
+            Command::Trigger(_) => {}
+            Command::Teleport(_) | Command::Emote(_) => {}
         }
+    }
+    #[cfg(not(feature = "admin"))]
+    match &cmd {
+        Command::Teleport(_) | Command::Emote(_) => {}
     }
     bridge::send(cmd);
 }
 
 /// A row of mutually exclusive options; the active one is highlighted.
+#[cfg(feature = "admin")]
 fn radio_row(ui: &mut egui::Ui, current: &str, options: &[&str], make: fn(String) -> Command) {
     ui.horizontal(|ui| {
         for opt in options {
@@ -137,7 +152,7 @@ fn movable_window(
 
 impl Panels {
     pub fn show(&mut self, ctx: &egui::Context) {
-        let (state, connected): (GameState, bool) = match bridge::SHARED.lock() {
+        let (_state, connected): (GameState, bool) = match bridge::SHARED.lock() {
             Ok(s) => (s.state.clone(), s.connected),
             Err(_) => return,
         };
@@ -145,13 +160,14 @@ impl Panels {
 
         // Defaults match the UMG widgets: admin on the right edge, vertically
         // centred; teleport centred horizontally, above the lower third.
+        #[cfg(feature = "admin")]
         movable_window(
             ctx,
             self,
             &ADMIN,
             "Admin Tools",
             (egui::pos2(screen.max.x - 40.0, screen.center().y), Align2::RIGHT_CENTER),
-            |ui| admin_contents(ui, &state, connected),
+            |ui| admin_contents(ui, &_state, connected),
         );
 
         let mut filter = std::mem::take(&mut self.teleport_filter);
@@ -168,14 +184,18 @@ impl Panels {
 
     /// Rects (in points) of the windows currently open, for input hit-testing.
     pub fn open_rects(&self, ctx: &egui::Context) -> Vec<egui::Rect> {
-        [ADMIN, TELEPORT]
-            .iter()
+        #[cfg(feature = "admin")]
+        let defs = [ADMIN, TELEPORT];
+        #[cfg(not(feature = "admin"))]
+        let defs = [TELEPORT];
+        defs.iter()
             .filter(|d| d.flag.load(Ordering::Relaxed))
             .filter_map(|d| ctx.memory(|m| m.area_rect(window_id(d))))
             .collect()
     }
 }
 
+#[cfg(feature = "admin")]
 fn admin_contents(ui: &mut egui::Ui, state: &GameState, connected: bool) {
     ui.set_width(300.0);
     if !connected {

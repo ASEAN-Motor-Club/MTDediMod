@@ -64,28 +64,33 @@ jobs:
       - name: Build client
         run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-client
 
-      - name: Build egui overlay
-        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-overlay
+      - name: Build egui overlay (admin and player)
+        run: |
+          nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-overlay -- admin
+          nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-overlay -- player
 
-      - name: Package client
-        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package-client
+      - name: Package both client variants
+        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package-client-all
 
-      - name: Extract version
+      - name: Extract version from VERSION
         id: version
         run: |
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          if [[ -z "$VERSION" ]]; then echo "VERSION file is empty"; exit 1; fi
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#client/v}"
+            if [[ "${{ github.ref_name }}" != "client/v$VERSION" ]]; then
+              echo "Tag ${{ github.ref_name }} does not match VERSION $VERSION"; exit 1
+            fi
           else
-            VERSION="dev-$(git rev-parse --short HEAD)"
+            VERSION="$VERSION-dev-$(git rev-parse --short HEAD)"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Upload client artifact
+      - name: Upload client artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: client-mod-package
-          path: MotorTownClientMod-package.zip
+          name: client-mod-packages
+          path: MotorTownClientMod-*-*.zip
           retention-days: 30
 
   create-release:
@@ -99,13 +104,15 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: client-mod-package
+          name: client-mod-packages
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           name: MotorTownClientMod v${{ needs.build-client-mod.outputs.version }}
           tag_name: ${{ github.ref_name }}
-          files: MotorTownClientMod-package.zip
+          files: |
+            MotorTownClientMod-*-admin.zip
+            MotorTownClientMod-*-player.zip
           generate_release_notes: true
           make_latest: false

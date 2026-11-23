@@ -9,7 +9,7 @@ This repository produces **two independent artifacts**:
 | Artifact | Output | Proxy DLL | Source | Distribution |
 |----------|--------|-----------|--------|-------------|
 | **Server mod** | `MotorTownMods-package.zip` | `version.dll` | `src/`, `Scripts/`, `shared/` | Downloaded by game server at startup |
-| **Client mod** | `MotorTownClientMod-package.zip` | `dwmapi.dll` | `ClientScripts/`, `shared/` | Distributed to players |
+| **Client mod** | `MotorTownClientMod-<version>-<admin\|player>.zip` | `dwmapi.dll` | `ClientScripts/`, `shared/`, `ClientScripts/variants/player/` | Two variants; version comes from `VERSION` |
 
 ---
 
@@ -101,8 +101,13 @@ nix run --no-update-lock-file .#configure-client
 # 2. Cross-compile UE4SS with dwmapi.dll proxy
 nix run --no-update-lock-file .#build-client
 
-# 3. Package the client zip (MotorTownClientMod-package.zip)
-nix run --no-update-lock-file .#package-client
+# 3. Build both overlay DLLs (default = admin, `player` drops admin UI)
+nix run --no-update-lock-file .#build-overlay -- admin
+nix run --no-update-lock-file .#build-overlay -- player
+
+# 4. Package both variants in one command:
+#    MotorTownClientMod-<VERSION>-admin.zip / -player.zip
+nix run --no-update-lock-file .#package-client-all
 ```
 
 The client package bundles `dwmapi.dll`, `UE4SS.dll`, client Lua scripts from `ClientScripts/`, shared Lua libraries, and `UE4SS_Signatures`. UE4SS settings are patched for client use (console + hot reload enabled).

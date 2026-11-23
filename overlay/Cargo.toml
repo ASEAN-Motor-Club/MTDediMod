@@ -5,6 +5,12 @@ edition = "2021"
 description = "egui overlay for MotorTownClientMod, drawn from a DXGI Present hook"
 publish = false
 
+[features]
+# The player build turns this off: no admin window, no admin bridge commands,
+# no aim-impulse state. It is a compile-time guard, not a runtime toggle.
+default = ["admin"]
+admin = []
+
 [lib]
 # Loaded into the game by the Lua mod with package.loadlib(path, "*"), which
 # only maps the DLL: no Lua C API is needed, DllMain starts everything.

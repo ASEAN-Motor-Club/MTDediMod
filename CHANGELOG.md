@@ -530,6 +530,13 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
+### [Unreleased]
+
+#### Added
+- `VERSION` is the single source of truth for the client version. Generated `ClientScripts/BuildConfig.lua` supplies it to `Statics.lua` at package time; git tags only trigger the release and must match the file.
+- `nix run .#package-client-all` builds both distributable variants in one command: `MotorTownClientMod-<version>-admin.zip` and `MotorTownClientMod-<version>-player.zip`. `nix run .#build-overlay -- player` compiles the DLL without admin UI.
+- Static build guard: the player package physically excludes admin shortcuts, commands, bridge and vehicle/integrity modules, replaces them with player-only implementations, and fails the build if admin symbols leak. The Rust overlay uses a default-on `admin` cargo feature that the player DLL disables.
+
 ### [client/v0.6.0] — 2026-11-23
 
 #### Added
