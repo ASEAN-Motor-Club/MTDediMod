@@ -1,0 +1,33 @@
+name: Client Lua checks
+
+on:
+  pull_request:
+    paths:
+      - 'ClientScripts/**'
+      - 'scripts/check_lua_loop_callbacks.py'
+      - '.github/workflows/client-lua-checks.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'ClientScripts/**'
+      - 'scripts/check_lua_loop_callbacks.py'
+      - '.github/workflows/client-lua-checks.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  loop-callbacks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check loop callbacks opt in to UE4SS callback GC
+        run: python3 scripts/check_lua_loop_callbacks.py ClientScripts

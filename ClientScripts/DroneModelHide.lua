@@ -102,13 +102,18 @@ end
 ---a camera-mode switch) and covers spawns missed by a failed hook registration.
 ---No-ops when disabled or no drone in flight.
 LoopInGameThreadWithDelay(1000, function()
-    if not hideEnabled then return end
-    local drone = GetMyDrone()
-    if not drone then return end
-    local found, changed = SetDroneModelHidden(drone, true)
-    if changed > 0 then
-        LogOutput("INFO", "[DroneModelHide] Re-asserted — hid %d/%d primitive component(s)", changed, found)
+    if hideEnabled then
+        local drone = GetMyDrone()
+        if drone then
+            local found, changed = SetDroneModelHidden(drone, true)
+            if changed > 0 then
+                LogOutput("INFO", "[DroneModelHide] Re-asserted — hid %d/%d primitive component(s)", changed, found)
+            end
+        end
     end
+    -- UE4SS callback GC frees loops that do not opt in; a freed callback
+    -- firing is a native crash no pcall can catch.
+    return true
 end)
 
 RegisterKeyBind(Key.B, { ModifierKey.CONTROL, ModifierKey.SHIFT }, ToggleDroneModel)
