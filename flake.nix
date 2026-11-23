@@ -431,6 +431,28 @@
           '';
         };
 
+        # Build the Rust egui overlay DLL for the client mod.
+        # Uses the xwin cache laid down by configure-client for MSVC libs and
+        # lld-link from the cross-compile toolchain. The DLL is optional: a
+        # package built without it falls back to the UMG teleport/emote widgets.
+        buildOverlayScript = pkgs.writeShellApplication {
+          name = "${clientModName}-build-overlay";
+          runtimeInputs = crossCompileBuildInputs;
+          text = ''
+            set -e
+            XWIN_CACHE="$(pwd)/.xwin-cache"
+            if [ ! -d "$XWIN_CACHE/crt/lib/x86_64" ]; then
+              echo "Error: $XWIN_CACHE missing. Run 'nix run .#configure-client' first."
+              exit 1
+            fi
+            export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=lld-link
+            export RUSTFLAGS="-L native=$XWIN_CACHE/crt/lib/x86_64 -L native=$XWIN_CACHE/sdk/lib/ucrt/x86_64 -L native=$XWIN_CACHE/sdk/lib/um/x86_64"
+            cd overlay
+            cargo build --release --lib --target x86_64-pc-windows-msvc
+            echo "Overlay DLL: overlay/target/x86_64-pc-windows-msvc/release/mt_overlay.dll"
+          '';
+        };
+
         packageClientScript = pkgs.writeShellApplication {
           name = "${clientModName}-package";
           runtimeInputs = with pkgs; [coreutils zip gnused];
@@ -559,6 +581,18 @@
                           rm -f "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts/enabled.txt"
                           SCRIPT_COUNT=$(find "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts" -name "*.lua" | wc -l)
                           echo "✓ Copied $SCRIPT_COUNT client Lua scripts"
+
+                          # Optional egui overlay DLL (Rust). Built with
+                          # 'nix run .#build-overlay'. Without it the Lua bridge
+                          # falls back to the UMG teleport/emote widgets.
+                          OVERLAY_DLL="overlay/target/x86_64-pc-windows-msvc/release/mt_overlay.dll"
+                          if [ -f "$OVERLAY_DLL" ]; then
+                            mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/overlay"
+                            cp "$OVERLAY_DLL" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/overlay/"
+                            echo "✓ Copied egui overlay DLL (mt_overlay.dll)"
+                          else
+                            echo "⚠ egui overlay DLL not built - package will use the UMG widgets. Run 'nix run .#build-overlay' first."
+                          fi
 
                           # Copy enabled.txt
                           if [ -f "$LUA_SCRIPTS_DIR/enabled.txt" ]; then
@@ -732,6 +766,12 @@
         apps.build-client = {
           type = "app";
           program = "${buildClientScript}/bin/${clientModName}-build";
+        };
+
+        # Build the Rust egui overlay DLL (requires configure-client first)
+        apps.build-overlay = {
+          type = "app";
+          program = "${buildOverlayScript}/bin/${clientModName}-build-overlay";
         };
 
         # Client mod package script - creates client-side Lua-only zip
