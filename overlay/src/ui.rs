@@ -152,6 +152,9 @@ fn movable_window(
 
 impl Panels {
     pub fn show(&mut self, ctx: &egui::Context) {
+        // One local state read per frame; the native bridge pushes changes
+        // from Lua, so there is no 50 ms IPC poll on the game thread.
+        bridge::sync_state();
         let (_state, connected): (GameState, bool) = match bridge::SHARED.lock() {
             Ok(s) => (s.state.clone(), s.connected),
             Err(_) => return,
