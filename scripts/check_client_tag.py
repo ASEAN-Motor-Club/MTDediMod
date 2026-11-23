@@ -2,12 +2,14 @@
 """Enforce the client release tag policy.
 
 A plain ``client/vX.Y.Z`` tag may only point at a commit that has been merged
-into master. An unmerged commit must use ``client/vX.Y.Z-hotfixN`` (or the bare
-``-hotfix`` suffix). The VERSION file must contain the base X.Y.Z in both cases.
+into master. An unmerged commit must use ``client/vX.Y.Z-hotfixN`` (shipping
+fix) or ``client/vX.Y.Z-rcN`` (test build). The VERSION file must contain the
+base X.Y.Z in all cases. RC tags publish as GitHub prereleases.
 
-Used by .github/workflows/nix-client-release.yml and runnable locally:
+Runnable locally:
 
-    python3 scripts/check_client_tag.py --tag client/v0.6.0 --sha HEAD
+    python3 scripts/check_client_tag.py --tag client/v0.6.1 --sha HEAD
+    python3 scripts/check_client_tag.py --tag client/v0.6.1-rc1 --sha HEAD
     python3 scripts/check_client_tag.py --tag client/v0.6.1-hotfix1 --sha HEAD
 """
 
@@ -19,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-TAG_RE = re.compile(r"^client/v(\d+\.\d+\.\d+)(?:-hotfix\d*)?$")
+TAG_RE = re.compile(r"^client/v(\d+\.\d+\.\d+)(?:-(rc|hotfix)\d*)?$")
 
 
 def git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -61,7 +63,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    base, hotfix = m.group(1), "-hotfix" in a.tag
+    base, kind = m.group(1), m.group(2)
     if version != base:
         print(
             f"ERROR: tag '{a.tag}' base version {base} != VERSION '{version}'",
@@ -69,8 +71,11 @@ def main() -> int:
         )
         return 1
 
-    if hotfix:
-        print(f"OK: {a.tag} is a hotfix tag; merge into master is not required")
+    if kind:
+        noun = "release candidate" if kind == "rc" else "hotfix"
+        print(
+            f"OK: {a.tag} is a {noun} tag; merge into master is not required"
+        )
         return 0
 
     if a.fetch:
@@ -91,7 +96,8 @@ def main() -> int:
         print(
             f"ERROR: {a.tag} points at {a.sha}, which is NOT merged into "
             f"{a.master_ref}. Merge the PR into master first, or retag as "
-            f"client/v{version}-hotfix1.",
+            f"client/v{version}-rc1 (test build) or "
+            f"client/v{version}-hotfix1 (fix).",
             file=sys.stderr,
         )
         return 1

@@ -533,7 +533,7 @@ Re-release for test container deployment (no server-side code changes since rc5)
 ### [Unreleased]
 
 #### Added
-- Client release tag policy: a plain `client/vX.Y.Z` tag is rejected by CI unless the tagged commit is merged into `master`; unmerged commits must use `client/vX.Y.Z-hotfixN`. `scripts/check_client_tag.py` runs in the release workflow before any build and can be run locally.
+- Client release tag policy: a plain `client/vX.Y.Z` tag is rejected by CI unless the tagged commit is merged into `master`; unmerged commits must use `client/vX.Y.Z-rcN` (test build, published as a prerelease) or `client/vX.Y.Z-hotfixN` (shipping fix). `scripts/check_client_tag.py` runs in the release workflow before any build and can be run locally. Suffixes are included in artifact names so test builds cannot collide with the final release.
 - `VERSION` is the single source of truth for the client version. Generated `ClientScripts/BuildConfig.lua` supplies it to `Statics.lua` at package time; git tags only trigger the release and must match the file.
 - `nix run .#package-client-all` builds both distributable variants in one command: `MotorTownClientMod-<version>-admin.zip` and `MotorTownClientMod-<version>-player.zip`. `nix run .#build-overlay -- player` compiles the DLL without admin UI.
 - Static build guard: the player package physically excludes admin shortcuts, commands, bridge and vehicle/integrity modules, replaces them with player-only implementations, and fails the build if admin symbols leak. The Rust overlay uses a default-on `admin` cargo feature that the player DLL disables.

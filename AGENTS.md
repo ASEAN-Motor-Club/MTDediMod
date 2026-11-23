@@ -43,18 +43,22 @@ client/v0.1.0         # client mod releases
 
 A plain `client/vX.Y.Z` tag **must point at a commit merged into `master`**.
 Tagging an unmerged branch commit is rejected by
-`.github/workflows/nix-client-release.yml` before any build starts. If you need
-to ship from an unmerged commit, use a hotfix tag:
+`.github/workflows/nix-client-release.yml` before any build starts. Two suffixes
+are allowed from unmerged commits:
 
 ```
-client/v0.6.1-hotfix1   # allowed from an unmerged commit
-client/v0.6.1-hotfix    # bare suffix also accepted
+client/v0.6.1-rc1       # test build, published as a GitHub prerelease
+client/v0.6.1-hotfix1   # shipping fix from an unmerged commit
 ```
 
-The `VERSION` file must contain the base `X.Y.Z` in both cases. Check locally:
+Bare `-rc` / `-hotfix` suffixes are accepted too. The suffix is included in
+artifact names (`MotorTownClientMod-0.6.1-rc1-admin.zip`) so test builds never
+collide with the final release. The `VERSION` file must contain the base
+`X.Y.Z` in all cases. Check locally:
 
 ```bash
 python3 scripts/check_client_tag.py --tag client/v0.6.1 --sha HEAD
+python3 scripts/check_client_tag.py --tag client/v0.6.1-rc1 --sha HEAD
 python3 scripts/check_client_tag.py --tag client/v0.6.1-hotfix1 --sha HEAD
 ```
 

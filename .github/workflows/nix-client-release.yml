@@ -83,11 +83,14 @@ jobs:
           if [[ -z "$VERSION" ]]; then echo "VERSION file is empty"; exit 1; fi
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG="${{ github.ref_name }}"
-            BASE="${TAG#client/v}"
-            BASE="${BASE%%-hotfix*}"
+            RAW="${TAG#client/v}"
+            BASE="${RAW%%-*}"
             if [[ "$BASE" != "$VERSION" ]]; then
               echo "Tag $TAG does not match VERSION $VERSION"; exit 1
             fi
+            # Keep the suffix in artifact names so RC/hotfix builds cannot
+            # collide with the final release assets.
+            VERSION="$RAW"
           else
             VERSION="$VERSION-dev-$(git rev-parse --short HEAD)"
           fi
@@ -122,4 +125,5 @@ jobs:
             MotorTownClientMod-*-admin.zip
             MotorTownClientMod-*-player.zip
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
           make_latest: false
