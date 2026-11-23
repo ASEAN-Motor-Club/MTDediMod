@@ -392,6 +392,7 @@
             if(NOT UE4SS_SOURCE_DIR)
                 set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
             endif()
+            set(MT_BUILD_BRIDGE ON CACHE BOOL "" FORCE)
             add_subdirectory("''${UE4SS_SOURCE_DIR}" RE-UE4SS)
             add_subdirectory("src" ${modName})
             EOF
@@ -636,6 +637,11 @@
                             if grep -rEq 'ImpulseAimed|DespawnAimed|ServerApplyImpact|SetImpulseMode|adminpanel' "$SCRIPTS_OUT"; then
                               echo "Error: admin symbols leaked into player package"; exit 1
                             fi
+                            for bridge_dll in "$PACKAGE_DIR/mt_bridge.dll" "$PACKAGE_DIR/ue4ss/Mods/MTBridgeHost/dlls/main.dll"; do
+                              if [ -f "$bridge_dll" ] && grep -aqE 'mt_bridge_admin_build|\[MTBridgeHost\] admin build' "$bridge_dll"; then
+                                echo "Error: admin bridge symbols leaked into player package"; exit 1
+                              fi
+                            done
                           fi
 
                           # Optional egui overlay DLL (Rust). Built with
@@ -650,6 +656,20 @@
                             echo "✓ Copied egui overlay DLL (mt_overlay.dll)"
                           else
                             echo "⚠ egui overlay DLL not built - package will use the UMG widgets. Run 'nix run .#build-overlay' first."
+                          fi
+
+                          # Native bridge: mt_bridge.dll sits at the game executable
+                          # root (Rust resolves it with LoadLibraryW by name); the
+                          # UE4SS host mod that drains its queue lives under Mods/.
+                          BRIDGE_OUT="$BUILD_DIR/bridge-out"
+                          if [ -f "$BRIDGE_OUT/mt_bridge.dll" ] && [ -f "$BRIDGE_OUT/MTBridgeHost.dll" ]; then
+                            cp "$BRIDGE_OUT/mt_bridge.dll" "$PACKAGE_DIR/"
+                            mkdir -p "$PACKAGE_DIR/ue4ss/Mods/MTBridgeHost/dlls"
+                            cp "$BRIDGE_OUT/MTBridgeHost.dll" "$PACKAGE_DIR/ue4ss/Mods/MTBridgeHost/dlls/main.dll"
+                            touch "$PACKAGE_DIR/ue4ss/Mods/MTBridgeHost/enabled.txt"
+                            echo "✓ Copied native bridge DLLs (mt_bridge.dll + MTBridgeHost)"
+                          else
+                            echo "⚠ Native bridge DLLs not built - run 'nix run .#configure-client && nix run .#build-client' first."
                           fi
 
                           # Copy enabled.txt
@@ -691,6 +711,7 @@
                           # Create mods.txt
                           cat > "$PACKAGE_DIR/ue4ss/Mods/mods.txt" << MODSTXT
             $MOD_NAME : 1
+            MTBridgeHost : 1
             BPML_GenericFunctions : 1
             BPModLoaderMod : 1
             MODSTXT
@@ -718,6 +739,10 @@
             [
                 {
                     "mod_name": "$MOD_NAME",
+                    "mod_enabled": true
+                },
+                {
+                    "mod_name": "MTBridgeHost",
                     "mod_enabled": true
                 },
                 {

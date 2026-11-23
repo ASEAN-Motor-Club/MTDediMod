@@ -90,6 +90,40 @@ target_include_directories(MotorTownMods PRIVATE
     ${UE4SS_SOURCE_DIR}/deps/first/JSON/include
 )
 
+# ── Native bridge (client only) ───────────────────────────────────────────
+# mt_bridge.dll owns the thread-safe command queue/state snapshot shared by
+# the Rust overlay and the C++ host mod. MTBridgeHost.dll is a tiny UE4SS
+# client mod that drains that queue on the game thread and invokes the Lua
+# handler. The server build does not include either target.
+option(MT_BUILD_BRIDGE "Build the native client overlay bridge" OFF)
+if(MT_BUILD_BRIDGE)
+    add_library(mt_bridge SHARED "${CMAKE_CURRENT_SOURCE_DIR}/bridge/mt_bridge.cpp")
+    target_compile_features(mt_bridge PRIVATE cxx_std_20)
+    target_compile_definitions(mt_bridge PRIVATE MT_BRIDGE_BUILD _CRT_SECURE_NO_WARNINGS)
+    if(MT_BRIDGE_ADMIN)
+        target_compile_definitions(mt_bridge PRIVATE MT_BRIDGE_ADMIN)
+    endif()
+    set_target_properties(mt_bridge PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bridge-out")
+
+    add_library(MTBridgeHost SHARED "${CMAKE_CURRENT_SOURCE_DIR}/bridge/BridgeHost.cpp")
+    target_compile_features(MTBridgeHost PRIVATE cxx_std_20)
+    target_compile_definitions(MTBridgeHost PRIVATE _CRT_SECURE_NO_WARNINGS)
+    if(MT_BRIDGE_ADMIN)
+        target_compile_definitions(MTBridgeHost PRIVATE MT_BRIDGE_ADMIN)
+    endif()
+    target_link_libraries(MTBridgeHost PRIVATE UE4SS mt_bridge)
+    file(GLOB UE4SS_DEP_INCLUDE_DIRS LIST_DIRECTORIES true
+        "${UE4SS_SOURCE_DIR}/deps/first/*/include")
+    target_include_directories(MTBridgeHost PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/bridge
+        ${UE4SS_SOURCE_DIR}/UE4SS/include
+        ${UE4SS_DEP_INCLUDE_DIRS}
+    )
+    set_target_properties(MTBridgeHost PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bridge-out")
+endif()
+
 # Set C++ standard
 target_compile_features(MotorTownMods PRIVATE cxx_std_20)
 

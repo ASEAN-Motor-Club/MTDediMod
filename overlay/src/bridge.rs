@@ -170,9 +170,20 @@ pub fn sync_state() {
     let Some(b) = bridge() else { return };
     let connected = unsafe { (b.ready)() != 0 };
     let mut buf = [0u8; 8192];
-    let n = unsafe { (b.get_state)(buf.as_mut_ptr(), buf.len() as i32) };
+    let mut n = unsafe { (b.get_state)(buf.as_mut_ptr(), buf.len() as i32) };
     let mut next = None;
-    if n > 0 {
+    // The C ABI reports -(required size) instead of truncating. Retry once
+    // with an exactly sized buffer so a long snapshot is never silently lost.
+    if n < -1 {
+        let needed = (-n) as usize;
+        let mut big = vec![0u8; needed];
+        n = unsafe { (b.get_state)(big.as_mut_ptr(), needed as i32) };
+        if n > 0 && n as usize <= big.len() {
+            if let Ok(s) = serde_json::from_slice::<GameState>(&big[..n as usize]) {
+                next = Some(s);
+            }
+        }
+    } else if n > 0 {
         let n = (n as usize).min(buf.len());
         if let Ok(s) = serde_json::from_slice::<GameState>(&buf[..n]) {
             next = Some(s);
