@@ -24,8 +24,267 @@ local despawnDialogOpen = false
 --- orders cold-state writes by generation, so it must increase per call.
 local engineColdStateGeneration = 0
 
---- Impulse strength for the aimed impulse shortcut
-local IMPULSE_STRENGTH = 100000.0
+--- Impulse strength for the aimed impulse shortcut (persisted in config.json)
+local DEFAULT_IMPULSE_STRENGTH = 100000.0
+local IMPULSE_MIN = 1000.0
+local IMPULSE_MAX = 1000000000.0
+
+--- Speed mode: impulse is derived from the actor's mass, so the same setting
+--- produces the same velocity change on a scooter and on a loaded truck.
+local DEFAULT_SPEED_KMH = 20.0
+local SPEED_MIN_KMH = 1.0
+local SPEED_MAX_KMH = 1000.0
+--- 1 km/h = 100000cm / 3600s
+local KMH_TO_CMS = 100000.0 / 3600.0
+
+---Current impulse mode: "raw" (send the number as-is) or "speed" (mass-scaled)
+---@return string
+local function GetImpulseMode()
+    local m = config.GetModConfig("impulseMode")
+    if m == "speed" then return "speed" end
+    return "raw"
+end
+
+---Current target speed change in km/h (speed mode only)
+---@return number
+local function GetSpeedKmh()
+    local v = config.GetModConfig("impulseSpeedKmh")
+    if type(v) ~= "number" then return DEFAULT_SPEED_KMH end
+    if v < SPEED_MIN_KMH then return SPEED_MIN_KMH end
+    if v > SPEED_MAX_KMH then return SPEED_MAX_KMH end
+    return v
+end
+
+---Current impulse strength from config, clamped to a sane range
+---@return number
+local function GetImpulseStrength()
+    local v = config.GetModConfig("impulseStrength")
+    if type(v) ~= "number" then return DEFAULT_IMPULSE_STRENGTH end
+    if v < IMPULSE_MIN then return IMPULSE_MIN end
+    if v > IMPULSE_MAX then return IMPULSE_MAX end
+    return v
+end
+
+---Current right-click action: "despawn" (aimed actor), "trunk" (nearest door)
+---or "engine" (toggle the aimed vehicle's engine cold-state).
+---@return string
+local RIGHT_CLICK_ACTIONS = { "despawn", "trunk", "engine" }
+
+local function IsRightClickAction(a)
+    for _, v in ipairs(RIGHT_CLICK_ACTIONS) do
+        if v == a then return true end
+    end
+    return false
+end
+
+local function GetRightClickAction()
+    local a = config.GetModConfig("rightClickAction")
+    if type(a) ~= "string" then return "despawn" end
+    a = string.lower(a)
+    if IsRightClickAction(a) then return a end
+    return "despawn"
+end
+
+---Advance despawn -> trunk -> engine -> despawn.
+---@return string the new action
+local function CycleRightClickAction()
+    local cur = GetRightClickAction()
+    local idx = 1
+    for i, v in ipairs(RIGHT_CLICK_ACTIONS) do
+        if v == cur then idx = i end
+    end
+    local nxt = RIGHT_CLICK_ACTIONS[(idx % #RIGHT_CLICK_ACTIONS) + 1]
+    config.SetModConfig("rightClickAction", nxt)
+    return nxt
+end
+
+---Impulse direction: "angled" (70% forward + 30% up), "ray" (straight along
+---the aim ray) or "up" (straight up)
+---@return string
+local function GetImpulseDirectionMode()
+    local m = config.GetModConfig("impulseDirection")
+    if m == "ray" or m == "up" then return m end
+    return "angled"
+end
+
+---Where the impulse is applied: "impact" (raycast hit point) or "com" (center of mass)
+---@return string
+local function GetImpulseOriginMode()
+    local m = config.GetModConfig("impulseOrigin")
+    if m == "com" then return m end
+    return "impact"
+end
+
+---Round + clamp an impulse value to the allowed range
+---@param n number
+---@return number? value
+local function ClampImpulse(n)
+    if type(n) ~= "number" or n ~= n then return nil end -- bad input / NaN guard
+    n = math.floor(n + 0.5)
+    if n < IMPULSE_MIN then n = IMPULSE_MIN end
+    if n > IMPULSE_MAX then n = IMPULSE_MAX end
+    return n
+end
+
+---Round + clamp a speed-mode target (km/h)
+---@param n number
+---@return number? value
+local function ClampSpeed(n)
+    if type(n) ~= "number" or n ~= n then return nil end
+    n = math.floor(n * 10 + 0.5) / 10
+    if n < SPEED_MIN_KMH then n = SPEED_MIN_KMH end
+    if n > SPEED_MAX_KMH then n = SPEED_MAX_KMH end
+    return n
+end
+
+---Is this actor a Motor Town vehicle?
+---@param actor AActor?
+---@return boolean
+local function IsVehicleActor(actor)
+    if not actor or not actor:IsValid() then return false end
+    local ok, vehicleClass = pcall(StaticFindObject, "/Script/MotorTown.MTVehicle")
+    if not ok or not vehicleClass or not vehicleClass:IsValid() then return false end
+    local ok2, isVehicle = pcall(function() return actor:IsA(vehicleClass) end)
+    return ok2 and isVehicle == true
+end
+
+---Mass of a VEHICLE's root primitive in kg (engine-reported), or nil.
+---Only vehicles are queried: GetMass() dereferences the physics body, and
+---non-vehicle actors (cargo, props, breakables) can have no BodyInstance.
+---@param actor AActor?
+---@return number? massKg
+local function GetActorMassKg(actor)
+    if not IsVehicleActor(actor) then return nil end
+    local ok, root = pcall(function() return actor:K2_GetRootComponent() end)
+    if not ok or not root or not root:IsValid() then return nil end
+    local ok2, mass = pcall(function() return root:GetMass() end)
+    if not ok2 or type(mass) ~= "number" or mass <= 0 then return nil end
+    return mass
+end
+
+---Actor currently under the crosshair (client-side trace), or nil
+---@return AActor?
+local function GetAimedActorNow()
+    local ok, wasHit, hitResult = pcall(GetHitResultFromCenterLineTrace)
+    if not ok or not wasHit then return nil end
+    local ok2, actor = pcall(GetActorFromHitResult, hitResult)
+    if not ok2 or not actor or not actor:IsValid() then return nil end
+    return actor
+end
+
+---Impulse magnitude to send for a vehicle of `massKg`.
+---Speed mode scales with mass so every vehicle gets the same delta-v;
+---raw mode returns the configured number unchanged.
+---@param massKg number?
+---@return number? strength
+local function ComputeImpulseStrength(massKg)
+    if GetImpulseMode() == "speed" then
+        if not massKg then return nil end
+        return massKg * GetSpeedKmh() * KMH_TO_CMS
+    end
+    return GetImpulseStrength()
+end
+
+---Unit direction vector for the impulse, per the configured direction mode
+---@param forward FVector aim/camera forward
+---@return number x
+---@return number y
+---@return number z
+local function GetImpulseDirectionUnit(forward)
+    local mode = GetImpulseDirectionMode()
+    local x, y, z
+    if mode == "up" then
+        x, y, z = 0.0, 0.0, 1.0
+    elseif mode == "ray" then
+        x, y, z = forward.X, forward.Y, forward.Z
+    else
+        x = forward.X * 0.7
+        y = forward.Y * 0.7
+        z = forward.Z * 0.7 + 0.3
+    end
+    local len = math.sqrt(x * x + y * y + z * z)
+    if len > 0 then
+        x, y, z = x / len, y / len, z / len
+    end
+    return x, y, z
+end
+
+---World-space center of mass of the root primitive, or nil
+---@param root UPrimitiveComponent
+---@return table? vector
+local function GetCenterOfMassWorld(root)
+    if not root or not root:IsValid() then return nil end
+    local ok, com = pcall(function() return root:GetCenterOfMass() end)
+    if (not ok) or type(com) ~= "table" or type(com.X) ~= "number" then
+        ok, com = pcall(function() return root:GetCenterOfMass("") end)
+    end
+    if ok and type(com) == "table" and type(com.X) == "number" then
+        return com
+    end
+    return nil
+end
+
+---Relative application point (actor-space) and a label for logging
+---@param actor AActor
+---@param root UPrimitiveComponent
+---@param hitResult table
+---@return table location
+---@return string label
+local function GetImpulseRelativeLocation(actor, root, hitResult)
+    local loc = actor:K2_GetActorLocation()
+    if GetImpulseOriginMode() == "com" then
+        local com = GetCenterOfMassWorld(root)
+        if com then
+            return { X = com.X - loc.X, Y = com.Y - loc.Y, Z = com.Z - loc.Z }, "com"
+        end
+        return { X = 0.0, Y = 0.0, Z = 0.0 }, "origin-fallback"
+    end
+    return {
+        X = hitResult.ImpactPoint.X - loc.X,
+        Y = hitResult.ImpactPoint.Y - loc.Y,
+        Z = hitResult.ImpactPoint.Z - loc.Z,
+    }, "impact"
+end
+
+--- Setters for the egui admin panel. Each writes config.json immediately so
+--- the next key press or bridge poll sees the new value.
+local function SetImpulseStrength(n)
+    local v = ClampImpulse(n)
+    if not v then return false end
+    config.SetModConfig("impulseStrength", v)
+    return true
+end
+
+local function SetSpeedKmh(n)
+    local v = ClampSpeed(n)
+    if not v then return false end
+    config.SetModConfig("impulseSpeedKmh", v)
+    return true
+end
+
+local function SetImpulseMode(mode)
+    if mode ~= "raw" and mode ~= "speed" then return false end
+    config.SetModConfig("impulseMode", mode)
+    return true
+end
+
+local function SetImpulseDirectionMode(mode)
+    if mode ~= "angled" and mode ~= "ray" and mode ~= "up" then return false end
+    config.SetModConfig("impulseDirection", mode)
+    return true
+end
+
+local function SetImpulseOriginMode(mode)
+    if mode ~= "impact" and mode ~= "com" then return false end
+    config.SetModConfig("impulseOrigin", mode)
+    return true
+end
+
+local function SetRightClickAction(action)
+    if not IsRightClickAction(action) then return false end
+    config.SetModConfig("rightClickAction", action)
+    return true
+end
 
 ---Check whether the local player has admin privileges
 ---@return boolean
@@ -495,18 +754,32 @@ local function TriggerImpulseAimed()
         local cameraManager = PC.PlayerCameraManager
         local forward = KML:GetForwardVector(cameraManager:GetCameraRotation())
 
-        local impulse = {
-            X = forward.X * IMPULSE_STRENGTH * 0.7,
-            Y = forward.Y * IMPULSE_STRENGTH * 0.7,
-            Z = (forward.Z * IMPULSE_STRENGTH * 0.7) + (IMPULSE_STRENGTH * 0.3)
-        }
+        local massKg = GetActorMassKg(actor)
+        -- Static props report 0 kg; treating that as a real mass makes the
+        -- delta-v readout divide by zero and skews speed mode.
+        if massKg and massKg <= 0 then massKg = nil end
+        local strength = ComputeImpulseStrength(massKg)
+        if not strength then
+            strength = GetImpulseStrength()
+            LogOutput("WARN", "Impulse: mass unavailable for %s; sending raw strength %.0f",
+                actor:GetFullName(), strength)
+        end
+        local deltaV = massKg and (strength / massKg / KMH_TO_CMS) or nil
+        local ix, iy, iz = GetImpulseDirectionUnit(forward)
+        local relativeLocation, originLabel = GetImpulseRelativeLocation(actor, rootComponent, hitResult)
 
-        -- Compute relative location (impact point relative to actor origin)
-        local actorLocation = actor:K2_GetActorLocation()
-        local relativeLocation = {
-            X = hitResult.ImpactPoint.X - actorLocation.X,
-            Y = hitResult.ImpactPoint.Y - actorLocation.Y,
-            Z = hitResult.ImpactPoint.Z - actorLocation.Z,
+        LogOutput("INFO", "Impulse: mass=%s strength=%.0f mode=%s dir=%s origin=%s deltaV=%s",
+            massKg and string.format("%.0fkg", massKg) or "unknown",
+            strength,
+            GetImpulseMode(),
+            GetImpulseDirectionMode(),
+            originLabel,
+            deltaV and string.format("%.1fkm/h", deltaV) or "n/a")
+
+        local impulse = {
+            X = ix * strength,
+            Y = iy * strength,
+            Z = iz * strength,
         }
 
         ---@type FMTPhysicsImpact
@@ -520,7 +793,6 @@ local function TriggerImpulseAimed()
         LogOutput("INFO", "Impulse shortcut: ServerApplyImpact on %s", actor:GetFullName())
     end)
 end
-
 
 ---Despawn selection dialog: opens a ButtonsDialog with three choices
 ---Ctrl+Shift+D → modal widget (Current / All / Others)
@@ -821,7 +1093,19 @@ end
 -- Initialize shortcuts
 RegisterKeyboardShortcut()
 RegisterGamepadShortcut()
-RegisterKeyBind(Key.RIGHT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnAimed)
+---Ctrl+Shift+RMB action is selectable in the egui admin panel.
+local function TriggerRightClick()
+    local action = GetRightClickAction()
+    if action == "trunk" then
+        TriggerDoorToggle()
+    elseif action == "engine" then
+        TriggerEngineToggleAimed()
+    else
+        TriggerDespawnAimed()
+    end
+end
+
+RegisterKeyBind(Key.RIGHT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerRightClick)
 RegisterKeyBind(Key.I, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.O, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDoorToggle)
@@ -841,4 +1125,25 @@ RegisterKeyBind(Key.F5, { ModifierKey.CONTROL, ModifierKey.SHIFT }, function()
   end
 end)
 
-return {}
+-- Public API driven by OverlayBridge.lua (egui overlay) and by the keybinds.
+return {
+    GetImpulseMode = GetImpulseMode,
+    GetImpulseStrength = GetImpulseStrength,
+    GetSpeedKmh = GetSpeedKmh,
+    GetImpulseDirectionMode = GetImpulseDirectionMode,
+    GetImpulseOriginMode = GetImpulseOriginMode,
+    GetRightClickAction = GetRightClickAction,
+    GetAimedMassKg = function() return GetActorMassKg(GetAimedActorNow()) end,
+
+    SetImpulseStrength = SetImpulseStrength,
+    SetSpeedKmh = SetSpeedKmh,
+    SetImpulseMode = SetImpulseMode,
+    SetImpulseDirectionMode = SetImpulseDirectionMode,
+    SetImpulseOriginMode = SetImpulseOriginMode,
+    SetRightClickAction = SetRightClickAction,
+
+    ImpulseAimed = TriggerImpulseAimed,
+    DespawnAimed = TriggerDespawnAimed,
+    DoorToggle = TriggerDoorToggle,
+    EngineAimed = TriggerEngineToggleAimed,
+}

@@ -174,4 +174,5 @@ end
 
 return {
   HandleTeleport = HandleTeleport,
+  GetPointNames = GetPointNames,
 }

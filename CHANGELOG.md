@@ -530,6 +530,17 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
+### [client/v0.6.0] — 2026-11-23
+
+#### Added
+- egui overlay (`overlay/` Rust crate, `OverlayBridge.lua`): DXGI Present-hook windows for Teleport + Emotes (Tab / `tpmenu`) and an admin panel (Ctrl+Shift+F10 / `adminpanel`). The DLL consumes its own keys and clicks, unlike the UMG widgets; window positions persist in `mt_overlay_layout.json`. Teleport points are fetched by the DLL from the server API with TeleportManager names as fallback. Configurable with `useEguiOverlay` (default true); without the DLL the UMG widgets still load.
+- Config-driven impulse settings (`impulseStrength`, `impulseMode`, `impulseSpeedKmh`, `impulseDirection`, `impulseOrigin`, `rightClickAction`) shared by the keyboard shortcuts and the overlay admin panel. Ctrl+Shift+RMB now follows the selected right-click action.
+- `nix run .#build-overlay` builds `mt_overlay.dll` with the cross-compile toolchain; `package-client` bundles it when present.
+
+#### Fixed
+- `main.lua` / `ModConfig.lua` resolved the game root with `io:popen("cd")` (bad self on Windows) when `PWD` was unset, aborting the whole client mod at load. Both now use `ModPath.game_root()`.
+- `client-signatures/FText_Constructor.lua` updated for Motor Town 0.7.20: the carried 0.7.19 pattern matched 0 addresses on the current client, so UMG FText construction could fail. Pinned to the single 0.7.20 constructor (re-derive on the next game update).
+
 ### [client/v0.4.0] — 2026-08-29
 
 #### Added

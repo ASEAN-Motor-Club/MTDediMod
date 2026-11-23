@@ -1,4 +1,4 @@
-local dir = os.getenv("PWD") or io:popen("cd"):read()
+local dir = require("ModPath").game_root()
 package.cpath = package.cpath .. ";" .. dir .. "/ue4ss/Mods/shared/?/core.dll"
 package.cpath = package.cpath .. ";" .. dir .. "/ue4ss/Mods/shared/?.dll"
 
@@ -10,15 +10,31 @@ local statics = require("Statics")
 LogMsg = logging.logMsg
 LogOutput = logging.logOutput
 
-require("ModConfig")
+local config = require("ModConfig")
 require("ViewportManager")
 require("Commands")
-require("Shortcuts")
+local shortcuts = require("Shortcuts")
 require("DroneModelHide")
 require("IntegrityChecker")
 require("ModManager")
 require("RPRestrictions")
-local teleportWidget = require("TeleportWidget")
-local emoteWidget = require("EmoteWidget")
+
+-- The egui overlay (overlay/mt_overlay.dll) draws the teleport/emote menu and
+-- an admin panel from a DXGI Present hook and consumes its own keys. The UMG
+-- widgets register TAB/ESC at load, so load them ONLY when the overlay is not
+-- active - otherwise both fight over TAB and the cursor.
+local overlayBridge = require("OverlayBridge")
+local overlayActive = false
+if config.GetModConfig("useEguiOverlay") ~= false then
+    overlayActive = overlayBridge.Load(dir)
+end
+if overlayActive then
+    overlayBridge.Init(shortcuts)
+    LogOutput("INFO", "egui overlay active (Tab: teleport, Ctrl+Shift+F10: admin)")
+else
+    require("TeleportWidget")
+    require("EmoteWidget")
+    LogOutput("INFO", "egui overlay unavailable - using UMG teleport/emote widgets")
+end
 
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)

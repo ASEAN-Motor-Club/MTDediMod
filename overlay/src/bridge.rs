@@ -1,0 +1,219 @@
+//! Lua <-> overlay bridge over two named pipes, one line of JSON each way.
+//!
+//! Lua cannot call into this DLL (UE4SS does not export the Lua C API), but
+//! its `io.open` can open a named pipe like a file. So Lua drives the
+//! exchange from the game thread on a timer:
+//!
+//!   Lua  → `\\.\pipe\mt_overlay_up`   : `{"state":{..}|null,"events":[..]}\n`
+//!   Rust → `\\.\pipe\mt_overlay_down` : `{"visible":bool,"commands":[..]}\n`
+//!
+//! Every request gets exactly one immediate reply, so Lua's blocking read
+//! returns at once. If this thread dies its handles close and Lua's read sees
+//! EOF instead of hanging the game thread.
+
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
+use std::os::windows::io::FromRawHandle;
+
+use std::sync::Mutex;
+
+use serde::{Deserialize, Serialize};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
+};
+use windows_sys::Win32::Storage::FileSystem::{PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND};
+use windows_sys::Win32::System::Pipes::{
+    ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+};
+
+use crate::log;
+
+const PIPE_UP: &str = r"\\.\pipe\mt_overlay_up";
+const PIPE_DOWN: &str = r"\\.\pipe\mt_overlay_down";
+
+/// Snapshot of the Lua-side settings, pushed up on every poll.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct GameState {
+    pub impulse_mode: String,
+    pub impulse_strength: f64,
+    pub speed_kmh: f64,
+    pub direction: String,
+    pub origin: String,
+    pub right_click: String,
+    /// `None` when Lua skipped the aim trace this poll (it traces every ~500 ms).
+    pub aimed_mass_kg: Option<f64>,
+}
+
+/// One change for Lua to apply through the Shortcuts API.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "op", content = "value", rename_all = "snake_case")]
+pub enum Command {
+    SetImpulseMode(String),
+    SetImpulseStrength(f64),
+    SetSpeedKmh(f64),
+    SetDirection(String),
+    SetOrigin(String),
+    SetRightClick(String),
+    /// "despawn" | "impulse" | "door" | "engine" — runs on the aimed actor.
+    Trigger(String),
+    /// Teleport point name; Lua sends `/tp <name>` through chat.
+    Teleport(String),
+    /// Chat emote command, e.g. "/Wave".
+    Emote(String),
+}
+
+#[derive(Deserialize)]
+struct Request {
+    state: Option<GameState>,
+    #[serde(default)]
+    events: Vec<String>,
+    /// TeleportManager's point names, sent once per connection.
+    teleport_points: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct Response {
+    visible: bool,
+    commands: Vec<Command>,
+}
+
+#[derive(Default)]
+pub struct Shared {
+    pub state: GameState,
+    pub connected: bool,
+    pending: Vec<Command>,
+}
+
+pub static SHARED: Mutex<Shared> = Mutex::new(Shared {
+    state: GameState {
+        impulse_mode: String::new(),
+        impulse_strength: 0.0,
+        speed_kmh: 0.0,
+        direction: String::new(),
+        origin: String::new(),
+        right_click: String::new(),
+        aimed_mass_kg: None,
+    },
+    connected: false,
+    pending: Vec::new(),
+});
+
+/// Queue a command for the next Lua poll.
+pub fn send(cmd: Command) {
+    if let Ok(mut s) = SHARED.lock() {
+        s.pending.push(cmd);
+    }
+}
+
+pub fn start() {
+    std::thread::spawn(|| loop {
+        if let Err(e) = serve_one_client() {
+            log::warn(&format!("bridge: {e}"));
+        }
+        if let Ok(mut s) = SHARED.lock() {
+            s.connected = false;
+        }
+        // Lua reconnects after a mod hot-reload; be ready for it.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    });
+}
+
+fn create_pipe(name: &str, access: u32) -> std::io::Result<HANDLE> {
+    let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+    let h = unsafe {
+        CreateNamedPipeW(
+            wide.as_ptr(),
+            access,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            1,
+            64 * 1024,
+            64 * 1024,
+            0,
+            std::ptr::null(),
+        )
+    };
+    if h == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(h)
+}
+
+fn connect(h: HANDLE) -> std::io::Result<()> {
+    let ok = unsafe { ConnectNamedPipe(h, std::ptr::null_mut()) };
+    // The client opening before we call Connect is success, not an error.
+    if ok == 0 && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED {
+        let err = std::io::Error::last_os_error();
+        unsafe { CloseHandle(h) };
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn serve_one_client() -> std::io::Result<()> {
+    // Create both ends before waiting on either, so Lua can open them in order.
+    let up = create_pipe(PIPE_UP, PIPE_ACCESS_INBOUND)?;
+    let down = match create_pipe(PIPE_DOWN, PIPE_ACCESS_OUTBOUND) {
+        Ok(h) => h,
+        Err(e) => {
+            unsafe { CloseHandle(up) };
+            return Err(e);
+        }
+    };
+    connect(up)?;
+    connect(down)?;
+    // From here the Files own the handles and close them on drop.
+    let mut reader = BufReader::new(unsafe { File::from_raw_handle(up as _) });
+    let mut writer = unsafe { File::from_raw_handle(down as _) };
+    log::info("bridge: Lua connected");
+    if let Ok(mut s) = SHARED.lock() {
+        s.connected = true;
+    }
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            log::info("bridge: Lua disconnected");
+            return Ok(());
+        }
+
+        let commands = match serde_json::from_str::<Request>(line.trim()) {
+            Ok(req) => {
+                for ev in &req.events {
+                    match ev.as_str() {
+                        "toggle" => crate::toggle(&crate::ADMIN_OPEN, "admin panel"),
+                        "toggle_teleport" => crate::toggle(&crate::TELEPORT_OPEN, "teleport menu"),
+                        _ => log::warn(&format!("bridge: unknown event {ev}")),
+                    }
+                }
+                if let Some(points) = req.teleport_points {
+                    crate::teleports::set_fallback(points);
+                }
+                let mut s = SHARED.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(mut state) = req.state {
+                    // Keep the last mass reading between Lua's aim traces.
+                    if state.aimed_mass_kg.is_none() {
+                        state.aimed_mass_kg = s.state.aimed_mass_kg;
+                    }
+                    s.state = state;
+                }
+                std::mem::take(&mut s.pending)
+            }
+            Err(e) => {
+                log::warn(&format!("bridge: bad request ({e}): {}", line.trim()));
+                Vec::new()
+            }
+        };
+
+        // Always reply, even to a bad request: Lua is blocked on this line.
+        let resp = Response {
+            visible: crate::any_open(),
+            commands,
+        };
+        let mut out = serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into());
+        out.push('\n');
+        writer.write_all(out.as_bytes())?;
+        writer.flush()?;
+    }
+}

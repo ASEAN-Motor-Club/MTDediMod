@@ -64,6 +64,9 @@ jobs:
       - name: Build client
         run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-client
 
+      - name: Build egui overlay
+        run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-overlay
+
       - name: Package client
         run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package-client
 

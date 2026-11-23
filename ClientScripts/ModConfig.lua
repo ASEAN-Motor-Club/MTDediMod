@@ -1,7 +1,7 @@
 local json = require("JsonParser")
 local statics = require("Statics")
 
-local dir = os.getenv("PWD") or io.popen("cd"):read()
+local dir = require("ModPath").game_root()
 local modConfigFilePath = dir .. "/ue4ss/Mods/" .. statics.ModName .. "/config.json"
 
 ---@enum HotBarLocation
@@ -19,6 +19,14 @@ local modConfig = {
     showControls = true,
     showHotbar = true,
     showPlayerList = true,
+    -- egui overlay (Rust DLL) settings. All preserved in config.json.
+    impulseStrength = 100000.0,
+    impulseMode = "raw", ---@type string "raw" | "speed"
+    impulseSpeedKmh = 20.0,
+    impulseDirection = "angled", ---@type string "angled" | "ray" | "up"
+    impulseOrigin = "impact", ---@type string "impact" | "com"
+    rightClickAction = "despawn", ---@type string "despawn" | "trunk" | "engine"
+    useEguiOverlay = true, -- false = keep the UMG teleport/emote widgets
     hotbarLocation = "default", ---@type HotBarLocation
     uiScale = 1.0,
     modName = statics.ModName,
