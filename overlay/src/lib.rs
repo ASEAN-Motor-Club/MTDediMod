@@ -19,6 +19,7 @@ mod input;
 mod layout;
 mod log;
 mod painter;
+mod painter12;
 mod teleports;
 mod ui;
 
