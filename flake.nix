@@ -446,6 +446,13 @@
               exit 1
             fi
             export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=lld-link
+            # cc-rs build scripts (e.g. ring via ureq) look for lib.exe/cl.exe
+            # on the MSVC target; point them at the LLVM equivalents so the
+            # build never needs a Visual Studio install.
+            export AR_x86_64_pc_windows_msvc=llvm-lib
+            export CC_x86_64_pc_windows_msvc=clang-cl
+            # ring's C sources need the xwin headers too.
+            export CFLAGS_x86_64_pc_windows_msvc="/imsvc$XWIN_CACHE/crt/include /imsvc$XWIN_CACHE/sdk/include/ucrt /imsvc$XWIN_CACHE/sdk/include/shared /imsvc$XWIN_CACHE/sdk/include/um /imsvc$XWIN_CACHE/sdk/include/winrt /FIstring.h"
             export RUSTFLAGS="-L native=$XWIN_CACHE/crt/lib/x86_64 -L native=$XWIN_CACHE/sdk/lib/ucrt/x86_64 -L native=$XWIN_CACHE/sdk/lib/um/x86_64"
             cd overlay
             cargo build --release --lib --target x86_64-pc-windows-msvc

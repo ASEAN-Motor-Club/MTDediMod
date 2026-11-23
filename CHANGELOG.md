@@ -530,7 +530,7 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
-### [Unreleased]
+### [client/v0.6.0] — 2026-11-23
 
 #### Added
 - egui overlay (`overlay/` Rust crate, `OverlayBridge.lua`): DXGI Present-hook windows for Teleport + Emotes (Tab / `tpmenu`) and an admin panel (Ctrl+Shift+F10 / `adminpanel`). The DLL consumes its own keys and clicks, unlike the UMG widgets; window positions persist in `mt_overlay_layout.json`. Teleport points are fetched by the DLL from the server API with TeleportManager names as fallback. Configurable with `useEguiOverlay` (default true); without the DLL the UMG widgets still load.
