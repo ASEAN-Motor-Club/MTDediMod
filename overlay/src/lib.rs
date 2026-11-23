@@ -7,11 +7,11 @@
 //! Split of responsibilities:
 //! - Rust (this crate): rendering, input (and *consuming* it — the thing
 //!   UE4SS keybinds cannot do), window layout, the teleport list fetch.
-//! - Lua (OverlayBridge.lua): everything that touches UObjects. It polls the
-//!   bridge pipe from the game thread, pushes state up, applies commands down.
+//! - Lua (OverlayBridge.lua): registers one handler with the native bridge at
+//!   init; that handler is the only thing that touches UObjects. No timer.
 //!
 //! Load order: Lua calls `package.loadlib(dll, "*")` → DllMain → init thread
-//! → bridge pipe server + DXGI hooks. Nothing here calls into UE directly.
+//! → native bridge load + DXGI hooks. Nothing here calls into UE directly.
 
 mod bridge;
 mod hook;
@@ -55,6 +55,24 @@ pub(crate) fn set_open(flag: &AtomicBool, name: &str, open: bool) {
         if open && std::ptr::eq(flag, &TELEPORT_OPEN) {
             teleports::ensure_fetched();
         }
+    }
+}
+
+/// Called by mt_bridge.dll on the game thread for console `adminpanel` /
+/// `tpmenu` events. Direct call — no queue, no poll.
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "C" fn mt_overlay_event(name: *const u8, len: i32) {
+    if name.is_null() || len <= 0 {
+        return;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(name, len as usize) };
+    let Ok(text) = std::str::from_utf8(bytes) else { return };
+    match text {
+        #[cfg(feature = "admin")]
+        "adminpanel" | "toggle" => toggle(&ADMIN_OPEN, "admin panel"),
+        "tpmenu" | "toggle_teleport" => toggle(&TELEPORT_OPEN, "teleport menu"),
+        _ => log::warn(&format!("unknown overlay event: {text}")),
     }
 }
 

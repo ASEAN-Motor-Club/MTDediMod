@@ -1,37 +1,49 @@
-//! Lua <-> overlay bridge over two named pipes, one line of JSON each way.
+//! Native bridge: Rust talks to `mt_bridge.dll` directly.
 //!
-//! Lua cannot call into this DLL (UE4SS does not export the Lua C API), but
-//! its `io.open` can open a named pipe like a file. So Lua drives the
-//! exchange from the game thread on a timer:
+//! The old implementation used two named pipes and a 50 ms Lua poll on the
+//! game thread. That relay is gone. The overlay calls exported C functions:
 //!
-//!   Lua  → `\\.\pipe\mt_overlay_up`   : `{"state":{..}|null,"events":[..]}\n`
-//!   Rust → `\\.\pipe\mt_overlay_down` : `{"visible":bool,"commands":[..]}\n`
+//! - `mt_bridge_submit(json, len)` — queue a command (safe from any thread).
+//! - `mt_bridge_set_state(json, len)` — called by Lua through the native
+//!   bridge when settings change (no timer needed).
+//! - `mt_bridge_get_state(buf, cap)` — read the current state snapshot.
 //!
-//! Every request gets exactly one immediate reply, so Lua's blocking read
-//! returns at once. If this thread dies its handles close and Lua's read sees
-//! EOF instead of hanging the game thread.
+//! The native bridge drains its queue on the game thread and invokes the Lua
+//! handler registered at init. Nothing here touches UObjects, and there is no
+//! polling loop on the Lua side.
 
-use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::os::windows::io::FromRawHandle;
-
-use std::sync::Mutex;
+use std::ffi::c_void;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
-use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
-};
-use windows_sys::Win32::Storage::FileSystem::{PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND};
-use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
-};
+use windows::core::{w, PCSTR};
+use windows::Win32::Foundation::HMODULE;
+use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
 use crate::log;
 
-const PIPE_UP: &str = r"\\.\pipe\mt_overlay_up";
-const PIPE_DOWN: &str = r"\\.\pipe\mt_overlay_down";
+type ReadyFn = unsafe extern "C" fn() -> i32;
+type SubmitFn = unsafe extern "C" fn(*const u8, i32) -> i32;
+type SetStateFn = unsafe extern "C" fn(*const u8, i32) -> i32;
+type GetStateFn = unsafe extern "C" fn(*mut u8, i32) -> i32;
 
-/// Snapshot of the Lua-side settings, pushed up on every poll.
+struct Bridge {
+    _module: HMODULE,
+    ready: ReadyFn,
+    submit: SubmitFn,
+    #[allow(dead_code)] // Lua pushes state; the export must still be resolved.
+    set_state: SetStateFn,
+    get_state: GetStateFn,
+}
+
+// Win32 module handles and plain function pointers are process-global once
+// resolved; all calls go through the mutex-protected queue in C++.
+unsafe impl Send for Bridge {}
+unsafe impl Sync for Bridge {}
+
+static BRIDGE: OnceLock<Option<Bridge>> = OnceLock::new();
+
+/// Snapshot of the settings the panel displays.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct GameState {
@@ -47,9 +59,12 @@ pub struct GameState {
     pub origin: String,
     #[cfg(feature = "admin")]
     pub right_click: String,
-    /// `None` when Lua skipped the aim trace this poll (it traces every ~500 ms).
     #[cfg(feature = "admin")]
     pub aimed_mass_kg: Option<f64>,
+    /// Teleport names pushed once by Lua; the Rust overlay fetches the server
+    /// list itself and uses these as a fallback.
+    #[serde(default)]
+    pub teleport_points: Option<Vec<String>>,
 }
 
 /// One change for Lua to apply through the Shortcuts API.
@@ -68,35 +83,16 @@ pub enum Command {
     SetOrigin(String),
     #[cfg(feature = "admin")]
     SetRightClick(String),
-    /// "despawn" | "impulse" | "door" | "engine" — runs on the aimed actor.
     #[cfg(feature = "admin")]
     Trigger(String),
-    /// Teleport point name; Lua sends `/tp <name>` through chat.
     Teleport(String),
-    /// Chat emote command, e.g. "/Wave".
     Emote(String),
-}
-
-#[derive(Deserialize)]
-struct Request {
-    state: Option<GameState>,
-    #[serde(default)]
-    events: Vec<String>,
-    /// TeleportManager's point names, sent once per connection.
-    teleport_points: Option<Vec<String>>,
-}
-
-#[derive(Serialize)]
-struct Response {
-    visible: bool,
-    commands: Vec<Command>,
 }
 
 #[derive(Default)]
 pub struct Shared {
     pub state: GameState,
     pub connected: bool,
-    pending: Vec<Command>,
 }
 
 pub static SHARED: Mutex<Shared> = Mutex::new(Shared {
@@ -115,131 +111,82 @@ pub static SHARED: Mutex<Shared> = Mutex::new(Shared {
         right_click: String::new(),
         #[cfg(feature = "admin")]
         aimed_mass_kg: None,
+        teleport_points: None,
     },
     connected: false,
-    pending: Vec::new(),
 });
 
-/// Queue a command for the next Lua poll.
-pub fn send(cmd: Command) {
-    if let Ok(mut s) = SHARED.lock() {
-        s.pending.push(cmd);
-    }
+unsafe fn symbol(module: HMODULE, name: &[u8]) -> Option<*const c_void> {
+    GetProcAddress(module, PCSTR(name.as_ptr())).map(|f| f as *const c_void)
 }
 
+/// Load the native bridge. Safe to call more than once (OnceLock).
 pub fn start() {
-    std::thread::spawn(|| loop {
-        if let Err(e) = serve_one_client() {
-            log::warn(&format!("bridge: {e}"));
-        }
-        if let Ok(mut s) = SHARED.lock() {
-            s.connected = false;
-        }
-        // Lua reconnects after a mod hot-reload; be ready for it.
-        std::thread::sleep(std::time::Duration::from_millis(500));
+    BRIDGE.get_or_init(|| unsafe {
+        let module = match LoadLibraryW(w!("mt_bridge.dll")) {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn(&format!("native bridge unavailable: {e}"));
+                return None;
+            }
+        };
+        let (Some(ready), Some(submit), Some(set_state), Some(get_state)) = (
+            symbol(module, b"mt_bridge_ready\0"),
+            symbol(module, b"mt_bridge_submit\0"),
+            symbol(module, b"mt_bridge_set_state\0"),
+            symbol(module, b"mt_bridge_get_state\0"),
+        ) else {
+            log::warn("native bridge is missing one or more exports");
+            return None;
+        };
+        log::info("native bridge loaded (mt_bridge.dll)");
+        Some(Bridge {
+            _module: module,
+            ready: std::mem::transmute::<*const c_void, ReadyFn>(ready),
+            submit: std::mem::transmute::<*const c_void, SubmitFn>(submit),
+            set_state: std::mem::transmute::<*const c_void, SetStateFn>(set_state),
+            get_state: std::mem::transmute::<*const c_void, GetStateFn>(get_state),
+        })
     });
 }
 
-fn create_pipe(name: &str, access: u32) -> std::io::Result<HANDLE> {
-    let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-    let h = unsafe {
-        CreateNamedPipeW(
-            wide.as_ptr(),
-            access,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-            1,
-            64 * 1024,
-            64 * 1024,
-            0,
-            std::ptr::null(),
-        )
-    };
-    if h == INVALID_HANDLE_VALUE {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(h)
+fn bridge() -> Option<&'static Bridge> {
+    BRIDGE.get().and_then(|b| b.as_ref())
 }
 
-fn connect(h: HANDLE) -> std::io::Result<()> {
-    let ok = unsafe { ConnectNamedPipe(h, std::ptr::null_mut()) };
-    // The client opening before we call Connect is success, not an error.
-    if ok == 0 && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED {
-        let err = std::io::Error::last_os_error();
-        unsafe { CloseHandle(h) };
-        return Err(err);
+/// Queue a command for the native bridge. Never blocks on the game thread.
+pub fn send(cmd: Command) {
+    let Some(b) = bridge() else { return };
+    let Ok(json) = serde_json::to_string(&cmd) else { return };
+    let code = unsafe { (b.submit)(json.as_ptr(), json.len() as i32) };
+    if code != 0 {
+        log::warn("native bridge rejected a command");
     }
-    Ok(())
 }
 
-fn serve_one_client() -> std::io::Result<()> {
-    // Create both ends before waiting on either, so Lua can open them in order.
-    let up = create_pipe(PIPE_UP, PIPE_ACCESS_INBOUND)?;
-    let down = match create_pipe(PIPE_DOWN, PIPE_ACCESS_OUTBOUND) {
-        Ok(h) => h,
-        Err(e) => {
-            unsafe { CloseHandle(up) };
-            return Err(e);
+/// Refresh the cached state from the native bridge. Called once per UI frame;
+/// unlike the old pipe relay this is a local memory read, not IPC or a timer.
+pub fn sync_state() {
+    let Some(b) = bridge() else { return };
+    let connected = unsafe { (b.ready)() != 0 };
+    let mut buf = [0u8; 8192];
+    let n = unsafe { (b.get_state)(buf.as_mut_ptr(), buf.len() as i32) };
+    let mut next = None;
+    if n > 0 {
+        let n = (n as usize).min(buf.len());
+        if let Ok(s) = serde_json::from_slice::<GameState>(&buf[..n]) {
+            next = Some(s);
         }
-    };
-    connect(up)?;
-    connect(down)?;
-    // From here the Files own the handles and close them on drop.
-    let mut reader = BufReader::new(unsafe { File::from_raw_handle(up as _) });
-    let mut writer = unsafe { File::from_raw_handle(down as _) };
-    log::info("bridge: Lua connected");
-    if let Ok(mut s) = SHARED.lock() {
-        s.connected = true;
     }
-
-    let mut line = String::new();
-    loop {
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            log::info("bridge: Lua disconnected");
-            return Ok(());
+    if let Ok(mut shared) = SHARED.lock() {
+        shared.connected = connected;
+        if let Some(s) = next {
+            if let Some(points) = s.teleport_points.as_ref() {
+                if !points.is_empty() && Some(points) != shared.state.teleport_points.as_ref() {
+                    crate::teleports::set_fallback(points.clone());
+                }
+            }
+            shared.state = s;
         }
-
-        let commands = match serde_json::from_str::<Request>(line.trim()) {
-            Ok(req) => {
-                for ev in &req.events {
-                    match ev.as_str() {
-                        #[cfg(feature = "admin")]
-                        "toggle" => crate::toggle(&crate::ADMIN_OPEN, "admin panel"),
-                        "toggle_teleport" => crate::toggle(&crate::TELEPORT_OPEN, "teleport menu"),
-                        _ => log::warn(&format!("bridge: unknown event {ev}")),
-                    }
-                }
-                if let Some(points) = req.teleport_points {
-                    crate::teleports::set_fallback(points);
-                }
-                let mut s = SHARED.lock().unwrap_or_else(|p| p.into_inner());
-                #[cfg(feature = "admin")]
-                if let Some(mut state) = req.state {
-                    if state.aimed_mass_kg.is_none() {
-                        state.aimed_mass_kg = s.state.aimed_mass_kg;
-                    }
-                    s.state = state;
-                }
-                #[cfg(not(feature = "admin"))]
-                if let Some(state) = req.state {
-                    s.state = state;
-                }
-                std::mem::take(&mut s.pending)
-            }
-            Err(e) => {
-                log::warn(&format!("bridge: bad request ({e}): {}", line.trim()));
-                Vec::new()
-            }
-        };
-
-        // Always reply, even to a bad request: Lua is blocked on this line.
-        let resp = Response {
-            visible: crate::any_open(),
-            commands,
-        };
-        let mut out = serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into());
-        out.push('\n');
-        writer.write_all(out.as_bytes())?;
-        writer.flush()?;
     }
 }
