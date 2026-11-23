@@ -39,6 +39,25 @@ server/v0.34.0-rc5    # server mod releases
 client/v0.1.0         # client mod releases
 ```
 
+### Client tag policy (enforced by CI)
+
+A plain `client/vX.Y.Z` tag **must point at a commit merged into `master`**.
+Tagging an unmerged branch commit is rejected by
+`.github/workflows/nix-client-release.yml` before any build starts. If you need
+to ship from an unmerged commit, use a hotfix tag:
+
+```
+client/v0.6.1-hotfix1   # allowed from an unmerged commit
+client/v0.6.1-hotfix    # bare suffix also accepted
+```
+
+The `VERSION` file must contain the base `X.Y.Z` in both cases. Check locally:
+
+```bash
+python3 scripts/check_client_tag.py --tag client/v0.6.1 --sha HEAD
+python3 scripts/check_client_tag.py --tag client/v0.6.1-hotfix1 --sha HEAD
+```
+
 ### When to bump what
 
 | Change | Server tag | Client tag |
@@ -214,6 +233,23 @@ end)
 -- CORRECT — runs on game thread
 LoopInGameThreadWithDelay(200, function()
     local vehicle = GetMyVehicle()
+    return true
+end)
+```
+
+**Every `LoopInGameThreadWithDelay` callback must `return true` on every path,
+including early exits.** UE4SS's callback GC frees loops that do not opt in;
+calling a freed callback is a native crash that `pcall` cannot catch. Symptom
+in `UE4SS.log`: `[FCallbackGarbageCollector] Freed invalid callbacks!` shortly
+before the crash. Use this shape when the callback can exit early:
+
+```lua
+LoopInGameThreadWithDelay(1000, function()
+    if not ready then
+        return true -- keep the callback alive
+    end
+    do_work()
+    return true
 end)
 ```
 
