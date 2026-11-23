@@ -199,6 +199,7 @@ fn map_key(vk: VIRTUAL_KEY) -> Option<Key> {
     })
 }
 
+#[cfg(feature = "admin")]
 fn is_hotkey(vk: VIRTUAL_KEY) -> bool {
     let m = modifiers();
     vk == VK_F10 && m.ctrl && m.shift
@@ -222,6 +223,7 @@ fn handle(msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
     // Window toggles work whether or not anything is open. F10 arrives as a
     // *system* key (it activates the menu bar), so check both message kinds.
     match msg {
+        #[cfg(feature = "admin")]
         WM_KEYDOWN | WM_SYSKEYDOWN if is_hotkey(vk) => {
             if !repeat {
                 crate::toggle(&crate::ADMIN_OPEN, "admin panel");
@@ -229,6 +231,7 @@ fn handle(msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
             EAT_HOTKEY_UP.store(true, Ordering::Relaxed);
             return true;
         }
+        #[cfg(feature = "admin")]
         WM_KEYUP | WM_SYSKEYUP if vk == VK_F10 && EAT_HOTKEY_UP.swap(false, Ordering::Relaxed) => {
             return true;
         }
@@ -245,6 +248,7 @@ fn handle(msg: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
         // Esc closes our windows and does not open the game's pause menu.
         // While typing it is egui's (leaves the field) and falls through.
         WM_KEYDOWN if vk == VK_ESCAPE && !keyboard && crate::any_open() => {
+            #[cfg(feature = "admin")]
             crate::set_open(&crate::ADMIN_OPEN, "admin panel", false);
             crate::set_open(&crate::TELEPORT_OPEN, "teleport menu", false);
             EAT_HOTKEY_UP.store(true, Ordering::Relaxed);

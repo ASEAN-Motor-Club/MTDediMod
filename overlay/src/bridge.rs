@@ -35,13 +35,20 @@ const PIPE_DOWN: &str = r"\\.\pipe\mt_overlay_down";
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct GameState {
+    #[cfg(feature = "admin")]
     pub impulse_mode: String,
+    #[cfg(feature = "admin")]
     pub impulse_strength: f64,
+    #[cfg(feature = "admin")]
     pub speed_kmh: f64,
+    #[cfg(feature = "admin")]
     pub direction: String,
+    #[cfg(feature = "admin")]
     pub origin: String,
+    #[cfg(feature = "admin")]
     pub right_click: String,
     /// `None` when Lua skipped the aim trace this poll (it traces every ~500 ms).
+    #[cfg(feature = "admin")]
     pub aimed_mass_kg: Option<f64>,
 }
 
@@ -49,13 +56,20 @@ pub struct GameState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "op", content = "value", rename_all = "snake_case")]
 pub enum Command {
+    #[cfg(feature = "admin")]
     SetImpulseMode(String),
+    #[cfg(feature = "admin")]
     SetImpulseStrength(f64),
+    #[cfg(feature = "admin")]
     SetSpeedKmh(f64),
+    #[cfg(feature = "admin")]
     SetDirection(String),
+    #[cfg(feature = "admin")]
     SetOrigin(String),
+    #[cfg(feature = "admin")]
     SetRightClick(String),
     /// "despawn" | "impulse" | "door" | "engine" — runs on the aimed actor.
+    #[cfg(feature = "admin")]
     Trigger(String),
     /// Teleport point name; Lua sends `/tp <name>` through chat.
     Teleport(String),
@@ -87,12 +101,19 @@ pub struct Shared {
 
 pub static SHARED: Mutex<Shared> = Mutex::new(Shared {
     state: GameState {
+        #[cfg(feature = "admin")]
         impulse_mode: String::new(),
+        #[cfg(feature = "admin")]
         impulse_strength: 0.0,
+        #[cfg(feature = "admin")]
         speed_kmh: 0.0,
+        #[cfg(feature = "admin")]
         direction: String::new(),
+        #[cfg(feature = "admin")]
         origin: String::new(),
+        #[cfg(feature = "admin")]
         right_click: String::new(),
+        #[cfg(feature = "admin")]
         aimed_mass_kg: None,
     },
     connected: false,
@@ -182,6 +203,7 @@ fn serve_one_client() -> std::io::Result<()> {
             Ok(req) => {
                 for ev in &req.events {
                     match ev.as_str() {
+                        #[cfg(feature = "admin")]
                         "toggle" => crate::toggle(&crate::ADMIN_OPEN, "admin panel"),
                         "toggle_teleport" => crate::toggle(&crate::TELEPORT_OPEN, "teleport menu"),
                         _ => log::warn(&format!("bridge: unknown event {ev}")),
@@ -191,11 +213,15 @@ fn serve_one_client() -> std::io::Result<()> {
                     crate::teleports::set_fallback(points);
                 }
                 let mut s = SHARED.lock().unwrap_or_else(|p| p.into_inner());
+                #[cfg(feature = "admin")]
                 if let Some(mut state) = req.state {
-                    // Keep the last mass reading between Lua's aim traces.
                     if state.aimed_mass_kg.is_none() {
                         state.aimed_mass_kg = s.state.aimed_mass_kg;
                     }
+                    s.state = state;
+                }
+                #[cfg(not(feature = "admin"))]
+                if let Some(state) = req.state {
                     s.state = state;
                 }
                 std::mem::take(&mut s.pending)

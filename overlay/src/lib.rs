@@ -29,13 +29,19 @@ use windows::Win32::Foundation::{BOOL, HMODULE, TRUE};
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 
 /// Admin panel open (Ctrl+Shift+F10 / console `adminpanel`).
+/// Compiled out of the player build by the `admin` feature.
+#[cfg(feature = "admin")]
 pub(crate) static ADMIN_OPEN: AtomicBool = AtomicBool::new(false);
 /// Teleport + emote menu open (Tab / console `tpmenu`).
 pub(crate) static TELEPORT_OPEN: AtomicBool = AtomicBool::new(false);
 
 /// Any window showing: we draw, Lua shows the mouse cursor.
 pub(crate) fn any_open() -> bool {
-    ADMIN_OPEN.load(Ordering::Relaxed) || TELEPORT_OPEN.load(Ordering::Relaxed)
+    #[cfg(feature = "admin")]
+    if ADMIN_OPEN.load(Ordering::Relaxed) {
+        return true;
+    }
+    TELEPORT_OPEN.load(Ordering::Relaxed)
 }
 
 pub(crate) fn toggle(flag: &AtomicBool, name: &str) {
