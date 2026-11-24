@@ -532,10 +532,21 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ### [Unreleased]
 
+### [client/v0.6.1-rc1] — 2026-11-23
+
 #### Added
 - `VERSION` is the single source of truth for the client version. Generated `ClientScripts/BuildConfig.lua` supplies it to `Statics.lua` at package time; git tags only trigger the release and must match the file.
 - `nix run .#package-client-all` builds both distributable variants in one command: `MotorTownClientMod-<version>-admin.zip` and `MotorTownClientMod-<version>-player.zip`. `nix run .#build-overlay -- player` compiles the DLL without admin UI.
 - Static build guard: the player package physically excludes admin shortcuts, commands, bridge and vehicle/integrity modules, replaces them with player-only implementations, and fails the build if admin symbols leak. The Rust overlay uses a default-on `admin` cargo feature that the player DLL disables.
+- D3D12 overlay backend: the Present hook also initializes a D3D12 command queue and reports `overlay ready (D3D12)`; DX11 remains supported by the same DLL.
+- Native bridge: `mt_bridge.dll` at the game root owns a thread-safe command queue and state snapshot; `MTBridgeHost` registers `RegisterBridgeHandler` / `PushBridgeState` / `PushBridgeEvent` into UE4SS Lua and drains commands on the game thread. The Rust overlay calls the C ABI directly instead of using named pipes and a 50 ms Lua relay. Both client variants ship the bridge; the player DLL has no admin symbols.
+- `scripts/check_no_lua_polling.py` fails the build if `LoopInGameThreadWithDelay`, `LoopAsync`, `ExecuteInGameThreadWithDelay`, `IsInputKeyDown` or `:IsPressed()` returns to `ClientScripts`.
+
+#### Changed
+- Teleport and emote menus now use `OnClicked` delegate bindings instead of polling `IsPressed()`.
+- Arrest gamepad combo now uses the `InputKey` hook instead of a 100 ms `IsInputKeyDown()` poll.
+- Drone model hiding now re-applies from the `SetHiddenInGame` hook instead of a 1 s poll.
+- RP restrictions (client-only, both variants) now re-assert via `UWidget:SetVisibility`, `NotifyOnNewObject(MotorTownDrivingAI)` and teleport-RPC hooks instead of a 1 s poll.
 
 ### [client/v0.6.0] — 2026-11-23
 
