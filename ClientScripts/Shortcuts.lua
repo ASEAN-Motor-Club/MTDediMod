@@ -977,7 +977,7 @@ local function RegisterGamepadShortcut()
     local down = {}
     local wasActive = false
 
-    RegisterHook("/Script/Engine.PlayerController:InputKey", function(Context, KeyParam, EventType)
+    local function onInputKey(Context, KeyParam, EventType)
         local ok, key = pcall(function() return KeyParam:get() end)
         if not ok or not key then return end
         local okName, fname = pcall(function() return key.KeyName end)
@@ -1006,7 +1006,20 @@ local function RegisterGamepadShortcut()
         elseif not allDown then
             wasActive = false
         end
+    end
+
+    -- PlayerController::InputKey is a native method, not a UFunction, in the
+    -- shipping UE5.5 client. RegisterHook throws in that case, which used to
+    -- abort main.lua before ModManager/RPRestrictions/overlay loaded. Keep the
+    -- gamepad combo optional: if the hook is unavailable, log it and continue.
+    local hookOk, hookErr = pcall(function()
+        RegisterHook("/Script/Engine.PlayerController:InputKey", onInputKey)
     end)
+    if not hookOk then
+        LogOutput("WARN", "Arrest gamepad shortcut disabled: PlayerController:InputKey is not hookable (%s)",
+            tostring(hookErr))
+        return
+    end
 
     LogOutput("INFO", "Arrest gamepad shortcut registered (InputKey hook): %s",
         table.concat(gp.buttons, "+"))
