@@ -78,8 +78,9 @@ jobs:
           VERSION="$(tr -d '\r\n' < VERSION)"
           if [[ -z "$VERSION" ]]; then echo "VERSION file is empty"; exit 1; fi
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            if [[ "${{ github.ref_name }}" != "client/v$VERSION" ]]; then
-              echo "Tag ${{ github.ref_name }} does not match VERSION $VERSION"; exit 1
+            TAG="${{ github.ref_name }}"
+            if [[ "$TAG" != "client/v$VERSION" && ! "$TAG" =~ ^client/v${VERSION}-rc[0-9]+$ ]]; then
+              echo "Tag $TAG does not match VERSION $VERSION (expected client/v$VERSION or client/v$VERSION-rcN)"; exit 1
             fi
           else
             VERSION="$VERSION-dev-$(git rev-parse --short HEAD)"
