@@ -548,6 +548,9 @@ Re-release for test container deployment (no server-side code changes since rc5)
 - Drone model hiding now re-applies from the `SetHiddenInGame` hook instead of a 1 s poll.
 - RP restrictions (client-only, both variants) now re-assert via `UWidget:SetVisibility`, `NotifyOnNewObject(MotorTownDrivingAI)` and teleport-RPC hooks instead of a 1 s poll.
 
+#### Fixed
+- `BridgeHost.cpp`: include `windows.h` before UE4SS headers and undef `max`, `min`, `InterlockedCompareExchangePointer` and `MemoryBarrier` so Windows SDK macros no longer break `Hooks.hpp` → `UObjectArray.hpp` during the client cross-build.
+
 ### [client/v0.6.0] — 2026-11-23
 
 #### Added

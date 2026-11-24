@@ -20,9 +20,27 @@
 // engine tick pre-callback drains the queue → Lua handler. No timers, no
 // pipes, no 50 ms loop.
 
-#include "BridgeHost.h"
-
+// UEPseudo/UE4SS headers use qualified names like
+// FWindowsPlatformAtomics::InterlockedCompareExchangePointer and
+// std::numeric_limits<T>::max(). The Windows SDK defines macros with those
+// names, so include windows.h FIRST, then undef the collisions before any
+// UE4SS header is parsed. Otherwise Hooks.hpp → UObjectArray.hpp fails.
+#define NOMINMAX
 #include <windows.h>
+#ifdef InterlockedCompareExchangePointer
+#undef InterlockedCompareExchangePointer
+#endif
+#ifdef MemoryBarrier
+#undef MemoryBarrier
+#endif
+#ifdef max
+#undef max
+#endif
+#ifdef min
+#undef min
+#endif
+
+#include "BridgeHost.h"
 
 #include <atomic>
 #include <string>
