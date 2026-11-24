@@ -629,9 +629,16 @@
                           # Static guard: fail the build if admin code leaked into
                           # the player package.
                           if [ "$VARIANT" = "player" ]; then
-                            for f in $ADMIN_ONLY; do
+                            # Shortcuts/Commands/OverlayBridge are replaced by player
+                            # variants with the same filenames — existence is expected.
+                            for f in VehicleManager.lua IntegrityChecker.lua; do
                               if [ -e "$SCRIPTS_OUT/$f" ]; then
                                 echo "Error: admin file $f leaked into player package"; exit 1
+                              fi
+                            done
+                            for f in Shortcuts.lua Commands.lua OverlayBridge.lua; do
+                              if [ ! -f "$SCRIPTS_OUT/$f" ]; then
+                                echo "Error: player variant $f missing"; exit 1
                               fi
                             done
                             if grep -rEq 'ImpulseAimed|DespawnAimed|ServerApplyImpact|SetImpulseMode|adminpanel' "$SCRIPTS_OUT"; then

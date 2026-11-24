@@ -551,6 +551,7 @@ Re-release for test container deployment (no server-side code changes since rc5)
 #### Fixed
 - `BridgeHost.cpp`: include `windows.h` before UE4SS headers and undef `max`, `min`, `InterlockedCompareExchangePointer` and `MemoryBarrier` so Windows SDK macros no longer break `Hooks.hpp` → `UObjectArray.hpp` during the client cross-build.
 - `flake.nix`: replace indented heredocs in the client package script with `printf` blocks; shellcheck rejected the `MODSTXT` / `EOF` terminators after Nix string dedent, so packaging never produced the release zips.
+- `flake.nix`: player static guard no longer treats intentionally-replaced player variants (`Shortcuts.lua`, `Commands.lua`, `OverlayBridge.lua`) as leaked admin files; it checks only the truly admin-only modules and greps for admin symbols.
 
 ### [client/v0.6.0] — 2026-11-23
 
