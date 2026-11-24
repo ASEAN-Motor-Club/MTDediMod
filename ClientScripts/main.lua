@@ -11,11 +11,14 @@ LogMsg = logging.logMsg
 LogOutput = logging.logOutput
 
 local config = require("ModConfig")
+local build = require("BuildConfig")
 require("ViewportManager")
 require("Commands")
 local shortcuts = require("Shortcuts")
 require("DroneModelHide")
-require("IntegrityChecker")
+if build.admin then
+    require("IntegrityChecker")
+end
 require("ModManager")
 require("RPRestrictions")
 
@@ -30,7 +33,6 @@ if config.GetModConfig("useEguiOverlay") ~= false then
 end
 if overlayActive then
     overlayBridge.Init(shortcuts)
-    local build = require("BuildConfig")
     LogOutput("INFO", "egui overlay active (Tab: teleport" .. (build.admin and ", Ctrl+Shift+F10: admin" or "") .. ")")
 else
     require("TeleportWidget")
