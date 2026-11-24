@@ -532,6 +532,12 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ### [Unreleased]
 
+### [client/v0.6.1-rc2] — 2026-11-24
+
+#### Fixed
+- `ClientScripts/main.lua`: load `BuildConfig` once and only `require("IntegrityChecker")` when `admin = true`. The player package ships no `IntegrityChecker.lua`, so the unguarded require aborted startup before `ModManager`, `RPRestrictions` and the overlay bridge loaded.
+- `ClientScripts/Shortcuts.lua`: guard the arrest-gamepad `RegisterHook` with `pcall`. `PlayerController:InputKey` is a native method, not a UFunction, in the shipping UE5.5 client; the failed registration threw and aborted `main.lua` before the overlay loaded. The gamepad combo is now optional and logs a warning instead of killing the mod; keyboard arrest still works.
+
 ### [client/v0.6.1-rc1] — 2026-11-23
 
 #### Added
@@ -553,9 +559,6 @@ Re-release for test container deployment (no server-side code changes since rc5)
 - `flake.nix`: replace indented heredocs in the client package script with `printf` blocks; shellcheck rejected the `MODSTXT` / `EOF` terminators after Nix string dedent, so packaging never produced the release zips.
 - `flake.nix`: player static guard no longer treats intentionally-replaced player variants (`Shortcuts.lua`, `Commands.lua`, `OverlayBridge.lua`) as leaked admin files; it checks only the truly admin-only modules and greps for admin symbols.
 - `nix-client-release.yml`: accept `client/v<VERSION>-rcN` tags in the version check so RC builds can upload artifacts and create a release.
-- `ClientScripts/main.lua`: load `BuildConfig` once and only `require("IntegrityChecker")` when `admin = true`; the player package ships no `IntegrityChecker.lua`, so the unguarded require aborted startup before `ModManager`, `RPRestrictions` and the overlay bridge loaded.
-- `ClientScripts/Shortcuts.lua`: guard the arrest-gamepad `RegisterHook` with `pcall`. `PlayerController:InputKey` is a native method, not a UFunction, in the shipping UE5.5 client; the failed registration threw and aborted `main.lua` before the overlay loaded. The gamepad combo is now optional and logs a warning instead of killing the mod; keyboard arrest still works.
-
 ### [client/v0.6.0] — 2026-11-23
 
 #### Added
