@@ -443,8 +443,11 @@
             set -e
             VARIANT="''${1:-admin}"
             case "$VARIANT" in
-              admin)  FEATURES=""; TARGET_DIR="overlay/target" ;;
-              player) FEATURES="--no-default-features"; TARGET_DIR="overlay/target-player" ;;
+              # We cd into overlay/ below, so cargo's target dir is relative to
+              # overlay/ here. The package script looks for repo-root
+              # overlay/target[ -player]/... — these resolve to exactly that.
+              admin)  FEATURES=""; TARGET_DIR="target" ;;
+              player) FEATURES="--no-default-features"; TARGET_DIR="target-player" ;;
               *) echo "Error: variant must be admin or player"; exit 1 ;;
             esac
             XWIN_CACHE="$(pwd)/.xwin-cache"
@@ -463,7 +466,7 @@
             export RUSTFLAGS="-L native=$XWIN_CACHE/crt/lib/x86_64 -L native=$XWIN_CACHE/sdk/lib/ucrt/x86_64 -L native=$XWIN_CACHE/sdk/lib/um/x86_64"
             cd overlay
             CARGO_TARGET_DIR="$TARGET_DIR" cargo build --release --lib --target x86_64-pc-windows-msvc $FEATURES
-            echo "Overlay DLL: $TARGET_DIR/x86_64-pc-windows-msvc/release/mt_overlay.dll ($VARIANT)"
+            echo "Overlay DLL: overlay/$TARGET_DIR/x86_64-pc-windows-msvc/release/mt_overlay.dll ($VARIANT)"
           '';
         };
 
@@ -657,13 +660,13 @@
                           OVERLAY_TARGET_DIR="overlay/target"
                           if [ "$VARIANT" = "player" ]; then OVERLAY_TARGET_DIR="overlay/target-player"; fi
                           OVERLAY_DLL="$OVERLAY_TARGET_DIR/x86_64-pc-windows-msvc/release/mt_overlay.dll"
-                          if [ -f "$OVERLAY_DLL" ]; then
-                            mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/overlay"
-                            cp "$OVERLAY_DLL" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/overlay/"
-                            echo "✓ Copied egui overlay DLL (mt_overlay.dll)"
-                          else
-                            echo "⚠ egui overlay DLL not built - package will use the UMG widgets. Run 'nix run .#build-overlay' first."
+                          if [ ! -f "$OVERLAY_DLL" ]; then
+                            echo "Error: egui overlay DLL not built at $OVERLAY_DLL - run 'nix run .#build-overlay -- $VARIANT' first."
+                            exit 1
                           fi
+                          mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/overlay"
+                          cp "$OVERLAY_DLL" "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/overlay/"
+                          echo "✓ Copied egui overlay DLL (mt_overlay.dll)"
 
                           # Native bridge: mt_bridge.dll sits at the game executable
                           # root (Rust resolves it with LoadLibraryW by name); the

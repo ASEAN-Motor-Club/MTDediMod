@@ -532,6 +532,11 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ### [Unreleased]
 
+### [client/v0.6.1-rc3] — 2026-11-24
+
+#### Fixed
+- `flake.nix`: `build-overlay` changed into `overlay/` before setting `CARGO_TARGET_DIR`, so `TARGET_DIR="overlay/target"` produced `overlay/overlay/target/...`. The package step looked at repo-root `overlay/target/...`, silently skipped the missing DLL and shipped a client that fell back to UMG widgets with no overlay. The target dirs are now `target` / `target-player` relative to `overlay/`, and packaging fails instead of shipping a zip without `mt_overlay.dll`.
+
 ### [client/v0.6.1-rc2] — 2026-11-24
 
 #### Fixed
