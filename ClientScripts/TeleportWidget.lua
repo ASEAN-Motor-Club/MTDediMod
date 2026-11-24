@@ -7,8 +7,15 @@ local json = require("JsonParser")
 -- ── Config ────────────────────────────────────────────────────────────────
 local ITEMS_PER_PAGE = 8
 local API_URL = "https://server.aseanmotorclub.com/api/v1/teleports/"
-local POLL_INTERVAL_MS = 100
 local DEBOUNCE_MS = 150
+
+-- Click targets: one tiny UMTButtonWidget per visible button. UE4SS binds
+-- UButton.OnClicked to a UObject function; the OnButtonClicked hook maps the
+-- target back to the action. No button state is polled.
+local clickTargets = {}         ---@type table<UMTButtonWidget, function>
+local buttonTargetClass = nil   ---@type UClass
+local lastClickTime = 0
+local DoTeleportByName, UpdateDisplay
 
 -- ── State ─────────────────────────────────────────────────────────────────
 local sizeBox = nil             ---@type USizeBox
@@ -21,14 +28,35 @@ local isVisible = false
 local currentPage = 1
 local teleportPoints = {}       ---@type {name: string, x: number, y: number, z: number}[]
 local totalPages = 1
-local lastPressed = {}          ---@type table<UButton, number>
-local pollHandle = nil
 local fetchAttempted = false
 
 -- ── Helpers ───────────────────────────────────────────────────────────────
 local function FLinearColor(R, G, B, A) return {R=R, G=G, B=B, A=A} end
 local function FSlateColor(R, G, B, A)
     return {SpecifiedColor=FLinearColor(R,G,B,A), ColorUseRule=0}
+end
+
+-- UMG buttons cannot be polled any more: bind OnClicked to a UObject target
+-- and route the resulting OnButtonClicked hook back to a Lua action.
+local function BindClick(btn, outer, name, action)
+    if not btn or not btn:IsValid() then return end
+    if not buttonTargetClass then
+        buttonTargetClass = StaticFindObject("/Script/MotorTown.MTButtonWidget")
+    end
+    if not buttonTargetClass or not buttonTargetClass:IsValid() then
+        LogOutput("WARN", "[TeleportWidget] MTButtonWidget class missing — clicks unavailable")
+        return
+    end
+    local target = StaticConstructObject(buttonTargetClass, outer, FName(name))
+    if not target or not target:IsValid() then return end
+    local ok, err = pcall(function()
+        btn.OnClicked:Add(target, "OnButtonClicked")
+    end)
+    if not ok then
+        LogOutput("WARN", "[TeleportWidget] OnClicked bind failed for %s: %s", name, tostring(err))
+        return
+    end
+    clickTargets[target] = action
 end
 
 local function GetHUD()
@@ -113,6 +141,8 @@ end
 local function BuildWidget()
     if widgetRoot and widgetRoot:IsValid() then return end
 
+    clickTargets = {}
+
     local hudWidget = GetHudWidget()
     if not hudWidget then
         LogOutput("WARN", "[TeleportWidget] HUD widget not available")
@@ -183,6 +213,12 @@ local function BuildWidget()
         end
 
         itemButtons[i] = { button = btn, text = btnText }
+        BindClick(btn, vbox, "TeleportClickTarget" .. i, function()
+            local idx = (currentPage - 1) * ITEMS_PER_PAGE + i
+            if idx <= #teleportPoints then
+                DoTeleportByName(teleportPoints[idx].name)
+            end
+        end)
     end
 
     -- Nav row
@@ -219,6 +255,12 @@ local function BuildWidget()
     if prevSlot and prevSlot:IsValid() then
         prevSlot:SetPadding({Right=8})
     end
+    BindClick(navPrevBtn, hbox, "TeleportPrevTarget", function()
+        if currentPage > 1 then
+            currentPage = currentPage - 1
+            UpdateDisplay()
+        end
+    end)
 
     -- Next button
     navNextBtn = StaticConstructObject(
@@ -236,6 +278,12 @@ local function BuildWidget()
     if nextSlot and nextSlot:IsValid() then
         nextSlot:SetPadding({Left=8})
     end
+    BindClick(navNextBtn, hbox, "TeleportNextTarget", function()
+        if currentPage < totalPages then
+            currentPage = currentPage + 1
+            UpdateDisplay()
+        end
+    end)
 
     -- Right spacer to center nav buttons
     local spacerRight = StaticConstructObject(
@@ -262,7 +310,7 @@ local function BuildWidget()
 end
 
 -- ── Update display ────────────────────────────────────────────────────────
-local function UpdateDisplay()
+UpdateDisplay = function()
     if not widgetRoot or not widgetRoot:IsValid() then return end
 
     totalPages = math.max(1, math.ceil(#teleportPoints / ITEMS_PER_PAGE))
@@ -287,7 +335,7 @@ local function UpdateDisplay()
 end
 
 -- ── Teleport action ───────────────────────────────────────────────────────
-local function DoTeleportByName(name)
+DoTeleportByName = function(name)
     ExecuteInGameThread(function()
         local PC = GetMyPlayerController()
         if not PC or not PC:IsValid() then
@@ -299,71 +347,17 @@ local function DoTeleportByName(name)
     end)
 end
 
--- ── Polling loop ──────────────────────────────────────────────────────────
-local function StartPolling()
-    if pollHandle then return end
-
-    pollHandle = LoopInGameThreadWithDelay(POLL_INTERVAL_MS, function()
-        if not isVisible then return end
-        if not widgetRoot or not widgetRoot:IsValid() then return end
-
-        local now = os.clock() * 1000
-
-        -- Check item buttons
-        local startIdx = (currentPage - 1) * ITEMS_PER_PAGE + 1
-        for i = 1, ITEMS_PER_PAGE do
-            local entry = itemButtons[i]
-            local btn = entry.button
-            if btn and btn:IsValid() and btn:GetVisibility() == 0 then
-                if btn:IsPressed() then
-                    local last = lastPressed[btn] or 0
-                    if now - last > DEBOUNCE_MS then
-                        lastPressed[btn] = now
-                        local idx = startIdx + i - 1
-                        if idx <= #teleportPoints then
-                            DoTeleportByName(teleportPoints[idx].name)
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Check nav buttons
-        if navPrevBtn and navPrevBtn:IsValid() then
-            if navPrevBtn:IsPressed() then
-                local last = lastPressed[navPrevBtn] or 0
-                if now - last > DEBOUNCE_MS then
-                    lastPressed[navPrevBtn] = now
-                    if currentPage > 1 then
-                        currentPage = currentPage - 1
-                        UpdateDisplay()
-                    end
-                end
-            end
-        end
-
-        if navNextBtn and navNextBtn:IsValid() then
-            if navNextBtn:IsPressed() then
-                local last = lastPressed[navNextBtn] or 0
-                if now - last > DEBOUNCE_MS then
-                    lastPressed[navNextBtn] = now
-                    if currentPage < totalPages then
-                        currentPage = currentPage + 1
-                        UpdateDisplay()
-                    end
-                end
-            end
-        end
-    end)
-
-    LogOutput("INFO", "[TeleportWidget] Polling loop started")
-end
-
-local function StopPolling()
-    CancelDelayedAction(pollHandle)
-    pollHandle = nil
-    LogOutput("INFO", "[TeleportWidget] Polling loop stopped")
-end
+-- ── Click dispatch (event-driven; no button polling) ─────────────────────
+RegisterHook("/Script/MotorTown.MTButtonWidget:OnButtonClicked", function(Context)
+    local target = Context:get()
+    local action = target and clickTargets[target]
+    if not action then return end
+    if not isVisible then return end
+    local now = os.clock() * 1000
+    if now - lastClickTime < DEBOUNCE_MS then return end
+    lastClickTime = now
+    action()
+end)
 
 -- ── Show / Hide ───────────────────────────────────────────────────────────
 local function Show()
@@ -379,7 +373,6 @@ local function Show()
     UpdateDisplay()
     sizeBox:SetVisibility(0) -- Visible
     isVisible = true
-    StartPolling()
     LogOutput("DEBUG", "[TeleportWidget] Shown")
 end
 
@@ -388,7 +381,6 @@ local function Hide()
         sizeBox:SetVisibility(1) -- Collapsed
     end
     isVisible = false
-    StopPolling()
     LogOutput("DEBUG", "[TeleportWidget] Hidden")
 end
 

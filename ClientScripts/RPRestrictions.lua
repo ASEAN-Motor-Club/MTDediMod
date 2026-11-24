@@ -190,11 +190,59 @@ end
 
 BlockTeleportHooks()
 
-LoopInGameThreadWithDelay(1000, function()
-    DisableAutoPilotWidgets()
-    SuppressAutoPilot()
-    ClearTeleportPoints()
+-- Event-driven replacements for the old 1s loop.
+--
+-- 1) The game re-shows the autopilot widgets via SetVisibility; re-collapse
+--    only when it tries to make one of ours visible again.
+RegisterHook("/Script/UMG.Widget:SetVisibility", function(Context, InVisibility)
+    if not IsRPPlayer() then return end
+    local okVis, vis = pcall(function() return InVisibility:get() end)
+    if not okVis or vis ~= 0 then return end
+
+    local hudWidget = GetHudWidget()
+    if not hudWidget then return end
+    local drivingHUD = hudWidget.DrivingHUD
+    if not drivingHUD or not drivingHUD:IsValid() then return end
+
+    local okCtx, widget = pcall(function() return Context:get() end)
+    if not okCtx or not widget or not widget:IsValid() then return end
+
+    local ap = drivingHUD.AutoPilotWidget
+    local ai = drivingHUD.ToggleAIWidget
+    if widget ~= ap and widget ~= ai then return end
+
+    pcall(function()
+        widget:SetVisibility(VIS_COLLAPSED)
+        widget:SetIsEnabled(false)
+    end)
+    LogOutput("INFO", "[RPRestrictions] Re-collapsed autopilot widget")
 end)
+
+-- 2) A new DrivingAI subobject is the only other way autopilot returns.
+pcall(function()
+    NotifyOnNewObject("/Script/MotorTown.MotorTownDrivingAI", function(obj)
+        if not IsRPPlayer() then return end
+        ExecuteInGameThread(function()
+            local PC = GetMyPlayerController()
+            if not PC or not PC:IsValid() then return end
+            pcall(function()
+                if PC.DrivingAI == obj then PC.DrivingAI = nil end
+            end)
+            LogOutput("INFO", "[RPRestrictions] Blocked new DrivingAI")
+        end)
+    end)
+end)
+
+-- 3) Teleport points can only be consumed by a teleport RPC; clear them there
+--    and on restart instead of every second.
+local function ClearOnTeleport(...)
+    ClearTeleportPoints()
+end
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportCharacter", ClearOnTeleport)
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerTeleportVehicle", ClearOnTeleport)
+RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerResetVehicleAt", ClearOnTeleport)
+
+ClearTeleportPoints()
 
 LogOutput("INFO", "[RPRestrictions] Loaded (v%s)", statics.ModVersion)
 

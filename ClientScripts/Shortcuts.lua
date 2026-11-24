@@ -955,14 +955,8 @@ local function RegisterKeyboardShortcut()
         table.concat(kb.modifiers or {}, "+"), kb.key)
 end
 
---- Construct an FKey struct from a UE key name string (e.g. "Gamepad_RightShoulder")
----@param keyName string UE key name
----@return table FKey-compatible struct
-local function MakeFKey(keyName)
-    return { KeyName = FName(keyName) }
-end
-
---- Register gamepad shortcut from config using IsInputKeyDown polling
+--- Register gamepad shortcut from InputKey events (no polling).
+--- APlayerController::InputKey fires on every key down/up, including gamepad.
 local function RegisterGamepadShortcut()
     local shortcuts = config.GetModConfig("shortcuts")
     if not shortcuts or not shortcuts.arrest or not shortcuts.arrest.gamepad then
@@ -976,28 +970,36 @@ local function RegisterGamepadShortcut()
         return
     end
 
-    -- Pre-build FKey structs for each configured button
-    local fkeys = {}
+    local wanted = {}
     for _, btnName in ipairs(gp.buttons) do
-        table.insert(fkeys, MakeFKey(btnName))
+        wanted[btnName] = true
     end
-
-    -- Track whether combo was active last tick to prevent repeat-fire while held
+    local down = {}
     local wasActive = false
 
-    -- Poll every 100ms on the game thread
-    LoopInGameThreadWithDelay(100, function()
-        local PC = GetMyPlayerController()
-        if not PC:IsValid() then return end
+    RegisterHook("/Script/Engine.PlayerController:InputKey", function(Context, KeyParam, EventType)
+        local ok, key = pcall(function() return KeyParam:get() end)
+        if not ok or not key then return end
+        local okName, fname = pcall(function() return key.KeyName end)
+        if not okName or not fname then return end
+        local okStr, name = pcall(function() return tostring(fname) end)
+        if not okStr or not wanted[name] then return end
 
-        local allDown = true
-        for _, fkey in ipairs(fkeys) do
-            if not PC:IsInputKeyDown(fkey) then
-                allDown = false
-                break
-            end
+        local okEvt, evt = pcall(function() return EventType:get() end)
+        if not okEvt then return end
+        -- EInputEvent: IE_Pressed=0, IE_Released=1
+        if evt == 0 then
+            down[name] = true
+        elseif evt == 1 then
+            down[name] = nil
+        else
+            return
         end
 
+        local allDown = true
+        for btnName in pairs(wanted) do
+            if not down[btnName] then allDown = false; break end
+        end
         if allDown and not wasActive then
             wasActive = true
             TriggerArrest()
@@ -1006,7 +1008,7 @@ local function RegisterGamepadShortcut()
         end
     end)
 
-    LogOutput("INFO", "Arrest gamepad shortcut registered (polling): %s",
+    LogOutput("INFO", "Arrest gamepad shortcut registered (InputKey hook): %s",
         table.concat(gp.buttons, "+"))
 end
 

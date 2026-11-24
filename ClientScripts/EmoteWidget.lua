@@ -2,7 +2,6 @@
 --- Shows/hides alongside teleport widget (TAB open, ESC close)
 
 -- ── Config ────────────────────────────────────────────────────────────────
-local POLL_INTERVAL_MS = 100
 local DEBOUNCE_MS = 150
 
 local EMOTES = {
@@ -18,8 +17,10 @@ local sizeBox = nil         ---@type USizeBox
 local widgetRoot = nil      ---@type UBorder
 local itemButtons = {}      ---@type {button: UButton, text: UTextBlock}[]
 local isVisible = false
-local lastPressed = {}      ---@type table<UButton, number>
-local pollHandle = nil
+local clickTargets = {}     ---@type table<UMTButtonWidget, function>
+local buttonTargetClass = nil
+local lastClickTime = 0
+local DoEmote
 
 -- ── Helpers ───────────────────────────────────────────────────────────────
 local function FLinearColor(R, G, B, A) return {R=R, G=G, B=B, A=A} end
@@ -43,8 +44,27 @@ local function GetHudWidget()
     return nil
 end
 
+-- UButton.OnClicked is bound to a UObject target; OnButtonClicked dispatches
+-- the action. No button state is ever polled.
+local function BindClick(btn, outer, name, action)
+    if not btn or not btn:IsValid() then return end
+    if not buttonTargetClass then
+        buttonTargetClass = StaticFindObject("/Script/MotorTown.MTButtonWidget")
+    end
+    if not buttonTargetClass or not buttonTargetClass:IsValid() then return end
+    local target = StaticConstructObject(buttonTargetClass, outer, FName(name))
+    if not target or not target:IsValid() then return end
+    local ok, err = pcall(function() btn.OnClicked:Add(target, "OnButtonClicked") end)
+    if not ok then
+        LogOutput("WARN", "[EmoteWidget] OnClicked bind failed for %s: %s", name, tostring(err))
+        return
+    end
+    clickTargets[target] = action
+end
+
 -- ── Widget construction ───────────────────────────────────────────────────
 local function BuildWidget()
+    clickTargets = {}
     if widgetRoot and widgetRoot:IsValid() then return end
 
     local hudWidget = GetHudWidget()
@@ -117,6 +137,9 @@ local function BuildWidget()
         end
 
         itemButtons[i] = { button = btn, text = btnText, cmd = emote.cmd }
+        BindClick(btn, vbox, "EmoteClickTarget" .. i, function()
+            DoEmote(emote.cmd)
+        end)
     end
 
     -- Position on HUD (to the right of teleport widget)
@@ -135,7 +158,7 @@ local function BuildWidget()
 end
 
 -- ── Emote action ──────────────────────────────────────────────────────────
-local function DoEmote(cmd)
+DoEmote = function(cmd)
     ExecuteInGameThread(function()
         local PC = GetMyPlayerController()
         if not PC or not PC:IsValid() then
@@ -147,38 +170,17 @@ local function DoEmote(cmd)
     end)
 end
 
--- ── Polling loop ──────────────────────────────────────────────────────────
-local function StartPolling()
-    if pollHandle then return end
-
-    pollHandle = LoopInGameThreadWithDelay(POLL_INTERVAL_MS, function()
-        if not isVisible then return end
-        if not widgetRoot or not widgetRoot:IsValid() then return end
-
-        local now = os.clock() * 1000
-
-        for i, entry in ipairs(itemButtons) do
-            local btn = entry.button
-            if btn and btn:IsValid() and btn:GetVisibility() == 0 then
-                if btn:IsPressed() then
-                    local last = lastPressed[btn] or 0
-                    if now - last > DEBOUNCE_MS then
-                        lastPressed[btn] = now
-                        DoEmote(entry.cmd)
-                    end
-                end
-            end
-        end
-    end)
-
-    LogOutput("INFO", "[EmoteWidget] Polling loop started")
-end
-
-local function StopPolling()
-    CancelDelayedAction(pollHandle)
-    pollHandle = nil
-    LogOutput("INFO", "[EmoteWidget] Polling loop stopped")
-end
+-- ── Click dispatch (event-driven; no button polling) ─────────────────────
+RegisterHook("/Script/MotorTown.MTButtonWidget:OnButtonClicked", function(Context)
+    local target = Context:get()
+    local action = target and clickTargets[target]
+    if not action then return end
+    if not isVisible then return end
+    local now = os.clock() * 1000
+    if now - lastClickTime < DEBOUNCE_MS then return end
+    lastClickTime = now
+    action()
+end)
 
 -- ── Show / Hide ───────────────────────────────────────────────────────────
 local function Show()
@@ -189,7 +191,6 @@ local function Show()
 
     sizeBox:SetVisibility(0) -- Visible
     isVisible = true
-    StartPolling()
     LogOutput("DEBUG", "[EmoteWidget] Shown")
 end
 
@@ -198,7 +199,6 @@ local function Hide()
         sizeBox:SetVisibility(1) -- Collapsed
     end
     isVisible = false
-    StopPolling()
     LogOutput("DEBUG", "[EmoteWidget] Hidden")
 end
 

@@ -8,8 +8,8 @@ local statics = require("Statics")
 ---rendering while the visible model disappears.
 ---
 ---While enabled, hiding is re-applied on drone spawn
----(ClientSpawnDroneResponse) and re-asserted once per second, so the game
----re-showing components (e.g. a camera-mode switch) gets undone.
+---(ClientSpawnDroneResponse) and whenever the game tries to show a drone
+---component again (SetHiddenInGame hook) — no timer, no poll.
 ---State is runtime-only: resets to stock (visible) on client restart.
 
 local PRIMITIVE_CLASS_PATH = "/Script/Engine.PrimitiveComponent"
@@ -80,7 +80,7 @@ end
 
 ---Instant hide on drone spawn. Wrapped in pcall — RegisterHook THROWS on an
 ---unregistrable UFunction and must not brick the client mod's main chunk
----(if this hook is lost, the 1s re-assert loop below still covers spawns).
+---(if this hook is lost, the SetHiddenInGame hook still covers re-show).
 do
     local ok, err = pcall(function()
         RegisterHook(DRONE_SPAWN_HOOK, function(Context, InDrone, InDroneItemKey)
@@ -93,23 +93,32 @@ do
         end)
     end)
     if not ok then
-        LogOutput("WARN", "[DroneModelHide] %s hook failed to register (%s) — spawn coverage falls back to the 1s loop",
+        LogOutput("WARN", "[DroneModelHide] %s hook failed to register (%s) — SetHiddenInGame hook still applies",
             DRONE_SPAWN_HOOK, tostring(err))
     end
 end
 
----Re-assert while enabled: undoes the game re-showing components (e.g. after
----a camera-mode switch) and covers spawns missed by a failed hook registration.
----No-ops when disabled or no drone in flight.
-LoopInGameThreadWithDelay(1000, function()
-    if not hideEnabled then return end
-    local drone = GetMyDrone()
-    if not drone then return end
-    local found, changed = SetDroneModelHidden(drone, true)
-    if changed > 0 then
-        LogOutput("INFO", "[DroneModelHide] Re-asserted — hid %d/%d primitive component(s)", changed, found)
-    end
-end)
+---The game re-shows drone primitives on camera-mode changes. Re-hide on the
+---SetHiddenInGame hook instead of polling. Our own re-hide calls pass true,
+---so this cannot recurse.
+RegisterHook("/Script/Engine.SceneComponent:SetHiddenInGame",
+    function(Context, NewHidden, bPropagateToChildren)
+        if not hideEnabled then return end
+        local okHidden, hidden = pcall(function() return NewHidden:get() end)
+        if not okHidden or hidden ~= false then return end
+
+        local drone = GetMyDrone()
+        if not drone then return end
+
+        local okComp, comp = pcall(function() return Context:get() end)
+        if not okComp or not comp or not comp:IsValid() then return end
+
+        local okOwner, owner = pcall(function() return comp:GetOwner() end)
+        if not okOwner or not owner or not owner:IsValid() then return end
+        if owner ~= drone then return end
+
+        pcall(function() comp:SetHiddenInGame(true) end)
+    end)
 
 RegisterKeyBind(Key.B, { ModifierKey.CONTROL, ModifierKey.SHIFT }, ToggleDroneModel)
 
