@@ -348,6 +348,15 @@ applyConfigOverrides()
 if next(balanceConfig) then
     local gameResourceOverridesApplied = false
 
+    local balancePollHandle = nil
+    local function cancelBalancePoll()
+        if balancePollHandle ~= nil then
+            local h = balancePollHandle
+            balancePollHandle = nil
+            pcall(CancelDelayedAction, h)
+        end
+    end
+
     NotifyOnNewObject("/Script/MotorTown.MTGameResource", function(obj)
         if gameResourceOverridesApplied then return end
         if not obj or not obj:IsValid() then return end
@@ -356,22 +365,27 @@ if next(balanceConfig) then
             LogOutput("INFO", "UMTGameResource created via NotifyOnNewObject, applying balance overrides")
             applyOverrides(grTable, balanceConfig)
             gameResourceOverridesApplied = true
+            cancelBalancePoll()
         end
     end)
 
-    LoopInGameThreadWithDelay(2000, function()
-        if gameResourceOverridesApplied then return true end
+    balancePollHandle = LoopInGameThreadWithDelay(2000, function()
+        if gameResourceOverridesApplied then
+            cancelBalancePoll()
+            return
+        end
 
         local grTable = getGameResourceBalanceTable()
         if grTable then
             LogOutput("INFO", "GameResource now available (poll), applying balance overrides")
             applyOverrides(grTable, balanceConfig)
             gameResourceOverridesApplied = true
-            return true
+            cancelBalancePoll()
         end
-
-        return false
     end)
+    if gameResourceOverridesApplied then
+        cancelBalancePoll()
+    end
 
     RegisterHook("/Script/MotorTown.MotorTownPlayerController:ServerRefuelVehicle", function(Context, Vehicle, CargoSpace, FuelType, CurrentFuel, TargetFuel, Cost, bChargeToOwner, TankerVehicle)
         LogOutput("INFO", "ServerRefuelVehicle: FuelType=%s, CurrentFuel=%.2f, TargetFuel=%.2f, Cost=%.2f",

@@ -296,6 +296,7 @@ local AP_DEBOUNCE = 5       -- seconds between poll actions per player
 local AP_STATE = {}         -- name -> { warns = n, last = os.time() }
 local POLL_TICKS = 0
 local POLL_STARTED = false
+local RETRY_POLL_HANDLE = nil
 
 ---The poll loop must be registered only once the engine's game-thread hooks
 ---are available. At BOOT, RPManager is required before BalanceManager (main.lua
@@ -319,6 +320,11 @@ local POLL_STARTED = false
 local function StartAutopilotPoll(source)
   if POLL_STARTED then return end
   POLL_STARTED = true
+  if RETRY_POLL_HANDLE ~= nil then
+    local h = RETRY_POLL_HANDLE
+    RETRY_POLL_HANDLE = nil
+    pcall(CancelDelayedAction, h)
+  end
   LogOutput("INFO", "[RPManager] Autopilot poll loop registered (3s game-thread) via " .. tostring(source))
   LoopInGameThreadWithDelay(3000, function()
   POLL_TICKS = POLL_TICKS + 1
@@ -426,18 +432,31 @@ else
       end
     end)
   end)
-  -- Best-effort belt: FindAllOf retry (BalanceManager's proven pattern). If
-  -- boot-registered game-thread loops never tick on this build this never
-  -- runs — the hook/http triggers are the reliable path then.
+  -- Best-effort belt: FindAllOf retry. Note: UE4SS LoopInGameThreadWithDelay
+  -- ignores callback return values (LuaMod.cpp calls call_function(0, 0)), so
+  -- we MUST guard on POLL_STARTED before FindAllOf and explicitly cancel via
+  -- CancelDelayedAction — otherwise FindAllOf scans ~1.16M UObjects (~110 ms)
+  -- on the GameThread every 5 s forever.
   pcall(function()
-    LoopInGameThreadWithDelay(5000, function()
+    RETRY_POLL_HANDLE = LoopInGameThreadWithDelay(5000, function()
+      if POLL_STARTED then
+        if RETRY_POLL_HANDLE ~= nil then
+          local h = RETRY_POLL_HANDLE
+          RETRY_POLL_HANDLE = nil
+          pcall(CancelDelayedAction, h)
+        end
+        return
+      end
       local okFound, found = pcall(FindAllOf, "MTGameResource")
       if okFound and found and #found > 0 then
         StartAutopilotPoll("findallof retry")
-        return true
       end
-      return false
     end)
+    if POLL_STARTED and RETRY_POLL_HANDLE ~= nil then
+      local h = RETRY_POLL_HANDLE
+      RETRY_POLL_HANDLE = nil
+      pcall(CancelDelayedAction, h)
+    end
   end)
   LogOutput("INFO", "[RPManager] Poll loop deferred until world (MTGameResource) exists")
 end
