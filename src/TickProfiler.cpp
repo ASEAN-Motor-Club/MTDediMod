@@ -318,8 +318,6 @@ void TickProfiler::LogSummary()
 
 namespace {
 
-// Capture schedule per stall: 5 s, 15 s, 30 s, 60 s (max 4 snapshots).
-constexpr int64_t kCaptureThresholdsMs[4] = {5000, 15000, 30000, 60000};
 constexpr SIZE_T kStackCaptureBytes = 16 * 1024;
 
 int64_t steady_now_ms()
