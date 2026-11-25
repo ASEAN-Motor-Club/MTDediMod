@@ -215,6 +215,91 @@ void TickProfiler::OnPostTick()
 	}
 }
 
+// Format integer milliseconds with one decimal from microseconds.
+// e.g. 12345 us -> "12.3"
+static std::wstring ms_fmt(int64_t us)
+{
+	int whole = static_cast<int>(us / 1000);
+	int frac = static_cast<int>((us % 1000) / 100);
+	return std::to_wstring(whole) + L"." + std::to_wstring(frac);
+}
+
+void TickProfiler::LogSummary()
+{
+	int ticks = m_window_idx;
+	if (ticks == 0) return;
+
+	// All values in microseconds — convert to display strings.
+	int64_t avg_tick_us = m_w_total_tick_us / ticks;
+	int64_t max_tick_us = m_w_max_tick_us;
+	int over_pct = static_cast<int>((m_w_over_budget * 100) / ticks);
+
+	// Component breakdown.
+	int64_t total_mod_us = 0;
+	for (int i = 0; i < COMP_COUNT; ++i)
+		total_mod_us += m_w_mod_us[i];
+	int64_t avg_mod_us = total_mod_us / ticks;
+	int64_t unaccounted_us = m_w_total_tick_us - total_mod_us;
+	int64_t avg_unaccounted_us = unaccounted_us / ticks;
+
+	const wchar_t* comp_names[COMP_COUNT] = {L"LuaHttp", L"Location", L"UFuncHooks"};
+
+	Output::send<LogLevel::Warning>(
+		STR("[TickProfiler] {} ticks: avg={}ms max={}ms over_33ms={} ({}%)\n"),
+		ticks, ms_fmt(avg_tick_us), ms_fmt(max_tick_us), m_w_over_budget, over_pct);
+
+	Output::send<LogLevel::Warning>(
+		STR("[TickProfiler]   mod_total={}ms avg={}ms/tick ({}={}ms/{} {}={}ms/{} {}={}ms/{})\n"),
+		ms_fmt(total_mod_us), ms_fmt(avg_mod_us),
+		comp_names[0], ms_fmt(m_w_mod_us[0]), m_w_mod_calls[0],
+		comp_names[1], ms_fmt(m_w_mod_us[1]), m_w_mod_calls[1],
+		comp_names[2], ms_fmt(m_w_mod_us[2]), m_w_mod_calls[2]);
+
+	Output::send<LogLevel::Warning>(
+		STR("[TickProfiler]   unaccounted={}ms avg={}ms/tick (engine+UE4SS)\n"),
+		ms_fmt(unaccounted_us), ms_fmt(avg_unaccounted_us));
+
+	// --- File descriptor monitoring ---
+	// Log fd count every window (~10s). Warn at 80% of FD_SETSIZE (1024).
+	// The Wine/Proton socket layer uses select() which fails at fd >= 1024.
+	int fd_count = GetOpenFdCount();
+	if (fd_count >= 0)
+	{
+		constexpr int FD_SETSIZE_WARN = 820;   // ~80% of 1024
+		constexpr int FD_SETSIZE_CRIT = 950;    // ~93% of 1024
+
+		if (fd_count >= FD_SETSIZE_CRIT)
+		{
+			Output::send<LogLevel::Error>(
+				STR("[TickProfiler]   ⚠ FD CRITICAL: {} open fds (Wine select() limit: 1024)\n"),
+				fd_count);
+		}
+		else if (fd_count >= FD_SETSIZE_WARN)
+		{
+			Output::send<LogLevel::Warning>(
+				STR("[TickProfiler]   ⚠ FD WARNING: {} open fds (Wine select() limit: 1024)\n"),
+				fd_count);
+		}
+		else
+		{
+			Output::send<LogLevel::Warning>(
+				STR("[TickProfiler]   fds={}\n"),
+				fd_count);
+		}
+	}
+
+	// Log fd limits once (first window only).
+	static bool logged_fd_limits = false;
+	if (!logged_fd_limits)
+	{
+		auto limits = GetFdLimitString();
+		Output::send<LogLevel::Warning>(
+			STR("[TickProfiler]   {}\n"),
+			to_wstring(limits));
+		logged_fd_limits = true;
+	}
+}
+
 // ===========================================================================
 // HangWatchdog
 //
@@ -414,12 +499,17 @@ void InitTraceFilePath()
 	char exe[MAX_PATH + 1] = {};
 	if (GetModuleFileNameA(nullptr, exe, MAX_PATH) == 0)
 		return;
+	// exe is <game_root>\MotorTown\Binaries\Win64\MotorTownServer-Win64-Shipping.exe
+	// Walk up 3 path components (exe -> Win64 -> Binaries -> MotorTown).
 	std::string dir(exe);
-	size_t slash = dir.find_last_of("\\/");
-	if (slash == std::string::npos)
-		return;
-	dir.resize(slash);
-	const char* components[] = {"MotorTown", "Saved", "ServerLog"};
+	for (int up = 0; up < 3; ++up)
+	{
+		size_t slash = dir.find_last_of("\\/");
+		if (slash == std::string::npos)
+			return;
+		dir.resize(slash);
+	}
+	const char* components[] = {"Saved", "ServerLog"};
 	std::string accum = dir;
 	for (const char* comp : components)
 	{
@@ -519,7 +609,10 @@ void TickProfiler::WatchdogLoop()
 			continue;
 		if (stage >= 4)
 			continue;
-		if (stalled_ms < kCaptureThresholdsMs[stage])
+		// Scale capture stages with threshold: default 5000ms -> 5/15/30/60s,
+		// and smaller test thresholds (e.g. 100ms on staging) actually fire.
+		static constexpr int64_t kStageMult[4] = {1, 3, 6, 12};
+		if (stalled_ms < threshold * kStageMult[stage])
 			continue;
 
 		const bool in_tick = m_in_tick.load(std::memory_order_relaxed);
