@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc8] - 2026-11-25
+
+#### Fixed
+- `RPManager.lua` / `BalanceManager.lua` (#74): guard `LoopInGameThreadWithDelay` boot-retry loops and explicitly cancel via `CancelDelayedAction` once initialized (UE4SS `LuaMod.cpp:3772` ignores callback return values, so `RPManager.lua:433` was previously calling `FindAllOf("MTGameResource")` across ~1.16M UObjects for ~110 ms every 5.0 s forever).
+
 ### [server/v0.44.0-rc7] - 2026-11-25
 
 #### Added
