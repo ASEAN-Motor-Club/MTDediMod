@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc7] - 2026-11-25
+
+#### Added
+- Deadlock-safe GameThread `HangWatchdog` in `TickProfiler` (#72): monitors `UEngine::Tick` stalls past `MOD_HANG_WATCHDOG_MS` (default `5000 ms`, `0` disables) across 4 escalating capture stages (`1×`, `3×`, `6×`, `12×` threshold), snapshots GameThread `CONTEXT` + raw stack while suspended (<2 ms) and unwinds/resolves `module+0xRVA` frames after `ResumeThread` (safe under Wine/Proton). Appends full traces to `MotorTown/Saved/ServerLog/hang_traces.log` and summaries to `UE4SS.log`.
+
 ### [server/v0.44.0-rc6] - 2026-11-21
 
 #### Fixed
