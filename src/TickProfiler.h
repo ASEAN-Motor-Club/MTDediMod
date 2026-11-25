@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <thread>
 
 // Lightweight game-thread tick profiler.
 //
@@ -13,7 +14,10 @@
 // report their own execution time via ReportModTime().  The profiler
 // aggregates over a sliding window and logs a summary every WINDOW_SIZE ticks.
 //
-// All state is accessed exclusively from the game thread — no locks needed.
+// The game-thread state (tick start, mod accumulators, window aggregates) is
+// accessed exclusively from the game thread — no locks needed.  The HangWatchdog
+// heartbeat fields below are the only cross-thread state: written on the game
+// thread, read from the background watchdog thread, all via atomics.
 class TickProfiler
 {
 public:
@@ -59,6 +63,19 @@ private:
 	void OnPostTick();
 	void LogSummary();
 
+	// --- Hang watchdog ---
+	// Detects GameThread stalls (>= MOD_HANG_WATCHDOG_MS, default 5000 ms; 0
+	// disables) from a background thread and captures module+0xRVA stack
+	// traces of the GameThread.  Capture safety: while the GameThread is
+	// suspended, ONLY GetThreadContext + ReadProcessMemory into pre-allocated
+	// buffers run (zero heap allocation, zero logging, zero VirtualQuery /
+	// DbgHelp); module resolution, unwinding and all I/O happen after the
+	// thread is resumed.  Rate-limited to 4 snapshots per stall (5/15/30/60 s).
+	void StartWatchdog();
+	void StopWatchdog();
+	void WatchdogLoop();
+	void CaptureGameThreadStack(int64_t stalled_ms, bool in_tick);
+
 	std::atomic<bool> m_started{false};
 	uint64_t m_pre_tick_id = RC::Unreal::Hook::ERROR_ID;
 	uint64_t m_post_tick_id = RC::Unreal::Hook::ERROR_ID;
@@ -81,4 +98,13 @@ private:
 	int m_w_over_budget = 0;
 	int64_t m_w_mod_us[COMP_COUNT] = {};
 	int m_w_mod_calls[COMP_COUNT] = {};
+
+	// Watchdog heartbeat state (written on game thread, read on watchdog thread).
+	std::atomic<uint32_t> m_game_thread_id{0};
+	std::atomic<int64_t>  m_last_tick_ms{0};     // steady_clock ms since epoch
+	std::atomic<bool>     m_in_tick{false};      // true between OnPreTick and OnPostTick
+	std::atomic<uint64_t> m_tick_seq{0};         // monotonic tick counter
+	std::atomic<bool>     m_watchdog_stop{false};
+	std::atomic<int64_t>  m_hang_threshold_ms{5000}; // MOD_HANG_WATCHDOG_MS (0 = disabled)
+	std::thread           m_watchdog_thread;
 };
