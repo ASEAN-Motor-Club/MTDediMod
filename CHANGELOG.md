@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc9] - 2026-11-25
+
+#### Fixed
+- Cached `GetCachedWorld()` via `UEHelpers.GetGameInstance():GetWorld()` (#76), eliminating `UEHelpers.GetWorld()`'s un-cached `FindAllOf("PlayerController")` (~100–200 ms) scan on every spawn/despawn/tag lookup; skip redundant `LoadAsset` when `StaticFindObject` already resolves.
+- Replaced deprecated off-GameThread `ExecuteWithDelay` with `ExecuteInGameThreadWithDelay` in `VehicleManager.lua` and `ServerManager.lua`, and fixed undefined `attachmentCount` in `VerifyAndRetryVehicleParts` error log (#76).
+- Lazy field evaluation in `CargoManager.lua` `GetDeliveryPoints` (#76) so filtered `GET /delivery/points?fields=...` polls skip reading unrequested UObject properties.
+
 ### [server/v0.44.0-rc8] - 2026-11-25
 
 #### Fixed
