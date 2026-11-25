@@ -257,7 +257,7 @@ local function HandleServerExecCommand(session)
     local data = json.parse(session.content)
 
     if data and data.Command then
-        local world = UEHelpers.GetWorld()
+        local world = GetCachedWorld()
         if world:IsValid() then
             local PC = data.PlayerId and GetPlayerControllerFromUniqueId(data.PlayerId) or nil
             UEHelpers.GetKismetSystemLibrary():ExecuteConsoleCommand(world, data.Command, PC)
@@ -362,7 +362,7 @@ local function HandleGetPolicePatrolAreas(session)
     return { data = areas }
 end
 
-ExecuteWithDelay(5000, function()
+ExecuteInGameThreadWithDelay(5000, function()
   local banker = FindFirstOf('Banker_C')
   if banker and banker:IsValid() then
     banker:K2_DestroyActor()

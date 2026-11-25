@@ -11,7 +11,7 @@ local json = require("JsonParser")
 ---@return string? AssetTag
 ---@return AActor? SpawnedActor
 local function SpawnActor(assetPath, location, rotation, tag, scale)
-  local world = UEHelpers.GetWorld()
+  local world = GetCachedWorld()
   if world and world:IsValid() then
     local staticMeshActorClass = StaticFindObject("/Script/Engine.StaticMeshActor")
     ---@cast staticMeshActorClass UClass
@@ -23,12 +23,14 @@ local function SpawnActor(assetPath, location, rotation, tag, scale)
     -- or console commands / keybinds (already on game thread), so UObject access is safe.
     local assetTag = tag
     pcall(function()
-      LoadAsset(assetPath)
-      -- StaticFindObject only resolves objects already in memory, so the find
-      -- above misses assets that have never been loaded (first-ever spawn of
-      -- a non-preloaded asset, e.g. workshop prop meshes). Re-find AFTER the
-      -- load so the freshly loaded object is visible.
-      object = StaticFindObject(assetPath)
+      if not object or not object:IsValid() then
+        LoadAsset(assetPath)
+        -- StaticFindObject only resolves objects already in memory, so the find
+        -- above misses assets that have never been loaded (first-ever spawn of
+        -- a non-preloaded asset, e.g. workshop prop meshes). Re-find AFTER the
+        -- load so the freshly loaded object is visible.
+        object = StaticFindObject(assetPath)
+      end
 
       if not object or not object:IsValid() then
         error("Invalid asset loaded: " .. assetPath)
@@ -140,7 +142,7 @@ local function DestroyActor(assetTag)
     error("Invalid asset tag provided")
   end
 
-  local world = UEHelpers.GetWorld()
+  local world = GetCachedWorld()
   local actors = {}
   UEHelpers.GetGameplayStatics():GetAllActorsWithTag(world, FName(assetTag), actors)
 

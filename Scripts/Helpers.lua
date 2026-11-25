@@ -203,12 +203,32 @@ function GuidToString(guid)
   return strGuid:upper()
 end
 
+local CachedWorld = CreateInvalidObject()
+---Get cached UWorld without triggering UEHelpers.GetWorld()'s un-cached
+---FindAllOf("PlayerController") scan (~100-200ms on dedicated servers).
+---@return UWorld
+function GetCachedWorld()
+  if CachedWorld:IsValid() then
+    return CachedWorld
+  end
+  local gameInstance = UEHelpers.GetGameInstance()
+  if gameInstance:IsValid() then
+    local world = gameInstance:GetWorld()
+    if world and world:IsValid() then
+      CachedWorld = world
+      return CachedWorld
+    end
+  end
+  return CreateInvalidObject() ---@type UWorld
+end
+
 local MotorTownGameState = CreateInvalidObject()
 ---Get Motor Town GameState object
 ---@return AMotorTownGameState
 function GetMotorTownGameState()
   if not MotorTownGameState:IsValid() then
-    local gameState = UEHelpers:GetGameStateBase()
+    local world = GetCachedWorld()
+    local gameState = (world:IsValid() and world.GameState) or CreateInvalidObject()
     local gameStateClass = StaticFindObject("/Script/MotorTown.MotorTownGameState")
     ---@cast gameStateClass UClass
     if gameState:IsValid() and gameState:IsA(gameStateClass) then

@@ -255,133 +255,153 @@ end
 
 ---Convert DeliveryPoint to JSON serializable table
 ---@param point AMTDeliveryPoint
-local function DeliveryPointToTable(point)
+---@param fieldSet table<string, boolean>? Optional set of requested fields (nil = all)
+local function DeliveryPointToTable(point, fieldSet)
   if not point:IsValid() then
     return json.null
   end
 
+  local want = function(k) return not fieldSet or fieldSet[k] end
   local data = {}
 
   data.DeliveryPointGuid = GuidToString(point.DeliveryPointGuid)
-  data.MissionPointName = point.MissionPointName:ToString()
-  data.DeliveryPointName = NameAndNumberToTable(point.DeliveryPointName)
+  if want("MissionPointName") then data.MissionPointName = point.MissionPointName:ToString() end
+  if want("DeliveryPointName") then data.DeliveryPointName = NameAndNumberToTable(point.DeliveryPointName) end
 
-  data.PointName = {}
-  data.PointName.Texts = {} ---@type string[]
-  point.PointName.Texts:ForEach(function(index, element)
-    table.insert(data.PointName.Texts, element:get():ToString())
-  end)
-
-  data.PaymentMultiplier = point.PaymentMultiplier
-  data.BasePayment = point.BasePayment
-  data.MaxDeliveries = point.MaxDeliveries
-  data.MaxPassiveDeliveries = point.MaxPassiveDeliveries
-  data.MaxDeliveryDistance = point.MaxDeliveryDistance
-  data.MaxDeliveryReceiveDistance = point.MaxDeliveryReceiveDistance
-  data.MissionPointType = point.MissionPointType
-  data.GameplayTags = GameplayTagContainerToString(point.GameplayTags)
-
-  data.DestinationTypes = {} ---@type number[]
-  -- for i = 1, #point.DestinationTypes, 1 do
-  --   table.insert(data.DestinationTypes, point.DestinationTypes[i])
-  -- end
-
-  data.DestinationExcludeTypes = {} ---@type number[]
-  -- for i = 1, #point.DestinationExcludeTypes, 1 do
-  --   table.insert(data.DestinationExcludeTypes, point.DestinationExcludeTypes[i])
-  -- end
-
-  data.DestinationCargoLimits = {}
-  point.DestinationCargoLimits:ForEach(function(index, element)
-    table.insert(data.DestinationCargoLimits, DeliveryPointLimitToTable(element:get()))
-  end)
-
-  data.bUseAsDestinationInteraction = point.bUseAsDestinationInteraction
-
-  data.ProductionConfigs = {}
-  point.ProductionConfigs:ForEach(function(index, element)
-    table.insert(data.ProductionConfigs, ProductionConfigToTable(element:get()))
-  end)
-
-  data.Net_ProductionStatuses = {}
-  if point.Net_ProductionStatuses:IsValid() then
-    point.Net_ProductionStatuses:ForEach(function(index, element)
-      table.insert(data.Net_ProductionStatuses, ProductionStatusToTable(element:get()))
+  if want("PointName") then
+    data.PointName = {}
+    data.PointName.Texts = {} ---@type string[]
+    point.PointName.Texts:ForEach(function(index, element)
+      table.insert(data.PointName.Texts, element:get():ToString())
     end)
   end
 
-  data.PassiveSupplies = {}
-  point.PassiveSupplies:ForEach(function(index, element)
-    table.insert(data.PassiveSupplies, DeliveryPassiveSuplyToTable(element:get()))
-  end)
+  if want("PaymentMultiplier") then data.PaymentMultiplier = point.PaymentMultiplier end
+  if want("BasePayment") then data.BasePayment = point.BasePayment end
+  if want("MaxDeliveries") then data.MaxDeliveries = point.MaxDeliveries end
+  if want("MaxPassiveDeliveries") then data.MaxPassiveDeliveries = point.MaxPassiveDeliveries end
+  if want("MaxDeliveryDistance") then data.MaxDeliveryDistance = point.MaxDeliveryDistance end
+  if want("MaxDeliveryReceiveDistance") then data.MaxDeliveryReceiveDistance = point.MaxDeliveryReceiveDistance end
+  if want("MissionPointType") then data.MissionPointType = point.MissionPointType end
+  if want("GameplayTags") then data.GameplayTags = GameplayTagContainerToString(point.GameplayTags) end
 
-  data.DemandConfigs = {}
-  point.DemandConfigs:ForEach(function(index, element)
-    table.insert(data.DemandConfigs, DeliveryDemandToTable(element:get()))
-  end)
+  if want("DestinationTypes") then data.DestinationTypes = {} end
+  if want("DestinationExcludeTypes") then data.DestinationExcludeTypes = {} end
 
-  data.Supplies = {}
-  point.Supplies:ForEach(function(key, value)
-    data.Supplies[key:get()] = value:get()
-  end)
-
-  data.Demands = {}
-  point.Demands:ForEach(function(key, value)
-    data.Demands[key:get()] = value:get()
-  end)
-
-  data.DemandPriority = point.DemandPriority
-
-  data.StorageConfigs = {}
-  point.StorageConfigs:ForEach(function(index, element)
-    table.insert(data.StorageConfigs, StorageConfigToTable(element:get()))
-  end)
-
-  data.MaxStorage = point.MaxStorage
-  data.bConsumeContainer = point.bConsumeContainer
-
-  data.InputInventoryShare = {}
-  point.InputInventoryShare:ForEach(function(index, element)
-    table.insert(data.InputInventoryShare, GuidToString(element:get().DeliveryPointGuid))
-  end)
-
-  data.InputInventoryShareTarget = {}
-  point.InputInventoryShareTarget:ForEach(function(index, element)
-    table.insert(data.InputInventoryShareTarget, GuidToString(element:get().DeliveryPointGuid))
-  end)
-
-  data.bIsSender = point.bIsSender
-  data.bIsReceiver = point.bIsReceiver
-  data.bRemoveUnusedInputCargo = point.bRemoveUnusedInputCargo
-  data.bShowStorage = point.bShowStorage
-  data.bLoadCargoBySpawnAtPoint = point.bLoadCargoBySpawnAtPoint
-  -- data.ZoneVolume = point.ZoneVolume
-
-  data.Net_Deliveries = {}
-  if point.Net_Deliveries and point.Net_Deliveries:IsValid() then
-    point.Net_Deliveries:ForEach(function(index, element)
-      table.insert(data.Net_Deliveries, DeliveryToTable(element:get()))
+  if want("DestinationCargoLimits") then
+    data.DestinationCargoLimits = {}
+    point.DestinationCargoLimits:ForEach(function(index, element)
+      table.insert(data.DestinationCargoLimits, DeliveryPointLimitToTable(element:get()))
     end)
   end
 
-  -- data.Server_DeliveryGoods = point.Server_DeliveryGoods
-  -- data.SenderMarker = point.SenderMarker
-  data.Net_InputInventory = {}
-  data.Net_InputInventory.Entries = {}
-  point.Net_InputInventory.Entries:ForEach(function(index, element)
-    table.insert(data.Net_InputInventory.Entries, InventoryEntryToTable(element:get()))
-  end)
+  if want("bUseAsDestinationInteraction") then data.bUseAsDestinationInteraction = point.bUseAsDestinationInteraction end
 
-  data.Net_OutputInventory = {}
-  data.Net_OutputInventory.Entries = {}
-  point.Net_OutputInventory.Entries:ForEach(function(index, element)
-    table.insert(data.Net_OutputInventory.Entries, InventoryEntryToTable(element:get()))
-  end)
+  if want("ProductionConfigs") then
+    data.ProductionConfigs = {}
+    point.ProductionConfigs:ForEach(function(index, element)
+      table.insert(data.ProductionConfigs, ProductionConfigToTable(element:get()))
+    end)
+  end
 
-  data.Net_RuntimeFlags = point.Net_RuntimeFlags
-  data.Net_ProductionBonusByProduction = point.Net_ProductionBonusByProduction
-  data.Net_ProductionBonusByPopulation = point.Net_ProductionBonusByPopulation
-  data.Net_ProductionLocalFoodSupply = point.Net_ProductionLocalFoodSupply
+  if want("Net_ProductionStatuses") then
+    data.Net_ProductionStatuses = {}
+    if point.Net_ProductionStatuses:IsValid() then
+      point.Net_ProductionStatuses:ForEach(function(index, element)
+        table.insert(data.Net_ProductionStatuses, ProductionStatusToTable(element:get()))
+      end)
+    end
+  end
+
+  if want("PassiveSupplies") then
+    data.PassiveSupplies = {}
+    point.PassiveSupplies:ForEach(function(index, element)
+      table.insert(data.PassiveSupplies, DeliveryPassiveSuplyToTable(element:get()))
+    end)
+  end
+
+  if want("DemandConfigs") then
+    data.DemandConfigs = {}
+    point.DemandConfigs:ForEach(function(index, element)
+      table.insert(data.DemandConfigs, DeliveryDemandToTable(element:get()))
+    end)
+  end
+
+  if want("Supplies") then
+    data.Supplies = {}
+    point.Supplies:ForEach(function(key, value)
+      data.Supplies[key:get()] = value:get()
+    end)
+  end
+
+  if want("Demands") then
+    data.Demands = {}
+    point.Demands:ForEach(function(key, value)
+      data.Demands[key:get()] = value:get()
+    end)
+  end
+
+  if want("DemandPriority") then data.DemandPriority = point.DemandPriority end
+
+  if want("StorageConfigs") then
+    data.StorageConfigs = {}
+    point.StorageConfigs:ForEach(function(index, element)
+      table.insert(data.StorageConfigs, StorageConfigToTable(element:get()))
+    end)
+  end
+
+  if want("MaxStorage") then data.MaxStorage = point.MaxStorage end
+  if want("bConsumeContainer") then data.bConsumeContainer = point.bConsumeContainer end
+
+  if want("InputInventoryShare") then
+    data.InputInventoryShare = {}
+    point.InputInventoryShare:ForEach(function(index, element)
+      table.insert(data.InputInventoryShare, GuidToString(element:get().DeliveryPointGuid))
+    end)
+  end
+
+  if want("InputInventoryShareTarget") then
+    data.InputInventoryShareTarget = {}
+    point.InputInventoryShareTarget:ForEach(function(index, element)
+      table.insert(data.InputInventoryShareTarget, GuidToString(element:get().DeliveryPointGuid))
+    end)
+  end
+
+  if want("bIsSender") then data.bIsSender = point.bIsSender end
+  if want("bIsReceiver") then data.bIsReceiver = point.bIsReceiver end
+  if want("bRemoveUnusedInputCargo") then data.bRemoveUnusedInputCargo = point.bRemoveUnusedInputCargo end
+  if want("bShowStorage") then data.bShowStorage = point.bShowStorage end
+  if want("bLoadCargoBySpawnAtPoint") then data.bLoadCargoBySpawnAtPoint = point.bLoadCargoBySpawnAtPoint end
+
+  if want("Net_Deliveries") then
+    data.Net_Deliveries = {}
+    if point.Net_Deliveries and point.Net_Deliveries:IsValid() then
+      point.Net_Deliveries:ForEach(function(index, element)
+        table.insert(data.Net_Deliveries, DeliveryToTable(element:get()))
+      end)
+    end
+  end
+
+  if want("Net_InputInventory") then
+    data.Net_InputInventory = {}
+    data.Net_InputInventory.Entries = {}
+    point.Net_InputInventory.Entries:ForEach(function(index, element)
+      table.insert(data.Net_InputInventory.Entries, InventoryEntryToTable(element:get()))
+    end)
+  end
+
+  if want("Net_OutputInventory") then
+    data.Net_OutputInventory = {}
+    data.Net_OutputInventory.Entries = {}
+    point.Net_OutputInventory.Entries:ForEach(function(index, element)
+      table.insert(data.Net_OutputInventory.Entries, InventoryEntryToTable(element:get()))
+    end)
+  end
+
+  if want("Net_RuntimeFlags") then data.Net_RuntimeFlags = point.Net_RuntimeFlags end
+  if want("Net_ProductionBonusByProduction") then data.Net_ProductionBonusByProduction = point.Net_ProductionBonusByProduction end
+  if want("Net_ProductionBonusByPopulation") then data.Net_ProductionBonusByPopulation = point.Net_ProductionBonusByPopulation end
+  if want("Net_ProductionLocalFoodSupply") then data.Net_ProductionLocalFoodSupply = point.Net_ProductionLocalFoodSupply end
 
   return data
 end
@@ -492,6 +512,13 @@ end
 local function GetDeliveryPoints(guid, fields, limit)
   local deliverySystem = GetDeliverySystem()
   local arr = {} ---@type table[]
+  local fieldSet = nil
+  if fields then
+    fieldSet = {}
+    for j = 1, #fields, 1 do
+      fieldSet[fields[j]] = true
+    end
+  end
 
   if deliverySystem:IsValid() then
     for i = 1, #deliverySystem.DeliveryPoints, 1 do
@@ -502,12 +529,12 @@ local function GetDeliveryPoints(guid, fields, limit)
           goto continue
         end
 
-        local point = DeliveryPointToTable(deliverySystem.DeliveryPoints[i])
+        local point = DeliveryPointToTable(deliverySystem.DeliveryPoints[i], fieldSet)
         local filtered = {}
 
         if fields then
           for j = 1, #fields, 1 do
-            if not point[fields[j]] then
+            if point[fields[j]] == nil then
               error("Field " .. fields[j] .. " does not exist")
             end
 

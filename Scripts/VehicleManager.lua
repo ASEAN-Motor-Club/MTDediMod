@@ -1585,7 +1585,7 @@ local function GetVehiclesByTag(tags)
   for tagIndex, tag in ipairs(tags) do
     local actors = {}
     UEHelpers.GetGameplayStatics():GetAllActorsWithTag(
-      UEHelpers.GetWorld(),
+      GetCachedWorld(),
       FName(tag),
       actors
     )
@@ -2763,7 +2763,7 @@ end
 local function FindVehicleByTag(tag)
   local actors = {}
   UEHelpers.GetGameplayStatics():GetAllActorsWithTag(
-    UEHelpers.GetWorld(),
+    GetCachedWorld(),
     FName(tag),
     actors
   )
@@ -2790,7 +2790,7 @@ local function VerifyAndRetryVehicleParts(tag, expectedParts, attempt)
   if not vehicle or not vehicle:IsValid() or not IsUObjectSafe(vehicle) then
     LogOutput("WARN", "VerifyAndRetryVehicleParts: vehicle with tag '%s' not found or invalid (attempt %d)", tag, attempt)
     if attempt < maxRetries then
-      ExecuteWithDelay(1000 * attempt, function()
+      ExecuteInGameThreadWithDelay(1000 * attempt, function()
         VerifyAndRetryVehicleParts(tag, expectedParts, attempt + 1)
       end)
     end
@@ -2800,7 +2800,7 @@ local function VerifyAndRetryVehicleParts(tag, expectedParts, attempt)
   if not vehicle.Net_Parts:IsValid() then
     LogOutput("WARN", "VerifyAndRetryVehicleParts: Net_Parts invalid for tag '%s' (attempt %d)", tag, attempt)
     if attempt < maxRetries then
-      ExecuteWithDelay(1000 * attempt, function()
+      ExecuteInGameThreadWithDelay(1000 * attempt, function()
         VerifyAndRetryVehicleParts(tag, expectedParts, attempt + 1)
       end)
     end
@@ -2827,13 +2827,13 @@ local function VerifyAndRetryVehicleParts(tag, expectedParts, attempt)
       tag, attempt, maxRetries
     )
     ApplyPartsToVehicle(vehicle, expectedParts)
-    ExecuteWithDelay(1000 * attempt, function()
+    ExecuteInGameThreadWithDelay(1000 * attempt, function()
       VerifyAndRetryVehicleParts(tag, expectedParts, attempt + 1)
     end)
   else
     LogOutput("ERROR",
-      "VerifyAndRetryVehicleParts: permanent failure for tag='%s' netParts=%d attachmentParts=%d expected=%d",
-      tag, netPartsCount, attachmentCount, #expectedParts
+      "VerifyAndRetryVehicleParts: permanent failure for tag='%s' netParts=%d expected=%d",
+      tag, netPartsCount, #expectedParts
     )
   end
 end
