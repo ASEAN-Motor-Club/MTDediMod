@@ -547,6 +547,13 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ## Client
 
+### [client/v0.6.1-rc4] - 2026-11-26
+
+#### Fixed
+- Replaced 1 s `FindFirstOf("MotorTownGameState_C")` full `GUObjectArray` scan in `ClientScripts/RPRestrictions.lua` with O(1) `GetCachedWorld().GameState`, and guarded the 1 s loop with a single `IsRPPlayer()` check (#78).
+- Added cached `GetCachedWorld()` in `ClientScripts/Helpers.lua`, replaced `UEHelpers.GetWorld()` in `/spawn_vehicle` (`ClientScripts/Commands.lua`), and removed unused `Sleep`/`ExecuteInGameThreadSync` (#78).
+- Guarded boot `FindFirstOf("W_RoadSideService_C")` behind `IsRPPlayer()` in `ClientScripts/RoadsideServiceFilter.lua`, skipped redundant `LoadAsset` in `ClientScripts/ModManager.lua`, and nil-guarded `CancelDelayedAction` in `EmoteWidget.lua` and `TeleportWidget.lua` (#78).
+
 ### [Unreleased]
 
 #### Added
