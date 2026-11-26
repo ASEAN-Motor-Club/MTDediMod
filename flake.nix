@@ -604,6 +604,9 @@
                           # replaced with player-only implementations.
                           SCRIPTS_OUT="$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts"
                           ADMIN_ONLY="Shortcuts.lua Commands.lua OverlayBridge.lua VehicleManager.lua IntegrityChecker.lua"
+                          PLAYER_ABSENT="VehicleManager.lua IntegrityChecker.lua"
+                          PLAYER_REPLACED="Shortcuts.lua Commands.lua OverlayBridge.lua"
+                          PLAYER_VARIANT_DIR="${./ClientScripts/variants/player}"
                           if [ "$VARIANT" = "player" ]; then
                             for f in $ADMIN_ONLY; do rm -f "$SCRIPTS_OUT/$f"; done
                             cp "${./ClientScripts/variants/player/Shortcuts.lua}" "$SCRIPTS_OUT/Shortcuts.lua"
@@ -628,9 +631,17 @@
                           # Static guard: fail the build if admin code leaked into
                           # the player package.
                           if [ "$VARIANT" = "player" ]; then
-                            for f in $ADMIN_ONLY; do
+                            # Admin-only modules must not be present at all.
+                            for f in $PLAYER_ABSENT; do
                               if [ -e "$SCRIPTS_OUT/$f" ]; then
                                 echo "Error: admin file $f leaked into player package"; exit 1
+                              fi
+                            done
+                            # These three are deliberately replaced by player variants;
+                            # require byte-identical copies of the player sources.
+                            for f in $PLAYER_REPLACED; do
+                              if ! cmp -s "$SCRIPTS_OUT/$f" "$PLAYER_VARIANT_DIR/$f"; then
+                                echo "Error: player file $f is not the player variant"; exit 1
                               fi
                             done
                             if grep -rEq 'ImpulseAimed|DespawnAimed|ServerApplyImpact|SetImpulseMode|adminpanel' "$SCRIPTS_OUT"; then
