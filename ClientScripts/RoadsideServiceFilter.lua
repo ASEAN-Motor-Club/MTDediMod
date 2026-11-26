@@ -28,9 +28,11 @@ NotifyOnNewObject(WIDGET_FULL_PATH, function(widget)
     end)
 end)
 
-local existing = FindFirstOf("W_RoadSideService_C")
-if existing and existing:IsValid() and IsRPPlayer() then
-    existing:RemoveFromParent()
+if IsRPPlayer() then
+    local existing = FindFirstOf("W_RoadSideService_C")
+    if existing and existing:IsValid() then
+        existing:RemoveFromParent()
+    end
 end
 
 LogOutput("INFO", "[RoadsideServiceFilter] Loaded (v%s)", statics.ModVersion)

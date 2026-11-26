@@ -360,7 +360,8 @@ local function StartPolling()
 end
 
 local function StopPolling()
-    CancelDelayedAction(pollHandle)
+    if not pollHandle then return end
+    pcall(CancelDelayedAction, pollHandle)
     pollHandle = nil
     LogOutput("INFO", "[TeleportWidget] Polling loop stopped")
 end
