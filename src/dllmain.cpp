@@ -23,6 +23,7 @@
 #include "TickProfiler.h"
 #include "PropertyCache.h"
 #include "AdminHide.h"
+#include "TrafficNormalizer.h"
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -43,8 +44,9 @@ MotorTownMods::MotorTownMods()
 
 MotorTownMods::~MotorTownMods()
 {
-	// Unregister the location tick hook before the generic UnregisterAllHooks
-	// sweep so its FCallback is released cleanly.
+	// Unregister native hooks and the location tick hook before the generic
+	// UnregisterAllHooks sweep so trampolines and FCallbacks release cleanly.
+	TrafficNormalizer::Uninstall();
 	LocationSampler::Get().Stop();
 	HookManager::UnregisterAllHooks();
 }
@@ -252,6 +254,10 @@ auto MotorTownMods::on_unreal_init() -> void
 	{
 		AdminHide::Install();
 	}
+
+	// Normalize AI traffic density across dense urban and sparse rural roads
+	// (disable with MOD_TRAFFIC_NORM_ENABLE=0).
+	TrafficNormalizer::Install();
 
 	// Init API server
 	auto server = Webserver::Get();

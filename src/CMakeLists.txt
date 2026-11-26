@@ -43,6 +43,7 @@ set(SRC_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/LuaHttpServer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/statics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/TickProfiler.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/TrafficNormalizer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/webroute.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/webserver.cpp"
 )
@@ -59,6 +60,7 @@ set(HDR_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/LuaHttpServer.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/statics.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/TickProfiler.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/TrafficNormalizer.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/webroute.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/webserver.h"
 )
@@ -95,6 +97,13 @@ target_compile_features(MotorTownMods PRIVATE cxx_std_20)
 
 # Define macros
 target_compile_definitions(MotorTownMods PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+# Enable asynchronous SEH (/EHa) on TrafficNormalizer.cpp so __try/__except
+# catches hardware access violations around raw engine pointer reads under /O2.
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/TrafficNormalizer.cpp"
+    PROPERTIES COMPILE_OPTIONS "/EHa"
+)
 
 # Debug-specific settings
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
