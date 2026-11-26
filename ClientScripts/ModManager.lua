@@ -78,9 +78,13 @@ local function LoadBpClass(packagePath, assetName)
         end
     end
 
-    -- Method 2: LoadAsset + StaticFindObject (works once pak is mounted)
+    -- Method 2: StaticFindObject first, then LoadAsset + StaticFindObject
+    local fullPath = packagePath .. "." .. assetName
+    local cls = StaticFindObject(fullPath)
+    if cls and cls:IsValid() then return cls end
+
     LoadAsset(packagePath)
-    local cls = StaticFindObject(packagePath .. "." .. assetName)
+    cls = StaticFindObject(fullPath)
     return (cls and cls:IsValid()) and cls or nil
 end
 

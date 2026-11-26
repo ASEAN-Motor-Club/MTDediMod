@@ -176,9 +176,10 @@ local function BlockTeleportHooks()
 end
 
 local function ClearTeleportPoints()
-    if not IsRPPlayer() then return end
-    local gameState = FindFirstOf("MotorTownGameState_C")
-    if not gameState or not gameState:IsValid() then return end
+    local world = GetCachedWorld()
+    if not world or not world:IsValid() then return end
+    local okGs, gameState = pcall(function() return world.GameState end)
+    if not okGs or not gameState or not gameState:IsValid() then return end
     local ok, points = pcall(function() return gameState.Net_TeleportPoints end)
     if not ok or not points then return end
     local ok2, count = pcall(function() return points:Length() end)
@@ -191,6 +192,7 @@ end
 BlockTeleportHooks()
 
 LoopInGameThreadWithDelay(1000, function()
+    if not IsRPPlayer() then return end
     DisableAutoPilotWidgets()
     SuppressAutoPilot()
     ClearTeleportPoints()

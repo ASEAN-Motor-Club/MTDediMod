@@ -74,7 +74,7 @@ Commands["/spawn_vehicle"] = function(PC, args)
     return
   end
 
-  local world = UEHelpers.GetWorld()
+  local world = GetCachedWorld()
   if not world or not world:IsValid() then
     LogOutput("WARN", "/spawn_vehicle: invalid world")
     return

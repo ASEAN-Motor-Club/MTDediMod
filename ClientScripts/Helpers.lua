@@ -23,6 +23,36 @@ function GetMyPlayerController()
   return myPlayerControllerCache ---@type AMotorTownPlayerController
 end
 
+local cachedWorld = CreateInvalidObject()
+---Get cached UWorld without triggering UEHelpers.GetWorld()'s un-cached
+---FindAllOf("PlayerController") scan.
+---@return UWorld
+function GetCachedWorld()
+  if cachedWorld and cachedWorld:IsValid() then
+    return cachedWorld
+  end
+
+  local gi = UEHelpers.GetGameInstance()
+  if gi and gi:IsValid() then
+    local ok, w = pcall(function() return gi:GetWorld() end)
+    if ok and w and w:IsValid() then
+      cachedWorld = w
+      return cachedWorld
+    end
+  end
+
+  local pc = GetMyPlayerController()
+  if pc and pc:IsValid() then
+    local ok, w = pcall(function() return pc:GetWorld() end)
+    if ok and w and w:IsValid() then
+      cachedWorld = w
+      return cachedWorld
+    end
+  end
+
+  return cachedWorld
+end
+
 -- Importing functions to the global namespace of this mod just so that we don't have to retype 'UEHelpers.' over and over again.
 local GetKismetSystemLibrary = UEHelpers.GetKismetSystemLibrary
 local GetKismetMathLibrary = UEHelpers.GetKismetMathLibrary
@@ -269,33 +299,6 @@ function MergeTable(base, append)
   return base
 end
 
-
-local socket = RequireSafe("socket") ---@type Socket?
----Halts CPU operation for the given duration
----@param ms integer Duration to sleep in miliseconds
-function Sleep(ms)
-  if ms ~= 0 then
-    if socket then
-      socket.sleep(ms / 1000)
-    end
-  end
-end
-
----Execute given function in the GameThread
----@param exec fun()
-function ExecuteInGameThreadSync(exec)
-  local wait = 0
-  local isProcessing = true
-  ExecuteInGameThread(function()
-    exec()
-    isProcessing = false
-  end)
-
-  while isProcessing and wait < 1000 do
-    wait = wait + 1
-    Sleep(1)
-  end
-end
 
 ---Build a fresh FGuid for the 0.7.20 vehicle-reset RPCs
 ---(ServerResetVehicleAt gained a trailing ResetOperationId in 0.7.20, and the
