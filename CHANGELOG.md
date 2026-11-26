@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc10] - 2026-11-26
+
+#### Added
+- Native AI traffic density normalizer (`TrafficNormalizer` in `src/TrafficNormalizer.{h,cpp}`, documented in `docs/TrafficNormalizer.md`) (#82): hooks `Nav_GetRandomRoadNode` with `250 m` spatial-grid stratified sampling within `1 km` of online player clusters (`FPlayerCluster +0x28`) and post-hooks `Traffic_CanMaterialize` with a universal local cap (`8` materialized AI vehicles within `400 m`, handling `TSparseArray` heap `SecondaryData` past 128 slots). Cross-version AOBs + dynamic offset extraction for `0.7.19` and `0.7.20`, compiled with `/EHa` SEH guards, configurable via `MOD_TRAFFIC_*` env vars (`MOD_TRAFFIC_NORM_ENABLE=0` disables).
+
 ### [server/v0.44.0-rc9] - 2026-11-25
 
 #### Fixed
