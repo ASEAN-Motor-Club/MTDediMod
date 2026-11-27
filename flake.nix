@@ -479,8 +479,8 @@
             ${sccacheEnv}
             VARIANT="''${1:-admin}"
             case "$VARIANT" in
-              admin)  FEATURES=""; TARGET_DIR="overlay/target" ;;
-              player) FEATURES="--no-default-features"; TARGET_DIR="overlay/target-player" ;;
+              admin)  FEATURES=""; TARGET_DIR="$PWD/overlay/target" ;;
+              player) FEATURES="--no-default-features"; TARGET_DIR="$PWD/overlay/target-player" ;;
               *) echo "Error: variant must be admin or player"; exit 1 ;;
             esac
             XWIN_CACHE="$(pwd)/.xwin-cache"
@@ -670,8 +670,8 @@
                           # The 1-click installer is admin tooling: ship it in
                           # the admin zip root only, never in the player zip.
                           if [ "$VARIANT" = "admin" ]; then
-                            cp "${./tools/Install-AMCAdminMod.ps1}" "$PACKAGE_DIR/"
-                            cp "${./tools/Install-AMCAdminMod.bat}" "$PACKAGE_DIR/"
+                            cp "${./tools/Install-AMCAdminMod.ps1}" "$PACKAGE_DIR/Install-AMCAdminMod.ps1"
+                            cp "${./tools/Install-AMCAdminMod.bat}" "$PACKAGE_DIR/Install-AMCAdminMod.bat"
                             echo "✓ Bundled 1-click admin installer"
                           fi
                           # Player sources are build inputs, never shipped as a subtree.
