@@ -32,7 +32,9 @@ if config.GetModConfig("useEguiOverlay") ~= false then
     overlayActive = overlayBridge.Load(dir)
 end
 if overlayActive then
-    overlayBridge.Init(shortcuts)
+    overlayActive = overlayBridge.Init(shortcuts) ~= false
+end
+if overlayActive then
     LogOutput("INFO", "egui overlay active (Tab: teleport" .. (build.admin and ", Ctrl+Shift+F10: admin" or "") .. ")")
 else
     require("TeleportWidget")

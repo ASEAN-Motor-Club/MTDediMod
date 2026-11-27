@@ -532,6 +532,11 @@ Re-release for test container deployment (no server-side code changes since rc5)
 
 ### [Unreleased]
 
+### [client/v0.6.1-rc4] — 2026-11-27
+
+#### Fixed
+- `OverlayBridge.Load` now checks that the native bridge exports are registered before loading `mt_overlay.dll`. If `MTBridgeHost` / `mt_bridge.dll` are missing from the install, the overlay DLL is not loaded, so it cannot claim Tab/Esc alongside the UMG fallback. `main.lua` now honours `OverlayBridge.Init`'s return value, so a failed init falls back to the UMG teleport/emote widgets instead of reporting the overlay as active.
+
 ### [client/v0.6.1-rc3] — 2026-11-24
 
 #### Fixed
