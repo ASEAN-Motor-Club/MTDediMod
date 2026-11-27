@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc14] - 2026-11-27
+
+#### Fixed
+- `UpdateEventRaceSetup` wrote race waypoints, engine keys and vehicle keys at zero-based `TArray` indices, so the first entry of each list was dropped and the rest shifted by one; all three lists now use 1-based indexing (#93).
+- `CreateNewEvent` and `UpdateEventRaceSetup` now normalize `Location -> Translation` when writing `RaceSetup.Route.Waypoints`, so setups built from backend payloads that carry `Location` no longer land at the origin (#93).
+
 ### [server/v0.44.0-rc13] - 2026-11-27
 
 #### Fixed
