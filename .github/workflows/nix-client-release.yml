@@ -46,6 +46,16 @@ jobs:
           submodules: recursive
           token: ${{ secrets.UEPSEUDO_PAT }}
 
+      - name: Normalize UE4SS source for Nix
+        shell: bash
+        run: |
+          # actions/checkout writes the token into .git/config and adds reflog
+          # entries. A Nix path: input copies that metadata into the store, so
+          # ue4ss-patched gets a new narHash every run and can never be
+          # substituted from cache. Nix git inputs contain no .git at all,
+          # so removing it restores the source shape Nix expects.
+          find .ue4ss-src -name .git -prune -exec rm -rf {} +
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
