@@ -67,20 +67,44 @@ function gstr(s)
 end
 function FName(s) return gstr(s) end
 
-local function guid(s) return { str = s } end
-function StringToGuid(s) return guid(s or "00000000000000000000000000000000") end
-function GuidToString(g)
-  if type(g) == "table" and g.str then return g.str end
+-- Real Helpers.lua semantics: StringToGuid returns a PLAIN Lua table, and
+-- GuidToString maps plain tables to "0000". A native FGuid (produced when a
+-- table is assigned into a UE TArray) renders the real 32-hex string.
+local function guid(s) return { __nativeGuid = true, str = s } end
+local function nativeGuid(t)
+  if type(t) == "table" and t.A and not t.__nativeGuid then
+    return { __nativeGuid = true, str = string.format("%08x%08x%08x%08x", t.A, t.B, t.C, t.D):upper() }
+  end
+  return t
+end
+local function guidString(t)
+  if type(t) == "table" and t.A then
+    return string.format("%08x%08x%08x%08x", t.A, t.B, t.C, t.D):upper()
+  end
+  if type(t) == "table" and t.str then return t.str end
   return "00000000000000000000000000000000"
+end
+function StringToGuid(s)
+  local p = {}
+  for i = 1, 32, 8 do p[#p+1] = tonumber((s or "00000000000000000000000000000000"):sub(i, i+7), 16) end
+  return { A=p[1], B=p[2], C=p[3], D=p[4] }
+end
+function GuidToString(g)
+  if type(g) == "table" and g.__nativeGuid then return g.str end
+  return "0000"
 end
 
 -- Helpers.lua supplies CharacterIdToTable / RewardToTable / RouteToTable.
 dofile(root .. "/Scripts/Helpers.lua")
--- Its GuidToString rejects plain test tables, so re-assert our stubs.
-function StringToGuid(s) return guid(s or "00000000000000000000000000000000") end
+-- Re-assert realistic stubs after Helpers.lua redefines GuidToString.
+function StringToGuid(s)
+  local p = {}
+  for i = 1, 32, 8 do p[#p+1] = tonumber((s or "00000000000000000000000000000000"):sub(i, i+7), 16) end
+  return { A=p[1], B=p[2], C=p[3], D=p[4] }
+end
 function GuidToString(g)
-  if type(g) == "table" and g.str then return g.str end
-  return "00000000000000000000000000000000"
+  if type(g) == "table" and g.__nativeGuid then return g.str end
+  return "0000"
 end
 -- Skip FVector/FQuat ToString conversion; this harness tests index selection.
 TransformToTable = function(t)
@@ -93,6 +117,12 @@ RouteToTable = function(route)
 end
 
 local netEvents = newArray()
+-- Simulate UE TArray conversion of a plain guid table into a native FGuid.
+local rawNew = getmetatable(netEvents).__newindex
+setmetatable(netEvents, { __index = getmetatable(netEvents).__index, __newindex = function(t, k, v)
+  if type(v) == "table" and type(v.EventGuid) == "table" then v.EventGuid = nativeGuid(v.EventGuid) end
+  rawset(t, k, v)
+end })
 local addBehavior = "append" -- append | defer | insert-first
 
 local EventSystem = {}
@@ -131,7 +161,7 @@ local PC = {}
 function PC:IsValid() return true end
 function PC:ServerAddEvent(evt)
   if addBehavior == "defer" then return end
-  local shaped = fullGameEvent(GuidToString(evt.EventGuid), "AMC Test")
+  local shaped = fullGameEvent(guidString(evt.EventGuid), "AMC Test")
   shaped.RaceSetup.NumLaps = evt.RaceSetup.NumLaps
   if addBehavior == "insert-first" then
     table.insert(netEvents, 1, shaped)
