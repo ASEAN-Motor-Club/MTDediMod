@@ -126,13 +126,18 @@ local EventTable = {}
 ---a different event, or past the end (prod 2026-11-27: "TArray index out of
 ---range" from CreateNewEvent at EventManager.lua:177).
 ---@param eventSystem table
----@param guid any
+---@param guidString string original EventGuid from the request payload
 ---@return number? index
-local function FindEventIndexByGuid(eventSystem, guid)
+local function FindEventIndexByGuid(eventSystem, guidString)
   if not eventSystem or not eventSystem:IsValid() then return nil end
-  local guidStr = GuidToString(guid)
+  -- StringToGuid() returns a PLAIN Lua table, and GuidToString() deliberately
+  -- maps plain tables to "0000". The stored EventGuid, however, is converted
+  -- to a native FGuid when assigned into Net_Events, so GuidToString on it
+  -- yields the real 32-hex string. Compare against the original request
+  -- string, never against the plain table from StringToGuid.
+  local target = tostring(guidString or ""):upper()
   for i = 1, #eventSystem.Net_Events do
-    if GuidToString(eventSystem.Net_Events[i].EventGuid) == guidStr then
+    if GuidToString(eventSystem.Net_Events[i].EventGuid) == target then
       return i
     end
   end
@@ -191,7 +196,7 @@ local function CreateNewEvent(event)
     -- Resolve by guid, NOT by #Net_Events: ServerAddEvent may not have
     -- appended yet and a concurrent request can resize the array, making the
     -- last index wrong or out of range.
-    local last = FindEventIndexByGuid(eventSystem, guid)
+    local last = FindEventIndexByGuid(eventSystem, event.EventGuid)
     if not last then
       LogOutput("ERROR", "CreateNewEvent: event %s not found in Net_Events after add (count=%d)", event.EventGuid, #eventSystem.Net_Events)
       return false, nil
@@ -273,7 +278,7 @@ local function CreateEventWithoutOwner(event)
 
     eventSystem.Net_Events[#eventSystem.Net_Events + 1] = Event
 
-    local last = FindEventIndexByGuid(eventSystem, guid)
+    local last = FindEventIndexByGuid(eventSystem, event.EventGuid)
     if not last then
       LogOutput("ERROR", "CreateEventWithoutOwner: event %s not found in Net_Events after add (count=%d)", event.EventGuid, #eventSystem.Net_Events)
       return false, nil
