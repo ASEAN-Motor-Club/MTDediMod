@@ -356,12 +356,12 @@ local function UpdateEventRaceSetup(eventGuid, raceSetup)
 
         eventSystem.Net_Events[i].RaceSetup.EngineKeys:Empty()
         for index, value in ipairs(raceSetup.EngineKeys) do
-          eventSystem.Net_Events[i].RaceSetup.EngineKeys[index - 1] = FName(value)
+          eventSystem.Net_Events[i].RaceSetup.EngineKeys[index] = FName(value)
         end
 
         eventSystem.Net_Events[i].RaceSetup.VehicleKeys:Empty()
         for index, value in ipairs(raceSetup.VehicleKeys) do
-          eventSystem.Net_Events[i].RaceSetup.VehicleKeys[index - 1] = FName(value)
+          eventSystem.Net_Events[i].RaceSetup.VehicleKeys[index] = FName(value)
         end
 
         eventSystem.Net_Events[i].RaceSetup.Route.RouteName = raceSetup.Route.RouteName
