@@ -46,7 +46,7 @@ VALID_IDS = {
     "inbox_files", "inbox_load", "inbox_refresh", "standalone_badge",
     "pin_position", "pin_undo", "pin_clear", "pin_count", "pin_build",
     "obsurl", "obspw", "obsst", "obs_check", "obs_remember", "obsscene", "obssrc",
-    "obsprev", "out",
+    "obsprev", "out", "panel_manual",
 }
 
 
@@ -227,6 +227,58 @@ class PanelSourceTests(unittest.TestCase):
                         "Remember OBS password on this PC", "Check OBS", "autoload", "rc_tok"]:
             with self.subTest(snippet=snippet):
                 self.assertIn(snippet, self.lua)
+
+    def test_operator_guide_at_bottom_of_panel(self):
+        """A collapsible, drive-letter-free operator guide teaches every section."""
+        m = re.search(r'<details id="panel_manual" class="card">([\s\S]*?)</details>', self.lua)
+        assert m is not None, "missing <details id=\"panel_manual\" class=\"card\">"
+        guide = m.group(0)
+        script_at = self.lua.index("<script>")
+        self.assertLess(m.start(), script_at, "guide must be inside the page, not in JS")
+        self.assertEqual(self.lua[m.end():script_at].strip(), "",
+                         "guide must be the last HTML block, below all control cards")
+        self.assertIn("<summary><strong>Operator Guide — How to Use This Panel</strong> "
+                      "(click to expand)</summary>", guide)
+
+        teaching_points = [
+            # 1. Quick Start
+            "1. Quick Start (4 steps)", "Ctrl+Shift+F10", "Load Current Event &amp; Open Panel",
+            "standby", "Quick Follow", "&lt; 1 s",
+            # 2. Loading any track
+            "2. Loading Any Track — 4 ways, zero Python", "Live In-Game Event",
+            "/setup_event", "native Motor Town events", "Upload / Drop / Paste JSON",
+            "Auto-apply on drop", "```json", "racecam/inbox/", "drop_event.json",
+            "race_setup", "bare waypoint arrays", "{ shots: [...] }",
+            "Free-Roam Pin Position", "Pin Position", "Build &amp; Load Pins",
+            "Quick Follow (No Track)", "car-relative",
+            # 3. Shot deck
+            "3. Universal", "Shot Deck", "extra (<code>·</code>) shots", "finish_line",
+            "overview", "corner_XX_pan",
+            # 4. Hotkeys
+            "4. Keyboard Hotkeys", "focus is outside text inputs",
+            "<code>A</code> Arm", "<code>S</code> Start Race", "Camera Slots",
+            "<code>Alt+1</code>–<code>Alt+9</code> Switch Contestant",
+            "<code>Q</code> Queue shot", "<code>N</code> Fire next queued cue",
+            "<code>Z</code> Clear queue", "<code>R</code> Toggle Rehearsal",
+            "<code>X</code> Panic Stop",
+            # 5. Contestants, automation, safety, OBS
+            "5. Contestants, Automation, Safety/Fail-Safes &amp; OBS",
+            "P1</code>/<code>P2</code>/<code>P3", "● ON AIR", "Follow Race Leader",
+            "Auto-Start on Green Light", "TARGET LOST", "Rehearsal",
+            "Start record", "Stop record", "120 s", "DEGRADED",
+            "127.0.0.1:4455", "Check OBS", "Studio Mode",
+        ]
+        for snippet in teaching_points:
+            with self.subTest(teaching=snippet):
+                self.assertIn(snippet, guide)
+        for shot in UNIVERSAL:
+            with self.subTest(shot=shot):
+                self.assertIn("<code>%s</code>" % shot, guide)
+
+        # No Windows drive-letter paths, and no new JS DOM lookups in the guide.
+        self.assertNotIn("D:", guide)
+        self.assertIsNone(re.search(r"\b[A-Z]:[\\/]", guide))
+        self.assertNotIn("$('", guide)
 
 
 class BootHashTests(unittest.TestCase):

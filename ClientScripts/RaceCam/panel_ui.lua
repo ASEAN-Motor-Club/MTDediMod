@@ -52,6 +52,14 @@ pre{background:#0c0c0c;border:1px solid #333;padding:8px;max-height:220px;overfl
 .pin-row button{padding:5px 9px;font-size:12px}
 #track_canvas{display:block;width:100%;max-width:640px;height:auto;background:#0c0c0c;border:1px solid #444;border-radius:4px;margin-top:8px}
 hr{border:0;border-top:1px solid #333;margin:10px 0}
+/* Collapsible operator guide — same dark card as the controls above. */
+#panel_manual summary{cursor:pointer;color:#63b3ed}
+#panel_manual summary strong{color:#eee}
+#panel_manual h3{font-size:13px;margin:14px 0 6px;color:#63b3ed}
+#panel_manual ol,#panel_manual ul{margin:6px 0;padding-left:22px}
+#panel_manual li{margin:4px 0;line-height:1.45}
+#panel_manual code{background:#0c0c0c;border:1px solid #333;border-radius:3px;padding:1px 4px;font-family:ui-monospace,monospace;font-size:12px}
+#panel_manual[open]>summary{margin-bottom:8px;border-bottom:1px solid #333;padding-bottom:6px}
 </style></head><body>
 <h1>AMC RaceCam — local operator</h1>
 <div id="banner"></div>
@@ -128,6 +136,57 @@ Source: <select id="obssrc"></select> <button onclick="obsShot()">Preview</butto
 </div>
 <div class="card"><pre id="out"></pre>
 <div class="kbd">A arm · S start · X stop · 1-9 trigger shot · Alt+1-9 target contestant · N next cue · Z last-shot undo · R rehearsal toggle</div></div>
+<details id="panel_manual" class="card">
+<summary><strong>Operator Guide — How to Use This Panel</strong> (click to expand)</summary>
+<div class="kbd">This page is your local broadcast desk: tracks go in, camera shots come out, OBS follows along. Nothing here needs Python on the game PC.</div>
+
+<h3>1. Quick Start (4 steps)</h3>
+<ol>
+<li>In Motor Town press <code>Ctrl+Shift+F10</code> to open the admin overlay, then click <strong>Load Current Event &amp; Open Panel</strong>. The auth token is appended to the browser URL automatically — no copying by hand. RaceCam starts in <strong>standby</strong>: your own view is not hijacked until you arm or cut to a shot.</li>
+<li>Load a track using one of the four paths below, or skip it and use <strong>Quick Follow</strong> — car-relative shots work anywhere.</li>
+<li>Click any driver button in the <strong>Live Standings / Contestants</strong> card (or press <code>Alt+1</code>–<code>Alt+9</code>) to aim the camera at them.</li>
+<li>Press <strong>Arm (<code>A</code>)</strong>, then <strong>Start Race (<code>S</code>)</strong>; cut between shots with <code>1</code>–<code>9</code> or the shot dropdown. <strong>Panic Stop (<code>X</code>)</strong> works at any moment and restores your normal game view in &lt; 1 s; press <code>A</code> again when you are ready to resume.</li>
+</ol>
+
+<h3>2. Loading Any Track — 4 ways, zero Python</h3>
+<ul>
+<li><strong>Live In-Game Event (1 click):</strong> from the Live Events bar click <strong>Load &amp; Preview</strong> or <strong>Load &amp; Apply selected</strong>. Reads the route directly from the running game, so it works for <code>/setup_event</code> races <em>and</em> native Motor Town events. Tick <strong>Auto-Start on Green Light</strong> and <strong>Follow Race Leader</strong> to let the director follow the action hands-free.</li>
+<li><strong>Upload / Drop / Paste JSON:</strong> click <strong>Choose file</strong> to pick a <code>.json</code>/<code>.txt</code> file, drag a file onto the <strong>Track Loader</strong> card (tick <strong>Auto-apply on drop</strong> to load it straight away), paste copied text from Discord into <strong>Paste JSON</strong> (<code>```json</code> fences are stripped automatically), or use <strong>Dropped Files</strong> to load from <code>racecam/inbox/</code> — drop a single file there as <code>drop_event.json</code> and hit Refresh. Accepts full event exports, <code>race_setup</code>, Track Editor routes, bare waypoint arrays, and pre-built <code>{ shots: [...] }</code> plans. The canvas previews the route; <strong>Saved plans</strong> reloads a plan built earlier.</li>
+<li><strong>Free-Roam Pin Position:</strong> while driving or teleporting along the route, click <strong>Pin Position</strong> 3+ times (Undo Pin / Clear Pins fix mistakes), then <strong>Build &amp; Load Pins</strong> to generate the whole shot deck on the spot.</li>
+<li><strong>Quick Follow (No Track):</strong> press <strong>Arm (<code>A</code>)</strong> right away. The built-in follow/orbit shots are car-relative and work anywhere on the map — no track, file or pins needed.</li>
+</ul>
+
+<h3>3. Universal <code>1</code>–<code>9</code> Shot Deck &amp; extra (<code>·</code>) shots</h3>
+<div class="kbd">The same nine slots exist on every track so your muscle memory carries between events. Click a shot in the dropdown or press its number.</div>
+<ol>
+<li><code>start_line</code> — grid / start-line frame; active on arm.</li>
+<li><code>fly_up</code> — 4 s rising intro tween to an overhead establishing shot; fired by <code>S</code>.</li>
+<li><code>auto_trackside</code> — TV-director mode: picks the next trackside camera and pans/zooms as the car passes.</li>
+<li><code>heli_follow</code> — high aerial drone follow for reading racing lines and multi-car battles.</li>
+<li><code>follow_focus</code> — tight rear hero chase.</li>
+<li><code>front_chase</code> — reverse battle cam looking back at the chasing pack.</li>
+<li><code>side_tracking</code> — low parallel dolly for speed, drift and rally close-ups.</li>
+<li><code>orbit_hero</code> — smooth 360° orbit around the target; great for grids and podiums.</li>
+<li><code>route_flyover</code> — continuous course flyover for pre-race track previews.</li>
+</ol>
+<div class="kbd">Dropdown-only <code>·</code> shots: <code>finish_line</code> (frames the line), <code>overview</code> (high static course view), and up to six <code>corner_XX_pan</code> cameras that pan and auto-zoom to the followed contestant. Shots past <code>9</code> have no number key — pick them from the dropdown.</div>
+
+<h3>4. Keyboard Hotkeys <span class="kbd">(when focus is outside text inputs)</span></h3>
+<div class="kbd">
+<code>A</code> Arm &nbsp;·&nbsp; <code>S</code> Start Race &nbsp;·&nbsp; <code>1</code>–<code>9</code> Camera Slots &nbsp;·&nbsp; <code>Alt+1</code>–<code>Alt+9</code> Switch Contestant &nbsp;·&nbsp; <code>Q</code> Queue shot (type a delay in <strong>At t+</strong> first) &nbsp;·&nbsp; <code>N</code> Fire next queued cue &nbsp;·&nbsp; <code>Z</code> Clear queue &nbsp;·&nbsp; <code>R</code> Toggle Rehearsal &nbsp;·&nbsp; <code>X</code> Panic Stop
+</div>
+<div class="kbd">The <strong>Next cue</strong> and <strong>Clear queue</strong> buttons beside the cue queue work even while you are typing in a field. In this panel build <code>Z</code> is also wired to <strong>Last-shot undo</strong>, so use the button when you need to empty the queue mid-show.</div>
+
+<h3>5. Contestants, Automation, Safety/Fail-Safes &amp; OBS</h3>
+<ul>
+<li><strong>One-click Live Leaderboard:</strong> the contestant card refreshes every 700 ms. Each driver button shows <code>P1</code>/<code>P2</code>/<code>P3</code> (gold/silver/bronze) or <code>DQ</code>, lap/gate progress, best lap and a live gap; the active target gets a green border and a <code>● ON AIR</code> pill. Click a driver (or press <code>Alt+1</code>–<code>Alt+9</code>) to switch targets: this automatically unticks <strong>Follow Race Leader</strong> so auto-follow cannot yank the camera back after your cut — tick it again to re-engage. Off-list names go in <strong>Manual target</strong> then <strong>Lock</strong>.</li>
+<li><strong>Automation:</strong> <strong>Auto-Start on Green Light</strong> starts the timed cue sequence when the in-game countdown goes green; <strong>Follow Race Leader</strong> keeps the shot on P1. Both are opt-in — flags are only sent when you tick them.</li>
+<li><strong>Target Lost:</strong> if the followed player disconnects or respawns, RaceCam holds the last camera pose, shows a red <code>TARGET LOST</code> banner, and retries the name every 0.5 s. Select another driver or cut to a non-follow shot (<code>1</code>, <code>2</code>, <code>9</code>) to clear it.</li>
+<li><strong>Rehearsal (<code>R</code>):</strong> cues and timing run but the live camera does not move. OBS <strong>Start record</strong> is blocked while rehearsal is on; <strong>Stop record</strong> still works so a dry run cannot pollute a real recording.</li>
+<li><strong>Safety &amp; fail-safes:</strong> <code>X</code> is the instant Panic Stop. If the browser tab closes or crashes for more than 120 s, the Lua server stops the camera and marks the session <code>DEGRADED</code>; reconnect, read the red banner and press <code>A</code> to re-arm. Watch the status strip for active shot, FOV, plan, countdown, heartbeat age and camera state — and the <code>out</code> log when something looks wrong.</li>
+<li><strong>OBS Studio:</strong> enable WebSocket v5 on <code>127.0.0.1:4455</code> with auth, enter the password once in the OBS card, click <strong>Connect</strong> and <strong>Check OBS</strong>, then <strong>Refresh scenes</strong> → <strong>Go to scene</strong> → <strong>Preview</strong>. Turn on Studio Mode in OBS so preview stays isolated from program; Start/Stop record and <strong>Preview</strong> are all controllable from here.</li>
+</ul>
+</details>
 <script>
 const $=id=>document.getElementById(id);
 let tok=localStorage.getItem('rc_tok')||sessionStorage.getItem('racecam_tok')||'';$('tok').value=tok;
