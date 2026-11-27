@@ -224,6 +224,24 @@ impl Painter {
         self.target = None;
     }
 
+    /// Borrow the underlying D3D11 device (used by the D3D11On12 path to
+    /// create RTVs for wrapped DX12 back buffers).
+    pub fn device(&self) -> &ID3D11Device {
+        &self.device
+    }
+
+    /// Borrow the immediate D3D11 context (used by D3D11On12 to Flush after
+    /// ReleaseWrappedResources and before ResizeBuffers).
+    pub fn context(&self) -> &ID3D11DeviceContext1 {
+        &self.context
+    }
+
+    /// Bind an externally created render target view (D3D11On12 per-frame
+    /// wrapped back buffer).
+    pub fn set_target(&mut self, rtv: ID3D11RenderTargetView, width: u32, height: u32) {
+        self.target = Some((rtv, width, height));
+    }
+
     /// Make sure we hold an RTV for the current back buffer; returns its size.
     pub unsafe fn ensure_target(&mut self, swapchain: &IDXGISwapChain) -> Result<(u32, u32)> {
         if let Some((_, w, h)) = &self.target {
