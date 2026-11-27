@@ -368,7 +368,7 @@ local function UpdateEventRaceSetup(eventGuid, raceSetup)
 
         eventSystem.Net_Events[i].RaceSetup.Route.Waypoints:Empty()
         for index, value in ipairs(raceSetup.Route.Waypoints) do
-          eventSystem.Net_Events[i].RaceSetup.Route.Waypoints[index - 1] = value
+          eventSystem.Net_Events[i].RaceSetup.Route.Waypoints[index] = value
         end
         return true
       end
