@@ -28,14 +28,25 @@ local overlayActive = false
 if config.GetModConfig("useEguiOverlay") ~= false then
     overlayActive = overlayBridge.Load(dir)
 end
+local build = require("BuildConfig")
 if overlayActive then
     overlayBridge.Init(shortcuts)
-    local build = require("BuildConfig")
     LogOutput("INFO", "egui overlay active (Tab: teleport" .. (build.admin and ", Ctrl+Shift+F10: admin" or "") .. ")")
 else
     require("TeleportWidget")
     require("EmoteWidget")
     LogOutput("INFO", "egui overlay unavailable - using UMG teleport/emote widgets")
+end
+
+-- Admin-only broadcast camera controller (standby HTTP panel on 127.0.0.1:8767;
+-- never takes over the camera until the operator clicks Arm).
+if build.admin and config.GetModConfig("enableRaceCam") ~= false then
+    local ok, rc = pcall(require, "RaceCam/init")
+    if ok and rc and rc.Start then
+        rc.Start()
+    else
+        LogOutput("WARN", "RaceCam unavailable: %s", tostring(rc))
+    end
 end
 
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)

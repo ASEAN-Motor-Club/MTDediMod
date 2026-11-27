@@ -640,15 +640,23 @@
                           # admin shortcut/command/bridge sources; shared modules are
                           # replaced with player-only implementations.
                           SCRIPTS_OUT="$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts"
-                          ADMIN_ONLY="Shortcuts.lua Commands.lua OverlayBridge.lua VehicleManager.lua IntegrityChecker.lua"
-                          PLAYER_ABSENT="VehicleManager.lua IntegrityChecker.lua"
+                          ADMIN_ONLY="Shortcuts.lua Commands.lua OverlayBridge.lua VehicleManager.lua IntegrityChecker.lua RaceCam"
+                          PLAYER_ABSENT="VehicleManager.lua IntegrityChecker.lua RaceCam"
                           PLAYER_REPLACED="Shortcuts.lua Commands.lua OverlayBridge.lua"
                           PLAYER_VARIANT_DIR="${./ClientScripts/variants/player}"
                           if [ "$VARIANT" = "player" ]; then
-                            for f in $ADMIN_ONLY; do rm -f "$SCRIPTS_OUT/$f"; done
+                            for f in $ADMIN_ONLY; do rm -rf "$SCRIPTS_OUT/$f"; done
                             cp "${./ClientScripts/variants/player/Shortcuts.lua}" "$SCRIPTS_OUT/Shortcuts.lua"
                             cp "${./ClientScripts/variants/player/Commands.lua}" "$SCRIPTS_OUT/Commands.lua"
                             cp "${./ClientScripts/variants/player/OverlayBridge.lua}" "$SCRIPTS_OUT/OverlayBridge.lua"
+                          else
+                            mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam"
+                            printf '%s\n' \
+                              'AMC RaceCam runtime data folder (Admin build only).' \
+                              'Place racecam_token.txt, optional racecam_bind.txt, active_plan.txt, and' \
+                              'generated plan_<track>.lua / route_<track>.lua files here.' \
+                              'See docs/RACECAM_MANUAL.md for full installation and operator instructions.' \
+                              > "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam/README.txt"
                           fi
                           # Player sources are build inputs, never shipped as a subtree.
                           rm -rf "$SCRIPTS_OUT/variants"
@@ -681,7 +689,7 @@
                                 echo "Error: player file $f is not the player variant"; exit 1
                               fi
                             done
-                            if grep -rEq 'ImpulseAimed|DespawnAimed|ServerApplyImpact|SetImpulseMode|adminpanel' "$SCRIPTS_OUT"; then
+                            if grep -rEq 'ImpulseAimed|DespawnAimed|ServerApplyImpact|SetImpulseMode|adminpanel|racecam_token' "$SCRIPTS_OUT"; then
                               echo "Error: admin symbols leaked into player package"; exit 1
                             fi
                           fi
