@@ -511,7 +511,10 @@ class UniversalInputTests(unittest.TestCase):
         self.assertEqual(got[3]["mode"], "route")
         self.assertEqual(got[3]["points"], [[100, 200, 300], [400, 500, 600], [700, 800, 900]])
         self.assertEqual(got[3]["gates"], [18, 25, 18])
-        self.assertEqual(got[3]["plan_id"], "bare_waypoints_json")
+        self.assertEqual(got[3]["plan_id"], "bare_waypoints")
+        self.assertEqual([self._normalize([{"text": json.dumps(bare), "hint": h}])[0]["plan_id"]
+                          for h in ("aewol-rally-route.json", "aewol-rally-route.TXT")],
+                         ["aewol-rally-route", "aewol-rally-route"])
         # 5. pre-built plan passthrough (no regeneration, custom shots preserved)
         self.assertEqual(got[4]["mode"], "prebuilt_plan")
         self.assertEqual(got[4]["plan_id"], "hand_tuned")

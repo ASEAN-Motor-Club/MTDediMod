@@ -319,7 +319,8 @@ function parseRoute(doc,nameHint){
   return {name:name,points:points,gates:gates};
 }
 function sanitizeId(s){
-  const out=String(s===undefined||s===null?'':s).trim().replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'');
+  const t=String(s===undefined||s===null?'':s).trim().replace(/\.(json|txt)$/i,'');
+  const out=t.replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'');
   return out||'dropped_track';
 }
 function stripFences(s){
