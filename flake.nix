@@ -85,6 +85,10 @@
             ./patches-ue4ss/ue4ss-cross-compile.patch
             ./patches-ue4ss/lua-lgc-weak-table-metatable-fix.patch
             ./patches-ue4ss/ue4ss-skip-delegate-properties-in-struct-conversion.patch
+            # Backport of upstream PR #1201 (272ce2f8): pending queues +
+            # snapshot-before-execute so Lua callbacks cannot invalidate the
+            # vector iterators in process_delayed_actions (access violation).
+            ./patches-ue4ss/ue4ss-delayed-actions-reentrancy-fix.patch
           ];
 
           installPhase = ''
