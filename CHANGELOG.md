@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc11] - 2026-11-27
+
+#### Fixed
+- `/setup_event` event creation now resolves the created event by `EventGuid` instead of deriving the index from `#Net_Events` immediately after the add (#85). A deferred `ServerAddEvent` or a concurrent add/remove made that index stale or out of range (`TArray index out of range`, HTTP 500) and could silently write the setup onto a different event. Both create paths now return a clean 400 with a diagnostic log when the event cannot be found.
+
 ### [server/v0.44.0-rc10] - 2026-11-26
 
 #### Added
