@@ -645,7 +645,7 @@
                           PLAYER_REPLACED="Shortcuts.lua Commands.lua OverlayBridge.lua"
                           PLAYER_VARIANT_DIR="${./ClientScripts/variants/player}"
                           if [ "$VARIANT" = "player" ]; then
-                            for f in $ADMIN_ONLY; do rm -rf "$SCRIPTS_OUT/$f"; done
+                            for f in $ADMIN_ONLY; do rm -rf "${SCRIPTS_OUT:?}/$f"; done
                             cp "${./ClientScripts/variants/player/Shortcuts.lua}" "$SCRIPTS_OUT/Shortcuts.lua"
                             cp "${./ClientScripts/variants/player/Commands.lua}" "$SCRIPTS_OUT/Commands.lua"
                             cp "${./ClientScripts/variants/player/OverlayBridge.lua}" "$SCRIPTS_OUT/OverlayBridge.lua"
