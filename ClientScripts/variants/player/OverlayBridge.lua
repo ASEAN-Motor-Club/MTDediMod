@@ -59,6 +59,13 @@ local M = {}
 ---@param dir string game root from ModPath
 ---@return boolean
 function M.Load(dir)
+    -- Without the native bridge the overlay cannot dispatch commands and its
+    -- DllMain still claims Tab/Esc, which fights the UMG fallback and can
+    -- crash the client. Skip loading it entirely when the bridge is missing.
+    if type(RegisterBridgeHandler) ~= "function" then
+        LogOutput("WARN", "[OverlayBridge] native bridge unavailable - using UMG widgets")
+        return false
+    end
     local path = dir .. "/ue4ss/Mods/MotorTownClientMod/overlay/mt_overlay.dll"
     if not package.loadlib then
         LogOutput("WARN", "[OverlayBridge] package.loadlib unavailable")
