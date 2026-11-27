@@ -35,15 +35,19 @@ function Get-SteamRoots {
     $roots = New-Object 'System.Collections.Generic.List[string]'
 
     # Registry first. HKCU: / HKLM: are PowerShell providers, not drive letters.
-    foreach ($key in @(
-        'HKCU:\Software\Valve\Steam\SteamPath',
-        'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam\SteamPath',
-        'HKLM:\SOFTWARE\Valve\Steam\SteamPath'
+    foreach ($entry in @(
+        @{ Path = 'HKCU:\Software\Valve\Steam'; Name = 'SteamPath' },
+        @{ Path = 'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam'; Name = 'InstallPath' },
+        @{ Path = 'HKLM:\SOFTWARE\Valve\Steam'; Name = 'InstallPath' }
     )) {
         try {
-            $prop = Get-ItemProperty -Path $key -Name 'SteamPath' -ErrorAction Stop
-            if ($prop.SteamPath -and (Test-Path -LiteralPath $prop.SteamPath -PathType Container)) {
-                if (-not $roots.Contains($prop.SteamPath)) { $roots.Add($prop.SteamPath) }
+            $prop = Get-ItemProperty -Path $entry.Path -Name $entry.Name -ErrorAction Stop
+            $val = $prop.($entry.Name)
+            if ($val) {
+                $val = $val.Replace('/', '\')
+                if ((Test-Path -LiteralPath $val -PathType Container) -and -not $roots.Contains($val)) {
+                    $roots.Add($val)
+                }
             }
         } catch {
             # No Steam registry entry: library folders may still be discoverable.

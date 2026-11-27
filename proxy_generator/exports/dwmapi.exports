@@ -1,46 +1,101 @@
 Path: C:\Windows\System32\dwmapi.dll
 
-12 DllCanUnloadNow
-16 DllGetClassObject
-17 DwmAttachMilContent
-18 DwmDefWindowProc
-19 DwmDetachMilContent
-20 DwmEnableBlurBehindWindow
-3 DwmEnableComposition
-21 DwmEnableMMCSS
-22 DwmExtendFrameIntoClientArea
-23 DwmFlush
-24 DwmGetColorizationColor
-26 DwmGetCompositionTimingInfo
-27 DwmGetGraphicsStreamClient
-30 DwmGetGraphicsStreamTransformHint
-31 DwmGetTransportAttributes
-34 DwmGetUnmetTabRequirements
-35 DwmGetWindowAttribute
-50 DwmInvalidateIconicBitmaps
-85 DwmIsCompositionEnabled
-86 DwmModifyPreviousDxFrameDuration
-87 DwmQueryThumbnailSourceSize
-88 DwmRegisterThumbnail
-89 DwmRenderGesture
-90 DwmSetDxFrameDuration
-91 DwmSetIconicLivePreviewBitmap
-92 DwmSetIconicThumbnail
-93 DwmSetPresentParameters
-94 DwmSetWindowAttribute
-95 DwmShowContact
-96 DwmTetherContact
-57 DwmTetherTextContact
-97 DwmTransitionOwnedWindow
-98 DwmUnregisterThumbnail
-99 DwmUpdateThumbnailProperties
-37 DwmpAllocateSecurityDescriptor
-1 DwmpDxGetWindowSharedSurface
-2 DwmpDxUpdateWindowSharedSurface
-29 DwmpDxgiIsThreadDesktopComposited
-44 DwmpEnableDDASupport
-38 DwmpFreeSecurityDescriptor
-28 DwmpGetColorizationParameters
-36 DwmpRenderFlick
-32 DwmpSetColorizationParameters
-84 DwmpUpdateProxyWindowForCapture
+100 DwmpDxGetWindowSharedSurface
+101 DwmpDxUpdateWindowSharedSurface
+102 DwmEnableComposition
+103
+104
+105
+106
+107
+108
+109
+110
+111 DllCanUnloadNow
+112
+113
+114
+115 DllGetClassObject
+116 DwmAttachMilContent
+117 DwmDefWindowProc
+118 DwmDetachMilContent
+119 DwmEnableBlurBehindWindow
+120 DwmEnableMMCSS
+121 DwmExtendFrameIntoClientArea
+122 DwmFlush
+123 DwmGetColorizationColor
+124
+125 DwmGetCompositionTimingInfo
+126 DwmGetGraphicsStreamClient
+127 DwmpGetColorizationParameters
+128 DwmpDxgiIsThreadDesktopComposited
+129 DwmGetGraphicsStreamTransformHint
+130 DwmGetTransportAttributes
+131 DwmpSetColorizationParameters
+132
+133 DwmGetUnmetTabRequirements
+134 DwmGetWindowAttribute
+135 DwmpRenderFlick
+136 DwmpAllocateSecurityDescriptor
+137 DwmpFreeSecurityDescriptor
+138
+139
+140
+141
+142
+143 DwmpEnableDDASupport
+144
+145
+146
+147
+148
+149 DwmInvalidateIconicBitmaps
+150
+151
+152
+153
+154
+155
+156 DwmTetherTextContact
+157
+158
+159
+160
+161
+162
+163
+164
+165
+166
+167
+168
+169
+170
+171
+172
+173
+174
+175
+176
+177
+178
+179
+180
+181
+182
+183 DwmpUpdateProxyWindowForCapture
+184 DwmIsCompositionEnabled
+185 DwmModifyPreviousDxFrameDuration
+186 DwmQueryThumbnailSourceSize
+187 DwmRegisterThumbnail
+188 DwmRenderGesture
+189 DwmSetDxFrameDuration
+190 DwmSetIconicLivePreviewBitmap
+191 DwmSetIconicThumbnail
+192 DwmSetPresentParameters
+193 DwmSetWindowAttribute
+194 DwmShowContact
+195 DwmTetherContact
+196 DwmTransitionOwnedWindow
+197 DwmUnregisterThumbnail
+198 DwmUpdateThumbnailProperties
