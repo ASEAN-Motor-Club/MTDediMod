@@ -11,6 +11,7 @@ LogMsg = logging.logMsg
 LogOutput = logging.logOutput
 
 local config = require("ModConfig")
+local build = require("BuildConfig")
 require("ViewportManager")
 require("Commands")
 local shortcuts = require("Shortcuts")
@@ -30,12 +31,20 @@ if config.GetModConfig("useEguiOverlay") ~= false then
 end
 if overlayActive then
     overlayBridge.Init(shortcuts)
-    local build = require("BuildConfig")
     LogOutput("INFO", "egui overlay active (Tab: teleport" .. (build.admin and ", Ctrl+Shift+F10: admin" or "") .. ")")
 else
     require("TeleportWidget")
     require("EmoteWidget")
     LogOutput("INFO", "egui overlay unavailable - using UMG teleport/emote widgets")
+end
+
+-- RaceCam: admin variant only. Boots the local HTTP panel in standby; it does
+-- not touch the camera until the operator presses A in the panel.
+if build.admin then
+    local ok, err = pcall(function() require("RaceCam/init").init() end)
+    if not ok then
+        LogOutput("WARN", "RaceCam boot failed: " .. tostring(err))
+    end
 end
 
 LogOutput("INFO", "Client mod loaded (v%s)", statics.ModVersion)
