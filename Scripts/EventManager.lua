@@ -120,6 +120,25 @@ local RouteTable = {}
 ---@field RaceSetup { Route: RouteTable, NumLaps: number, VehicleKeys: string[], EngineKeys: string[] }
 local EventTable = {}
 
+---Find an event's index in Net_Events by guid.
+---Never derive the index from #Net_Events after an add: a deferred
+---ServerAddEvent or a concurrent add/remove can leave that index pointing at
+---a different event, or past the end (prod 2026-11-27: "TArray index out of
+---range" from CreateNewEvent at EventManager.lua:177).
+---@param eventSystem table
+---@param guid any
+---@return number? index
+local function FindEventIndexByGuid(eventSystem, guid)
+  if not eventSystem or not eventSystem:IsValid() then return nil end
+  local guidStr = GuidToString(guid)
+  for i = 1, #eventSystem.Net_Events do
+    if GuidToString(eventSystem.Net_Events[i].EventGuid) == guidStr then
+      return i
+    end
+  end
+  return nil
+end
+
 ---Create a new event
 ---@param event EventTable
 ---@return boolean status
@@ -169,7 +188,14 @@ local function CreateNewEvent(event)
       })
     end
 
-    local last = #eventSystem.Net_Events
+    -- Resolve by guid, NOT by #Net_Events: ServerAddEvent may not have
+    -- appended yet and a concurrent request can resize the array, making the
+    -- last index wrong or out of range.
+    local last = FindEventIndexByGuid(eventSystem, guid)
+    if not last then
+      LogOutput("ERROR", "CreateNewEvent: event %s not found in Net_Events after add (count=%d)", event.EventGuid, #eventSystem.Net_Events)
+      return false, nil
+    end
 
     if eventType == 1 then
       event.RaceSetup = event.RaceSetup or {}
@@ -247,7 +273,11 @@ local function CreateEventWithoutOwner(event)
 
     eventSystem.Net_Events[#eventSystem.Net_Events + 1] = Event
 
-    local last = #eventSystem.Net_Events
+    local last = FindEventIndexByGuid(eventSystem, guid)
+    if not last then
+      LogOutput("ERROR", "CreateEventWithoutOwner: event %s not found in Net_Events after add (count=%d)", event.EventGuid, #eventSystem.Net_Events)
+      return false, nil
+    end
 
     if eventType == 1 then
       event.RaceSetup = event.RaceSetup or {}
