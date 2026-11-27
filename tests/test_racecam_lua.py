@@ -1118,6 +1118,79 @@ class RaceCamLuaTests(unittest.TestCase):
         """Orbit/pan aim+fov smoothing, clean cut resets, smoothing modes."""
         self._run_smoothing_harness(SMOOTH_MODES_HARNESS, "SMOOTH_MODES_OK", "smoothmodes")
 
+    def test_lua_player_array_full_server_roster_and_remote_fallback(self) -> None:
+        """list_targets merges GameState.PlayerArray; far drivers track PlayerState.Location and upgrade when streamed in."""
+        harness = r'''
+local function mk_str(s) return { ToString = function() return s end } end
+local near_pawn = {
+  PlayerState = { GetPlayerName = function() return mk_str("NearDriver") end },
+  K2_GetActorLocation = function() return { X = 100, Y = 200, Z = 50 } end,
+  K2_GetActorRotation = function() return { Yaw = 0 } end,
+}
+local far_ps = {
+  IsValid = function() return true end,
+  GetPlayerName = function() return mk_str("FarDriver") end,
+  Location = { X = 50000, Y = 60000, Z = 300 },
+}
+local near_ps = {
+  IsValid = function() return true end,
+  GetPlayerName = function() return mk_str("NearDriver") end,
+  Location = { X = 100, Y = 200, Z = 50 },
+}
+local extra_ps = {
+  IsValid = function() return true end,
+  GetPlayerName = function() return mk_str("AnotherFar") end,
+  Location = { X = 80000, Y = 10000, Z = 100 },
+}
+local live_pawns = { near_pawn }
+_G.FindAllOf = function(cls)
+  if cls == "MTPlayerCharacter_C" then return live_pawns end
+  return {}
+end
+_G.FindFirstOf = function(cls)
+  if cls == "MotorTownGameState" then
+    return {
+      IsValid = function() return true end,
+      PlayerArray = { near_ps, far_ps, extra_ps },
+    }
+  end
+  return nil
+end
+
+local shot = { id = "f1", kind = "follow", preset = "chase_close" }
+local e = Engine.new(Core, Presets, { shots = { shot } }, nil)
+e.clock = function() return T end
+
+-- 1. Full-server roster: nearby first, remote sorted alphabetically, deduplicated.
+local roster = e:list_targets()
+assert(#roster == 3, "expected 3 drivers, got " .. tostring(#roster))
+assert(roster[1] == "NearDriver" and roster[2] == "AnotherFar" and roster[3] == "FarDriver",
+  "unexpected roster order: " .. table.concat(roster, ","))
+
+-- 2. Target a far driver outside UE5 relevancy bubble: tracks PlayerState.Location.
+local ok, msg = e:set_target_by_name("FarDriver")
+assert(ok and e.target == nil and e.target_ps == far_ps, "far target failed: " .. tostring(msg))
+T = 1.0
+local pose1 = e:pose_of(shot)
+assert(pose1 and not e.target_lost, "pose1 failed for remote PlayerState")
+assert(math.abs(pose1.look[1] - 50000) < 3000 and math.abs(pose1.look[2] - 60000) < 3000,
+  "remote look not near PlayerState.Location")
+
+-- 3. FarDriver streams into relevancy: resolve_target upgrades seamlessly to live pawn.
+local far_pawn = {
+  PlayerState = { GetPlayerName = function() return mk_str("FarDriver") end },
+  K2_GetActorLocation = function() return { X = 50100, Y = 60000, Z = 300 } end,
+  K2_GetActorRotation = function() return { Yaw = 0 } end,
+}
+live_pawns = { near_pawn, far_pawn }
+T = 2.0
+local pose2 = e:pose_of(shot)
+assert(pose2 and e.target == far_pawn and e.target_ps == nil and not e.target_lost,
+  "did not upgrade from remote PlayerState to streamed-in pawn")
+print("PLAYER_ARRAY_ROSTER_OK count=3 upgraded=true")
+'''
+        self._run_smoothing_harness(harness, "PLAYER_ARRAY_ROSTER_OK", "roster")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

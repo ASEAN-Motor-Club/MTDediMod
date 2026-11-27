@@ -237,20 +237,63 @@ local function resolve_target(self)
 end
 
 -- Live target location (pcall-guarded), or nil after a throttled re-resolve.
+-- Prefers a streamed-in MTPlayerCharacter_C pawn; falls back to the map-wide
+-- replicated AMotorTownPlayerState.Location when the driver is outside UE5's
+-- network relevancy bubble, upgrading back to the live pawn automatically once
+-- they stream in.
+local function ps_location(ps)
+  if not ps then return nil end
+  local ok, loc = pcall(function()
+    if ps.IsValid and not ps:IsValid() then return nil end
+    local l = ps.Location
+    if not l then return nil end
+    if l.X == nil and l[1] == nil then return nil end
+    return l
+  end)
+  if ok and loc then return loc end
+  return nil
+end
+
 local function target_loc(self)
-  if not resolve_target(self) then return nil end
-  local p = self.target
-  local ok, loc = pcall(function() return p:K2_GetActorLocation() end)
-  if not ok or not loc then
-    mark_target_lost(self)
-    if not resolve_target(self) then return nil end
-    p = self.target
-    ok, loc = pcall(function() return p:K2_GetActorLocation() end)
-    if not ok or not loc then mark_target_lost(self) return nil end
+  if not self.target then
+    -- Periodically check whether the live pawn has streamed in (or re-resolve
+    -- a lost target).
+    resolve_target(self)
   end
-  self.target_lost = false
-  self.target_lost_since = nil
-  return loc
+  local p = self.target
+  if p then
+    local ok, loc = pcall(function() return p:K2_GetActorLocation() end)
+    if ok and loc then
+      self.target_lost = false
+      self.target_lost_since = nil
+      return loc
+    end
+    -- Pawn despawned or streamed out of relevancy; try re-resolving (which may
+    -- fall back to PlayerState.Location).
+    self.target = nil
+    self.target_retry_at = 0.0
+    resolve_target(self)
+    if self.target then
+      local ok2, loc2 = pcall(function() return self.target:K2_GetActorLocation() end)
+      if ok2 and loc2 then
+        self.target_lost = false
+        self.target_lost_since = nil
+        return loc2
+      end
+      self.target = nil
+    end
+  end
+  if self.target_ps then
+    local loc = ps_location(self.target_ps)
+    if loc then
+      self.target_lost = false
+      self.target_lost_since = nil
+      return loc
+    end
+    self.target_ps = nil
+  end
+  mark_target_lost(self)
+  return nil
 end
 
 -- Stage 1 — shared velocity-compensated target state estimator.
@@ -260,27 +303,35 @@ local function target_state(self, s, preset)
   local loc = target_loc(self)
   if not loc then return nil end
   local p = self.target
+  local actor_ref = p or self.target_ps
   local raw = { loc.X or loc[1] or 0.0, loc.Y or loc[2] or 0.0, loc.Z or loc[3] or 0.0 }
   local fx, fy = 1.0, 0.0
-  local okr, rot = pcall(function() return p:K2_GetActorRotation() end)
-  if okr and rot then
-    local yaw = math.rad(rot.Yaw or 0.0)
-    fx, fy = math.cos(yaw), math.sin(yaw)
+  if p then
+    local okr, rot = pcall(function() return p:K2_GetActorRotation() end)
+    if okr and rot then
+      local yaw = math.rad(rot.Yaw or 0.0)
+      fx, fy = math.cos(yaw), math.sin(yaw)
+    end
+  elseif self.tgt_filter and self.tgt_filter.fwd then
+    fx, fy = self.tgt_filter.fwd[1], self.tgt_filter.fwd[2]
   end
   local now = self:clock()
   local f = self.tgt_filter
   local name = self.target_name
 
   -- Fresh target / target switch / first tick: snap, never interpolate across
-  -- the map from a previous driver.
-  if not f or f.actor ~= p or f.name ~= name then
+  -- the map from a previous driver. Same driver upgrading between remote
+  -- PlayerState and streamed-in pawn keeps the filter continuous unless >25m.
+  local same_driver = f and name and name ~= "" and f.name == name
+  if not f or (not same_driver and f.actor ~= actor_ref) then
     reset_rig(self)
     self.tgt_filter = {
       pos = { raw[1], raw[2], raw[3] }, vel = { 0.0, 0.0, 0.0 },
-      fwd = { fx, fy }, t = now, dt = 1.0 / 60.0, actor = p, name = name,
+      fwd = { fx, fy }, t = now, dt = 1.0 / 60.0, actor = actor_ref, name = name,
     }
     return self.tgt_filter
   end
+  f.actor = actor_ref
   -- pose_of can be called more than once in a tick (activate + update, or the
   -- auto_trackside recursion). The estimator must be idempotent within a tick.
   if now <= f.t then return f end
@@ -587,12 +638,89 @@ function E.pawns(self)
   return found
 end
 
+function E.ps_name(self, ps)
+  if not ps then return nil end
+  local ok, name = pcall(function()
+    if ps.IsValid and not ps:IsValid() then return nil end
+    if not ps.GetPlayerName then return nil end
+    local n = ps:GetPlayerName()
+    if type(n) == "string" then return n end
+    if n and n.ToString then return n:ToString() end
+    return nil
+  end)
+  if ok and type(name) == "string" and name ~= "" then return name end
+  return nil
+end
+
+function E.player_states(self)
+  local out = {}
+  local ok_gs, gs = pcall(function()
+    if FindFirstOf then
+      local g = FindFirstOf("MotorTownGameState")
+      if g and (not g.IsValid or g:IsValid()) then return g end
+      g = FindFirstOf("GameStateBase")
+      if g and (not g.IsValid or g:IsValid()) then return g end
+    end
+    return nil
+  end)
+  if ok_gs and gs then
+    local ok_arr, arr = pcall(function() return gs.PlayerArray end)
+    if ok_arr and arr then
+      if type(arr) == "table" then
+        for i = 1, #arr do
+          if arr[i] then out[#out + 1] = arr[i] end
+        end
+      else
+        local ok_fe = pcall(function()
+          arr:ForEach(function(_, elem)
+            local ps = elem and elem.get and elem:get() or elem
+            if ps then out[#out + 1] = ps end
+          end)
+        end)
+        if not ok_fe then
+          pcall(function()
+            local n = #arr
+            for i = 1, n do
+              if arr[i] then out[#out + 1] = arr[i] end
+            end
+          end)
+        end
+      end
+    end
+  end
+  if #out == 0 then
+    local ok_all, all = pcall(function() return FindAllOf("MotorTownPlayerState") end)
+    if ok_all and type(all) == "table" then
+      for i = 1, #all do
+        if all[i] then out[#out + 1] = all[i] end
+      end
+    end
+  end
+  return out
+end
+
 function E.list_targets(self)
-  local names = {}
+  local names, seen = {}, {}
+  -- Streamed-in nearby pawns first so they stay at the top of the roster.
   for _, p in ipairs(self:pawns()) do
     local n = self:pawn_name(p)
-    if n then names[#names + 1] = n end
+    if n and not seen[n] then
+      seen[n] = true
+      names[#names + 1] = n
+    end
   end
+  -- Full-server roster from GameState.PlayerArray (map-wide, outside UE5's
+  -- relevancy bubble).
+  local remote = {}
+  for _, ps in ipairs(self:player_states()) do
+    local n = self:ps_name(ps)
+    if n and not seen[n] then
+      seen[n] = true
+      remote[#remote + 1] = n
+    end
+  end
+  table.sort(remote)
+  for _, n in ipairs(remote) do names[#names + 1] = n end
   return names
 end
 
@@ -600,11 +728,11 @@ end
 function E.set_target_by_name(self, name)
   if not name or name == "" then return false, "no name given" end
   local found = self:pawns()
-  if #found == 0 then return false, "no pawns" end
   for i, p in ipairs(found) do
     if self:pawn_name(p) == name then
-      if self.target ~= p then self:reset_smoothing() end
+      if self.target_name ~= name then self:reset_smoothing() end
       self.target = p
+      self.target_ps = nil
       self.target_name = name
       self.target_index = i
       self.target_lost = false
@@ -613,6 +741,23 @@ function E.set_target_by_name(self, name)
       return true, "target " .. name
     end
   end
+  -- Fallback: driver is on the server (GameState.PlayerArray) but currently
+  -- outside UE5's network relevancy bubble. Track PlayerState.Location until
+  -- their MTPlayerCharacter_C streams in.
+  for _, ps in ipairs(self:player_states()) do
+    if self:ps_name(ps) == name then
+      if self.target_name ~= name then self:reset_smoothing() end
+      self.target = nil
+      self.target_ps = ps
+      self.target_name = name
+      self.target_index = nil
+      self.target_lost = false
+      self.target_lost_since = nil
+      self:log("TARGET name=" .. name .. " (remote PlayerState)")
+      return true, "target " .. name
+    end
+  end
+  if #found == 0 then return false, "no pawns" end
   return false, "no pawn named " .. tostring(name)
 end
 
