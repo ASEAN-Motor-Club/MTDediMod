@@ -90,6 +90,10 @@ jobs:
   # ============================================================
   build-mod:
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      USE_SCCACHE: "1"
+      RUSTC_WRAPPER: sccache
     outputs:
       version: ${{ steps.version.outputs.version }}
 
@@ -124,6 +128,11 @@ jobs:
       - name: Setup Nix Cache
         uses: DeterminateSystems/magic-nix-cache-action@main
 
+      - name: Enable sccache (GitHub Actions Cache v2)
+        uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: "v0.10.0"
+
       - name: Cache xwin
         uses: actions/cache@v4
         with:
@@ -136,6 +145,18 @@ jobs:
 
       - name: Build
         run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build
+
+      - name: Show sccache stats
+        if: always()
+        shell: bash
+        run: |
+          BIN="${SCCACHE_BIN:-${SCCACHE_PATH:-}}"
+          if [ -z "$BIN" ]; then BIN="$(command -v sccache 2>/dev/null || true)"; fi
+          if [ -n "$BIN" ] && [ -x "$BIN" ]; then
+            "$BIN" --show-stats
+          else
+            echo "sccache unavailable - no stats"
+          fi
 
       - name: Package
         run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package
