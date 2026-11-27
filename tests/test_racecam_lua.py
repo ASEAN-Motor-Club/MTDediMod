@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Verification harness for the MTDediMod RaceCam runtime (Phases 1 & 2).
+"""Verification harness for the MTDediMod RaceCam runtime (Phases 1 & 2 + inbox).
 
 Runs three classes of checks:
   1. Lua syntax: luac -p on every ClientScripts/RaceCam/*.lua, executed on the
      NixOS host via /opt/data/scripts/hostrun.sh + lua_syntax_check.sh.
   2. Static invariants: no hardcoded D: drive references; fail-closed token
-     auth on every HTTP endpoint; panel HTML comes from panel_ui.lua.
-  3. Behavioural checks: a real Lua 5.4 harness on the host exercises
-     paths.ensure_token/read_token, live_events.list/current_event with a
-     mocked Net_Events array, and init.lua plan hot-reload / status / flags.
+     auth on every HTTP endpoint (incl. /api/inbox, /api/inbox_file,
+     /api/my_pos); panel HTML comes from panel_ui.lua.
+  3. Behavioural checks: real Lua 5.4 harnesses on the host exercise
+     paths.ensure_token/read_token, live_events.list/current_event, init.lua
+     plan hot-reload/status/flags, plus the inbox drop folder and local-pose
+     endpoints (traversal rejection, size cap, exact file bodies, 503 fallback).
 
 Run: python3 -m unittest discover -s tests -p 'test_racecam_lua.py' -v
 """
@@ -213,6 +215,186 @@ print("BEHAVIOR_OK")
 '''
 
 
+# Second host harness: exercises the three new authenticated endpoints against
+# real files on disk. `Http._make_response` is the module's test seam.
+LUA_INBOX_HARNESS = r'''
+local DATA_DIR = "__DATA_DIR__"
+local ROOT = "__REPO_ROOT__/ClientScripts"
+package.path = ROOT .. "/?.lua;" .. ROOT .. "/?/init.lua;" .. package.path
+
+local real_getenv = os.getenv
+os.getenv = function(k)
+  if k == "RACECAM_DIR" then return DATA_DIR end
+  return real_getenv(k)
+end
+
+RequireSafe = function() return nil end
+CreateInvalidObject = function() return { IsValid = function() return false end } end
+FindAllOf = function() return {} end
+FindFirstOf = function() return nil end
+StaticFindObject = function() return nil end
+GetCachedWorld = function() return CreateInvalidObject() end
+LogOutput = function() end
+LoopInGameThreadWithDelay = function() return true end
+LoopInGameThreadAfterFrames = function() return true end
+IsValid = function(o) return o ~= nil end
+GetMyPlayerController = function() return { IsValid = function() return true end } end
+local original_pc = GetMyPlayerController
+
+package.preload["socket"] = function()
+  return { bind = function() error("socket.bind must not be called in this test") end }
+end
+
+-- Minimal JsonParser so json_encode in http.lua emits inspectable JSON.
+package.loaded["JsonParser"] = (function()
+  local function encode(v)
+    if type(v) == "table" then
+      if #v > 0 then
+        local parts = {}
+        for _, x in ipairs(v) do parts[#parts + 1] = encode(x) end
+        return "[" .. table.concat(parts, ",") .. "]"
+      end
+      local keys = {}
+      for k in pairs(v) do keys[#keys + 1] = k end
+      table.sort(keys)
+      local parts = {}
+      for _, k in ipairs(keys) do
+        parts[#parts + 1] = '"' .. tostring(k) .. '":' .. encode(v[k])
+      end
+      return "{" .. table.concat(parts, ",") .. "}"
+    elseif type(v) == "string" then
+      return '"' .. v:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+    elseif type(v) == "boolean" then
+      return tostring(v)
+    end
+    return tostring(v)
+  end
+  return { stringify = encode, parse = function() return nil end, null = {} }
+end)()
+
+local Paths = require("RaceCam/paths")
+local Http = require("RaceCam/http")
+local tok = Paths.ensure_token()
+assert(type(tok) == "string" and #tok == 64, "token setup failed")
+
+local function req(method, path, token_value)
+  return Http._make_response({
+    method = method or "GET", path = path,
+    headers = token_value and { ["x-racecam-token"] = token_value } or {},
+    body = "",
+  })
+end
+local function status(resp) return tonumber(resp:match("^HTTP/1.1 (%d+)")) end
+local function body(resp) return resp:match("\r\n\r\n(.*)$") or "" end
+local function has(hay, needle) return hay:find(needle, 1, true) ~= nil end
+local function write_file(path, content)
+  local f = assert(io.open(path, "wb"))
+  f:write(content)
+  f:close()
+end
+
+-- paths.lua surface + auto-created inbox -------------------------------------
+assert(Paths.inbox_dir() == Paths.data_dir() .. "inbox/", "inbox_dir() mismatch")
+assert(Paths.drop_file() == Paths.data_dir() .. "drop_event.json", "drop_file() mismatch")
+assert(Paths.ensure_dir(Paths.inbox_dir()), "ensure_dir() must succeed")
+local idir = Paths.inbox_dir()
+local probe = io.open(idir .. ".ensure_probe", "w")
+assert(probe, "ensure_dir() did not create inbox dir")
+probe:close()
+os.remove(idir .. ".ensure_probe")
+
+-- Fail-closed auth on all three new endpoints --------------------------------
+for _, path in ipairs({ "/api/inbox", "/api/inbox_file?name=a.json", "/api/my_pos" }) do
+  local r = req("GET", path, nil)
+  assert(status(r) == 400 and has(body(r), "bad token"),
+         "no-token must fail closed: " .. path .. " -> " .. tostring(status(r)))
+  r = req("GET", path, "wrong-token")
+  assert(status(r) == 400 and has(body(r), "bad token"),
+         "bad-token must fail closed: " .. path)
+end
+
+-- GET /api/inbox listing -----------------------------------------------------
+Http.set_inbox_files({ "a.json", "../evil.json", "sub/b.json", "evil.lua", "ok.json", "..json" })
+local b = body(req("GET", "/api/inbox", tok))
+assert(has(b, '"a.json"') and has(b, '"ok.json"'), "valid inbox files must be listed: " .. b)
+assert(not has(b, "evil") and not has(b, "sub/") and not has(b, "..json"),
+       "invalid inbox names must be filtered: " .. b)
+assert(has(b, '"has_drop_file":false'), "has_drop_file must start false: " .. b)
+write_file(Paths.drop_file(), '{"drop":true}')
+b = body(req("GET", "/api/inbox", tok))
+assert(has(b, '"has_drop_file":true'), "has_drop_file must turn true: " .. b)
+
+-- GET /api/inbox_file: path traversal is rejected ----------------------------
+for _, name in ipairs({
+  "../racecam_token.txt", "sub/a.json", "a\\b.json", "evil.lua", "",
+  "..%2Fracecam_token.txt", "a.json%00.txt",
+}) do
+  local r = req("GET", "/api/inbox_file?name=" .. name, tok)
+  assert(status(r) == 400 and has(body(r), "invalid filename"),
+         "traversal must be rejected: " .. name .. " -> " .. tostring(status(r)) .. " " .. body(r))
+end
+
+-- GET /api/inbox_file: valid / missing / oversized ---------------------------
+write_file(idir .. "my_event.json", '{"event":"ok"}')
+local r = req("GET", "/api/inbox_file?name=my_event.json", tok)
+assert(status(r) == 200 and body(r) == '{"event":"ok"}',
+       "valid inbox file must return exact 200 body: " .. tostring(status(r)) .. " " .. body(r))
+r = req("GET", "/api/inbox_file?name=drop_event.json", tok)
+assert(status(r) == 200 and body(r) == '{"drop":true}', "drop_event.json must be served: " .. body(r))
+r = req("GET", "/api/inbox_file?name=missing.json", tok)
+assert(status(r) == 404 and has(body(r), "not found"), "missing file must be 404")
+write_file(idir .. "big.json", string.rep("x", 512 * 1024 + 10))
+r = req("GET", "/api/inbox_file?name=big.json", tok)
+assert(status(r) == 413 and has(body(r), "file too large"), "oversized file must be 413")
+
+-- GET /api/my_pos: hook, pawn, camera, unavailable ---------------------------
+Http._pos_provider = nil
+r = req("GET", "/api/my_pos", tok)
+assert(status(r) == 503 and has(body(r), '"ok":false')
+       and has(body(r), "no local pawn or camera"), "no pose must be 503: " .. body(r))
+
+Http._pos_provider = function() return { x = 12.5, y = -3, z = 100, yaw = 45 } end
+r = req("GET", "/api/my_pos", tok)
+local pb = body(r)
+assert(status(r) == 200 and has(pb, '"ok":true') and has(pb, '"x":12.5')
+       and has(pb, '"y":-3') and has(pb, '"z":100') and has(pb, '"yaw":45'),
+       "provider pose must be 200 with all fields: " .. tostring(status(r)) .. " " .. pb)
+
+Http._pos_provider = function() error("provider boom") end
+r = req("GET", "/api/my_pos", tok)
+assert(status(r) == 503, "a throwing provider must fall back safely")
+
+Http._pos_provider = nil
+GetMyPlayerController = function()
+  return {
+    IsValid = function() return true end,
+    Pawn = {
+      IsValid = function() return true end,
+      K2_GetActorLocation = function() return { X = 1, Y = 2, Z = 3 } end,
+      K2_GetActorRotation = function() return { Yaw = 90 } end,
+    },
+  }
+end
+r = req("GET", "/api/my_pos", tok)
+assert(status(r) == 200 and has(body(r), '"x":1') and has(body(r), '"yaw":90'),
+       "pawn pose fallback must work: " .. body(r))
+
+GetMyPlayerController = function() return nil end
+_G.PlayerCameraManager = {
+  IsValid = function() return true end,
+  GetCameraLocation = function() return { X = 7, Y = 8, Z = 9 } end,
+  GetCameraRotation = function() return { Yaw = 270 } end,
+}
+r = req("GET", "/api/my_pos", tok)
+assert(status(r) == 200 and has(body(r), '"x":7') and has(body(r), '"yaw":270'),
+       "camera pose fallback must work: " .. body(r))
+_G.PlayerCameraManager = nil
+GetMyPlayerController = original_pc
+
+print("INBOX_OK")
+'''
+
+
 class RaceCamLuaTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -273,6 +455,9 @@ class RaceCamLuaTests(unittest.TestCase):
             "/api/plans",
             "/api/plan",
             "/api/auto_flags",
+            "/api/inbox",
+            "/api/inbox_file",
+            "/api/my_pos",
         ):
             with self.subTest(endpoint=endpoint):
                 needle = f'req.path == "{endpoint}"'
@@ -324,6 +509,84 @@ class RaceCamLuaTests(unittest.TestCase):
         state = HTTP_PATH.read_text(encoding="utf-8")
         for needle in ('"auto_start":', '"follow_leader":', '"active_event":'):
             self.assertIn(needle, state, f"/api/state missing {needle}")
+
+    def test_inbox_and_pos_static_surface(self) -> None:
+        """Source-level invariants for the inbox/drop and local-pose routes."""
+        paths = (RACECAM / "paths.lua").read_text(encoding="utf-8")
+        for needle in (
+            "function P.inbox_dir()",
+            'P.data_dir() .. "inbox/"',
+            "function P.drop_file()",
+            'P.data_dir() .. "drop_event.json"',
+            "function P.ensure_dir(",
+            "P.inbox_dir()",
+        ):
+            with self.subTest(file="paths.lua", needle=needle):
+                self.assertIn(needle, paths, f"paths.lua missing {needle}")
+
+        src = HTTP_PATH.read_text(encoding="utf-8")
+        gate = 'not token or token == "" or req.headers["x-racecam-token"] ~= token'
+        gate_pos = src.index(gate)
+        for endpoint in ("/api/inbox", "/api/inbox_file", "/api/my_pos"):
+            with self.subTest(endpoint=endpoint):
+                needle = f'req.path == "{endpoint}"'
+                pos = src.index(needle)
+                self.assertGreater(pos, gate_pos, f"{endpoint} precedes auth gate")
+                # Every new branch must refresh the heartbeat like every other
+                # authenticated route (next `elseif` delimits the branch).
+                end = src.find("\n  elseif ", pos)
+                block = src[pos:end if end > 0 else len(src)]
+                self.assertIn("touch()", block, f"{endpoint} does not call touch()")
+
+        for needle in (
+            "local inbox_files = {}",
+            "function H.set_inbox_files(list)",
+            "^[A-Za-z0-9._-]+%.json$",
+            'name == "drop_event.json"',
+            'Paths.inbox_dir() .. name',
+            "512 * 1024 + 1",
+            '{"error":"invalid filename"}',
+            '{"error":"not found"}',
+            '{"error":"file too large"}',
+            '{"ok":false,"error":"no local pawn or camera"}',
+            "_pos_provider",
+            "K2_GetActorLocation",
+            "K2_GetActorRotation",
+            "GetCameraLocation",
+            "GetCameraRotation",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, src, f"http.lua missing {needle}")
+
+    def test_lua_inbox_and_pos_behaviour(self) -> None:
+        """Real Lua 5.4 harness: traversal-safe inbox API and local pose."""
+        tmpdir = Path(tempfile.mkdtemp(prefix="racecam_inbox_", dir=SCRATCH))
+        try:
+            harness = LUA_INBOX_HARNESS.replace("__DATA_DIR__", str(tmpdir)).replace(
+                "__REPO_ROOT__", str(REPO)
+            )
+            harness_path = tmpdir / "harness.lua"
+            harness_path.write_text(harness, encoding="utf-8")
+            wrapper_path = tmpdir / "run_harness.sh"
+            wrapper_path.write_text(
+                "#!/usr/bin/env bash\nset -u\n"
+                f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [str(HOSTRUN), str(wrapper_path)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            self.assertEqual(
+                0,
+                proc.returncode,
+                f"inbox harness failed:\n{proc.stdout}\n{proc.stderr}",
+            )
+            self.assertIn("INBOX_OK", proc.stdout, f"{proc.stdout}\n{proc.stderr}")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_lua_behaviour(self) -> None:
         """Execute a real Lua 5.4 harness on the host against the actual modules."""

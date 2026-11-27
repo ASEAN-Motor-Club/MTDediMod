@@ -28,6 +28,10 @@ pre{background:#0c0c0c;border:1px solid #333;padding:8px;max-height:220px;overfl
 .muted{color:#999;font-size:12px}
 #drop_zone{border:1px dashed #555;border-radius:6px;padding:10px;text-align:center;color:#999;margin:6px 0;cursor:pointer}
 #drop_zone.over{background:#234;color:#fff}
+.card.drop-over{border-color:#63b3ed;background:#1c2733;box-shadow:inset 0 0 0 2px rgba(99,179,237,.35)}
+.badge.standalone{background:#2b6cb0;color:#fff;font-weight:normal}
+#paste_json{width:100%;height:90px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical}
+.pin-row button{padding:5px 9px;font-size:12px}
 #track_canvas{display:block;width:100%;max-width:640px;height:auto;background:#0c0c0c;border:1px solid #444;border-radius:4px;margin-top:8px}
 hr{border:0;border-top:1px solid #333;margin:10px 0}
 </style></head><body>
@@ -35,6 +39,44 @@ hr{border:0;border-top:1px solid #333;margin:10px 0}
 <div id="banner"></div>
 <div class="card">Token: <input id="tok" type="password" placeholder="optional"> <button onclick="save()">Set</button>
 &nbsp;REHEARSAL: <button id="rehb" onclick="toggleRehearsal()">OFF</button> <span class="kbd">(R)</span></div>
+<div class="card" id="track_loader_card"><h2>Track Loader &amp; Live Event</h2>
+<span class="badge standalone" id="standalone_badge" style="display:none">Standalone / File Mode — manual Start (S) &amp; driver target active</span>
+<div id="live_current" class="muted">No in-game event detected</div>
+<button id="live_refresh" onclick="refreshLiveEvents()">Refresh events</button>
+<button id="live_load_btn" onclick="loadCurrentLiveEvent()" disabled>Load &amp; Preview</button><br>
+Server events: <select id="live_events"></select>
+<button onclick="applySelectedLiveEvent()">Load &amp; Apply selected</button><br>
+<label><input id="auto_start" type="checkbox" onchange="postAutoFlags()"> Auto-Start on Green Light</label>
+<label><input id="follow_leader" type="checkbox" onchange="postAutoFlags()"> Follow Race Leader</label>
+<div class="kbd">Auto flags are opt-in and sent to /api/auto_flags only when you tick them.</div>
+<hr>
+<div>Track JSON: <input id="track_file" type="file" accept=".json,.txt,application/json,text/plain">
+<button onclick="pickTrackFile()">Choose file</button></div>
+<div id="drop_zone">or drop a .json / .txt event, route or plan file anywhere on this card</div>
+<label><input id="auto_apply" type="checkbox"> Auto-apply on drop</label>
+<details style="margin:6px 0">
+<summary class="muted">Paste JSON (Discord code blocks welcome)</summary>
+<textarea id="paste_json" placeholder='Paste an event / route / plan JSON here — ```json fences are stripped automatically'></textarea>
+<button id="paste_preview" onclick="parsePasted()">Parse &amp; Preview</button>
+</details>
+<hr>
+<div><b>Dropped Files (racecam/inbox/)</b> <button id="inbox_refresh" onclick="refreshInbox()">Refresh</button><br>
+<select id="inbox_files"></select>
+<button id="inbox_load" onclick="loadInboxFile()">Load Dropped File</button></div>
+<hr>
+<div class="pin-row"><b>Free-Roam Pins</b>
+<button id="pin_position" onclick="pinPosition()">Pin Position</button>
+<button id="pin_undo" onclick="undoPin()">Undo Pin</button>
+<button id="pin_clear" onclick="clearPins()">Clear Pins</button>
+<span id="pin_count" class="muted">0 pins</span>
+<button id="pin_build" onclick="buildPins()" disabled>Build &amp; Load Pins</button></div>
+<hr>
+Saved plans: <select id="saved_plans"></select>
+<button id="plans_refresh" onclick="refreshPlans()">Refresh</button>
+<button id="plan_load" onclick="loadPlanFromServer()">Load &amp; Apply</button><br>
+<span id="track_info" class="muted">No route loaded. Planner runs entirely in this page — no Python needed.</span>
+<canvas id="track_canvas" width="640" height="320"></canvas>
+</div>
 <div class="card">
 <span class="badge tally-off" id="prog">PROGRAM —</span><span class="badge tally-off" id="prv">PREVIEW —</span>
 Active: <b id="shot">—</b> &nbsp; FOV: <b id="fov">—</b> &nbsp; Plan: <b id="plan">—</b>
@@ -50,25 +92,6 @@ Active: <b id="shot">—</b> &nbsp; FOV: <b id="fov">—</b> &nbsp; Plan: <b id=
 <select id="sid"></select><button onclick="trigger(sid.value)">Trigger shot (1-9)</button><br>
 Contestant: <select id="pname"></select><button onclick="cmd('select',pname.value)">Follow</button>
 or type: <input id="pname_text" size="12" placeholder="driver name"><button onclick="followTyped()">Follow typed</button>
-</div>
-<div class="card"><h2>Track Loader &amp; Live Event</h2>
-<div id="live_current" class="muted">No in-game event detected</div>
-<button id="live_refresh" onclick="refreshLiveEvents()">Refresh events</button>
-<button id="live_load_btn" onclick="loadCurrentLiveEvent()" disabled>Load &amp; Preview</button><br>
-Server events: <select id="live_events"></select>
-<button onclick="applySelectedLiveEvent()">Load &amp; Apply selected</button><br>
-<label><input id="auto_start" type="checkbox" onchange="postAutoFlags()"> Auto-Start on Green Light</label>
-<label><input id="follow_leader" type="checkbox" onchange="postAutoFlags()"> Follow Race Leader</label>
-<div class="kbd">Auto flags are opt-in and sent to /api/auto_flags only when you tick them.</div>
-<hr>
-<div>Track JSON: <input id="track_file" type="file" accept=".json,application/json">
-<button onclick="pickTrackFile()">Choose file</button></div>
-<div id="drop_zone">or drop a .json file here</div>
-Saved plans: <select id="saved_plans"></select>
-<button id="plans_refresh" onclick="refreshPlans()">Refresh</button>
-<button id="plan_load" onclick="loadPlanFromServer()">Load &amp; Apply</button><br>
-<span id="track_info" class="muted">No route loaded. Planner runs entirely in this page — no Python needed.</span>
-<canvas id="track_canvas" width="640" height="320"></canvas>
 </div>
 <div class="card">
 OBS WebSocket: <input id="obsurl" size="28" value="ws://127.0.0.1:4455">
@@ -173,6 +196,7 @@ async function poll(){
       if([...$('pname').options].some(o=>o.value===keep))$('pname').value=keep;
     }
   }catch(e){}
+  if((++pollTick%30)===0)refreshInbox();   // inbox can change while the panel is open
   setTimeout(poll,700);
 }
 
@@ -220,41 +244,114 @@ function isClosedLoop(points){
   const avg=total/(n-1);
   return distXY(points[0],points[n-1])<=Math.max(3000.0,2.0*avg);
 }
+/* Generic, case/underscore-insensitive helpers for the universal normalizer.
+   canonKey collapses case and separators: race_setup -> racesetup,
+   RouteName -> routename, scale3D -> scale3d. */
+function canonKey(k){return String(k===null||k===undefined?'':k).toLowerCase().replace(/[_-]/g,'')}
+function isObj(v){return v!==null&&typeof v==='object'&&!Array.isArray(v)}
+function keyByCanon(o,want){
+  for(const k of Object.keys(o))if(canonKey(k)===want)return [k,o[k]];
+  return [null,undefined];
+}
+function pickName(o){
+  for(const want of ['routename','eventname','racename','name']){
+    const kv=keyByCanon(o,want);
+    if(kv[0]!==null&&kv[1]!==undefined&&kv[1]!==null&&String(kv[1]).trim())return String(kv[1]).trim();
+  }
+  return null;
+}
+function waypointArray(o){
+  const kv=keyByCanon(o,'waypoints');
+  return Array.isArray(kv[1])?kv[1]:null;
+}
+function unwrapChild(o){
+  for(const want of ['event','data','config','racesetup','route','raceconfig','racesettings']){
+    const kv=keyByCanon(o,want);
+    if(kv[0]!==null&&(isObj(kv[1])||Array.isArray(kv[1])))return kv[1];
+  }
+  return null;
+}
 function vecOf(d,names){
-  if(d===null||typeof d!=='object'||Array.isArray(d))throw new Error('waypoint is not an object');
+  if(Array.isArray(d)){
+    if(d.length<2)throw new Error('waypoint tuple needs x,y');
+    return [Number(d[0])||0.0,Number(d[1])||0.0,Number(d[2])||0.0];
+  }
+  if(!isObj(d))throw new Error('waypoint is not an object');
   for(const k of names){
-    if(k in d&&d[k]!==null&&typeof d[k]==='object'&&!Array.isArray(d[k])){
+    if(k in d&&isObj(d[k])){
       const c=d[k];
       const pick=(...ks)=>{for(const kk of ks)if(kk in c)return Number(c[kk]);return 0.0};
       return [pick('X','x'),pick('Y','y'),pick('Z','z')];
     }
   }
-  if('x' in d||'y' in d||'z' in d){
-    return [d.x!==undefined?Number(d.x):0.0,d.y!==undefined?Number(d.y):0.0,d.z!==undefined?Number(d.z):0.0];
+  const pick=(...ks)=>{for(const kk of ks)if(kk in d)return Number(d[kk]);return 0.0};
+  if(('X' in d)||('Y' in d)||('Z' in d)||('x' in d)||('y' in d)||('z' in d)){
+    return [pick('X','x'),pick('Y','y'),pick('Z','z')];
   }
   throw new Error('no location key in waypoint');
 }
-function parseRoute(doc){
-  if(doc===null||typeof doc!=='object'||Array.isArray(doc))throw new Error('route JSON must be an object');
-  let d=doc;
-  if(d.config!==null&&typeof d.config==='object'&&!Array.isArray(d.config))d=d.config;
-  const route=(d.Route!==null&&typeof d.Route==='object'&&!Array.isArray(d.Route))?d.Route:d;
-  const name=String(route.RouteName||route.routeName||d.name||'unnamed route');
-  let raw=(route.Waypoints!==undefined&&route.Waypoints!==null)?route.Waypoints:route.waypoints;
+function gateOf(wp){
+  const g=keyByCanon(wp,'gatem');
+  if(g[0]!==null&&g[1]!==undefined&&g[1]!==null)return Number(g[1]);
+  const sc=keyByCanon(wp,'scale3d')[1];
+  const c=isObj(sc)?sc:{};
+  const sy=('Y' in c)?c.Y:(('y' in c)?c.y:undefined);
+  return sy!==undefined?Number(sy):18;
+}
+function parseRoute(doc,nameHint){
+  let d=doc,name=null,raw=null;
+  for(let depth=0;depth<12&&d!==null&&d!==undefined;depth++){
+    if(Array.isArray(d)){raw=d;break}
+    if(!isObj(d))throw new Error('route JSON must be an object or array');
+    const n=pickName(d);if(n&&!name)name=n;
+    const w=waypointArray(d);if(w){raw=w;break}
+    const child=unwrapChild(d);
+    if(!child)break;
+    d=child;
+  }
   if(!Array.isArray(raw)||!raw.length)throw new Error('no waypoints found');
+  if(!name)name=(nameHint!==undefined&&nameHint!==null&&String(nameHint).trim())?String(nameHint).trim():'unnamed route';
   const points=[],gates=[];
   for(const wp of raw){
     points.push(vecOf(wp,['Location','location','Translation','translation']));
-    let sc=wp.Scale3D||wp.scale3D||{};
-    if(sc===null||typeof sc!=='object'||Array.isArray(sc))sc={};
-    let gy;
-    if(wp.gate_m!==undefined)gy=wp.gate_m;
-    else if('Y' in sc)gy=sc.Y;
-    else if('y' in sc)gy=sc.y;
-    else gy=18;
-    gates.push(Number(gy));
+    gates.push(gateOf(wp));
   }
   return {name:name,points:points,gates:gates};
+}
+function sanitizeId(s){
+  const out=String(s===undefined||s===null?'':s).trim().replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'');
+  return out||'dropped_track';
+}
+function stripFences(s){
+  let t=String(s===undefined||s===null?'':s).trim();
+  t=t.replace(/^```[A-Za-z0-9_.+-]*[ \t]*\r?\n?/,'');
+  t=t.replace(/\r?\n?```[ \t]*$/,'');
+  return t.trim();
+}
+function firstText(){
+  for(let i=0;i<arguments.length;i++){
+    const v=arguments[i];
+    if(v!==undefined&&v!==null&&String(v).trim())return String(v).trim();
+  }
+  return '';
+}
+/* Universal input normalizer for every non-`/setup_event` source.
+   Accepts raw text (Discord fenced or plain), any event/route wrapper,
+   bare waypoint arrays/tuples, and pre-built RaceCam shot plans. */
+function parseAnyInput(rawText,nameHint){
+  const text=stripFences(rawText);
+  let doc;
+  try{doc=JSON.parse(text)}catch(e){throw new Error('invalid JSON: '+e.message)}
+  if(!doc||typeof doc!=='object')throw new Error('JSON must be an object or array');
+  if(isObj(doc)&&Array.isArray(doc.shots)&&doc.shots.length>0){
+    const pid=firstText(doc.plan_id,doc.planId,doc.id,doc.name,nameHint,'custom_plan');
+    return {mode:'prebuilt_plan',plan_id:sanitizeId(pid),plan:doc,route:doc.route||null};
+  }
+  const parsed=parseRoute(doc,nameHint);
+  const pid=firstText(nameHint,parsed.name,'dropped_track');
+  const plan=buildShots(parsed.name,parsed.points,parsed.gates,{tracksideStride:'auto'});
+  return {mode:'route',plan_id:sanitizeId(pid),parsed:parsed,plan:plan,
+          route:fallbackRouteExport(parsed.points)};
 }
 function lookAtShot(sid,loc,at,fov,triggerObj,holdMs){
   const s={id:sid,kind:'look_at',trigger:triggerObj||{type:'manual'},
@@ -383,13 +480,15 @@ function fallbackRouteExport(points,stepCm){
     heading:samples.length?samples[samples.length-1].heading:0.0});
   return {samples:samples,total_length_cm:round3(dist),closed_loop:closed};
 }
-window.routePlanner={parseRoute:parseRoute,isClosedLoop:isClosedLoop,directionAt:directionAt,
+window.routePlanner={parseRoute:parseRoute,parseAnyInput:parseAnyInput,sanitizeId:sanitizeId,
+  isClosedLoop:isClosedLoop,directionAt:directionAt,
   leftNormal:leftNormal,turnAngle:turnAngle,rankCorners:rankCorners,buildShots:buildShots,
   fallbackRouteExport:fallbackRouteExport,normXY:normXY,distXY:distXY,round3:round3,pyRound:pyRound,
   sub:sub,add:addv,scale:scalev,cornerShot:cornerShot,lookAtShot:lookAtShot,followShot:followShot};
 
 /* ---- Live events / track loader / 2D preview ---- */
 let liveEvents=[],currentParsed=null,currentPoints=null,currentGates=null,currentRoute=null;
+let pins=[],currentPlanId=null,pollTick=0;
 function note(s){$('track_info').textContent=s}
 async function refreshLiveEvents(){
   try{
@@ -402,6 +501,21 @@ async function refreshLiveEvents(){
 function currentLiveEvent(){return liveEvents.find(e=>e.is_member===true)||null}
 function renderLiveEvents(){
   const cur=currentLiveEvent();
+  // Standalone / File Mode: no in-game event, so auto_start/follow_leader have
+  // nothing to key off. Soften them with an explanatory tooltip; manual Start
+  // (S) and driver targeting still work.
+  const standalone=liveEvents.length===0;
+  const badge=$('standalone_badge');
+  if(badge){
+    badge.style.display=standalone?'inline-block':'none';
+    badge.textContent=standalone?'Standalone / File Mode — manual Start (S) & driver target active':'';
+  }
+  ['auto_start','follow_leader'].forEach(id=>{
+    const el=$(id);if(!el)return;
+    el.disabled=standalone;
+    if(standalone)el.title='Requires active in-game event';
+    else el.removeAttribute?el.removeAttribute('title'):el.title='';
+  });
   $('live_current').textContent=cur?('Current Event: '+cur.name+' ('+((cur.waypoints||[]).length)+' waypoints)'):'No in-game event detected';
   $('live_load_btn').disabled=!cur;
   const sel=$('live_events'),keep=sel.value;
@@ -492,17 +606,129 @@ async function postPlan(planId,script){
     return j;
   }catch(e){note('plan apply failed: '+e);return null}
 }
+/* ---- Universal input path: full-card drop / Discord paste / inbox / pins ---- */
+function pointsFromRoute(route,plan){
+  if(route&&Array.isArray(route.waypoints)&&route.waypoints.length){
+    try{return routePlanner.parseRoute({RouteName:'imported',Waypoints:route.waypoints}).points}catch(e){}
+  }
+  if(route&&Array.isArray(route.samples)&&route.samples.length){
+    return route.samples.map(s=>[Number(s.x)||0.0,Number(s.y)||0.0,Number(s.z)||0.0]);
+  }
+  if(plan&&Array.isArray(plan.shots)){
+    const pts=plan.shots.filter(s=>Array.isArray(s.location)).map(s=>s.location.map(Number));
+    if(pts.length)return pts;
+  }
+  return [];
+}
+function applyParsedInput(res,label,autoApply){
+  if(!res)return null;
+  if(res.mode==='prebuilt_plan'){
+    const pts=pointsFromRoute(res.route,res.plan);
+    currentParsed=null;currentPoints=pts;currentGates=pts.map(()=>18);
+    currentRoute=res.route||routePlanner.fallbackRouteExport(pts);
+    currentPlanId=res.plan_id;
+    drawTrackPreview(pts,res.plan.shots);
+    note(label+': pre-built plan → '+res.plan.shots.length+' shots (camera coordinates preserved)');
+    $('out').textContent='PLAN '+res.plan_id+' → pre-built ('+res.plan.shots.length+' shots)\n'+$('out').textContent;
+    if(autoApply)return postPlan(res.plan_id,res.plan);
+    return res.plan;
+  }
+  currentParsed=res.parsed;currentPoints=res.parsed.points;currentGates=res.parsed.gates;
+  currentRoute=res.route;currentPlanId=res.plan_id;
+  drawTrackPreview(currentPoints,res.plan.shots);
+  note(label+' ('+res.parsed.name+'): '+currentPoints.length+' waypoints → '+res.plan.shots.length+' shots'+
+    (res.plan.source.closed_loop?' (closed loop)':' (point-to-point)'));
+  $('out').textContent='PLANNED '+res.parsed.name+' → '+res.plan.shots.length+' shots\n'+$('out').textContent;
+  if(autoApply)return postPlan(res.plan_id,res.plan);
+  return res.plan;
+}
+function handleRawInput(text,label,autoApply){
+  try{return applyParsedInput(routePlanner.parseAnyInput(text,label),label,autoApply)}
+  catch(e){note('bad input ('+label+'): '+e);
+    $('out').textContent='INPUT ERR '+e+'\n'+$('out').textContent;return null}
+}
 function readTrackFile(file){
   const r=new FileReader();
-  r.onload=()=>{
-    try{
-      const parsed=routePlanner.parseRoute(JSON.parse(String(r.result)));
-      setParsed(parsed,file.name||'file');
-    }catch(e){note('bad track JSON: '+e)}
-  };
+  r.onload=()=>handleRawInput(String(r.result),file.name||'file',!!$('auto_apply').checked);
   r.readAsText(file);
 }
 function pickTrackFile(){$('track_file').click()}
+function parsePasted(){
+  const text=$('paste_json').value;
+  if(!String(text).trim()){note('Paste a JSON block first');return null}
+  return handleRawInput(text,'pasted_track',!!$('auto_apply').checked);
+}
+async function refreshInbox(){
+  try{
+    const j=await(await fetch('/api/inbox',{headers:hdr()})).json();
+    const names=[];
+    if(j&&j.has_drop_file)names.push('drop_event.json');
+    const files=(j&&Array.isArray(j.files))?j.files:[];
+    files.forEach(f=>{
+      const n=(f&&typeof f==='object')?(f.name||f.file||String(f)):String(f);
+      if(n&&names.indexOf(n)<0)names.push(n);
+    });
+    const sel=$('inbox_files'),keep=sel.value;
+    sel.innerHTML='';
+    names.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;sel.appendChild(o)});
+    if([...sel.options].some(o=>o.value===keep))sel.value=keep;
+    $('inbox_load').disabled=names.length===0;
+    note('Inbox: '+names.length+' dropped file(s) available');
+    return names;
+  }catch(e){note('inbox unavailable: '+e);return []}
+}
+async function loadInboxFile(){
+  const name=$('inbox_files').value;
+  if(!name){note('No dropped file selected — refresh the inbox');return null}
+  try{
+    const r=await fetch('/api/inbox_file?name='+encodeURIComponent(name),{headers:hdr()});
+    let raw=await r.text();
+    try{
+      const j=JSON.parse(raw);
+      if(j&&typeof j.content==='string')raw=j.content;
+      else if(j&&typeof j.text==='string')raw=j.text;
+      else if(j&&j.json)raw=JSON.stringify(j.json);
+    }catch(e){}
+    return handleRawInput(raw,name,!!$('auto_apply').checked);
+  }catch(e){note('inbox load failed: '+e);return null}
+}
+/* ---- Free-roam Pin Position: zero-file waypoint capture ---- */
+function pinDoc(){return JSON.stringify({route_name:'Free-Roam Pins',waypoints:pins.slice()})}
+function refreshPinPreview(){
+  $('pin_count').textContent=pins.length+' pins';
+  $('pin_build').disabled=pins.length<3;
+  if(pins.length>=3)handleRawInput(pinDoc(),'free_roam',false);
+  else if(pins.length)note(pins.length+' pins — need at least 3 to build a route');
+}
+function posFrom(j){
+  if(!j)return null;
+  let p=j;
+  for(const k of ['pos','position','location','Location','Translation','translation','player']){
+    if(p&&isObj(p[k])){p=p[k];break}
+  }
+  if(Array.isArray(p))return {x:Number(p[0])||0.0,y:Number(p[1])||0.0,z:Number(p[2])||0.0,gate_m:18};
+  const px=(p.X!==undefined?p.X:(p.x!==undefined?p.x:undefined));
+  const py=(p.Y!==undefined?p.Y:(p.y!==undefined?p.y:undefined));
+  const pz=(p.Z!==undefined?p.Z:(p.z!==undefined?p.z:undefined));
+  if(px===undefined||py===undefined||pz===undefined)return null;
+  return {x:Number(px),y:Number(py),z:Number(pz),gate_m:18};
+}
+async function pinPosition(){
+  try{
+    const j=await(await fetch('/api/my_pos',{headers:hdr()})).json();
+    const p=posFrom(j);
+    if(!p){note('/api/my_pos returned no usable position');return null}
+    pins.push(p);refreshPinPreview();
+    return p;
+  }catch(e){note('pin failed: '+e);return null}
+}
+function undoPin(){if(pins.length){pins.pop();refreshPinPreview()}return pins.length}
+function clearPins(){pins=[];refreshPinPreview();note('Pins cleared');return 0}
+async function buildPins(){
+  if(pins.length<3){note('Need at least 3 pins to build a route');return null}
+  const res=routePlanner.parseAnyInput(pinDoc(),'free_roam');
+  return applyParsedInput(res,'Free-Roam Pins ('+pins.length+' pins)',true);
+}
 function drawTrackPreview(points,shots){
   const c=$('track_canvas'),ctx=c&&c.getContext?c.getContext('2d'):null;
   if(!ctx||!points||!points.length)return;
@@ -677,12 +903,37 @@ function obsRememberChange(){
 (function boot(){
   $('track_file').addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(f)readTrackFile(f)});
   $('drop_zone').addEventListener('click',pickTrackFile);
-  $('drop_zone').addEventListener('dragover',e=>{e.preventDefault();$('drop_zone').className='over'});
-  $('drop_zone').addEventListener('dragleave',()=>{$('drop_zone').className=''});
-  $('drop_zone').addEventListener('drop',e=>{
-    e.preventDefault();$('drop_zone').className='';
-    const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+  const card=$('track_loader_card');
+  card.addEventListener('dragover',e=>{
+    e.preventDefault();
+    if(e.dataTransfer)e.dataTransfer.dropEffect='copy';
+    card.className='card drop-over';
+  });
+  card.addEventListener('dragleave',()=>{card.className='card'});
+  card.addEventListener('drop',e=>{
+    e.preventDefault();card.className='card';
+    const dt=e.dataTransfer,files=dt&&dt.files;
+    let f=null;
+    if(files&&files.length){
+      for(let i=0;i<files.length;i++){
+        const nm=String(files[i].name||'');
+        if(/\.(json|txt)$/i.test(nm)){f=files[i];break}
+      }
+      if(!f)f=files[0];
+    }
     if(f)readTrackFile(f);
+    else note('Drop a .json or .txt event / route / plan file onto this card');
+  });
+  // Paste straight from Discord while focus is anywhere inside the card.
+  card.addEventListener('paste',e=>{
+    const txt=e.clipboardData&&e.clipboardData.getData&&e.clipboardData.getData('text');
+    if(!txt)return;
+    const t=String(txt).trim();
+    if(/^(\{|\[|```)/.test(t)){
+      e.preventDefault();
+      $('paste_json').value=t;
+      handleRawInput(t,'pasted_track',!!$('auto_apply').checked);
+    }
   });
   $('obs_remember').addEventListener('change',obsRememberChange);
   if(localStorage.getItem('rc_obs_pw_saved')==='1'){
@@ -706,10 +957,14 @@ function obsRememberChange(){
   poll();  // start live polling only after the hash token has been applied
   refreshLiveEvents();
   refreshPlans();
+  refreshInbox();
 })();
 window.racecamPanel={cmd:cmd,trigger:trigger,enqueue:enqueue,undo:undo,toggleRehearsal:toggleRehearsal,
   refreshLiveEvents:refreshLiveEvents,loadCurrentLiveEvent:loadCurrentLiveEvent,
   applySelectedLiveEvent:applySelectedLiveEvent,postAutoFlags:postAutoFlags,
+  parseAnyInput:parseAnyInput,applyParsedInput:applyParsedInput,handleRawInput:handleRawInput,
+  parsePasted:parsePasted,refreshInbox:refreshInbox,loadInboxFile:loadInboxFile,
+  pinPosition:pinPosition,undoPin:undoPin,clearPins:clearPins,buildPins:buildPins,
   refreshPlans:refreshPlans,loadPlanFromServer:loadPlanFromServer,
   obsConnect:obsConnect,obsCheck:obsCheck,obsScenes:obsScenes,obsShot:obsShot,
   sha256:sha256,sha256b64:sha256b64,routePlanner:window.routePlanner};

@@ -42,6 +42,9 @@ VALID_IDS = {
     "live_current", "live_load_btn", "live_refresh", "live_events", "auto_start",
     "follow_leader", "track_file", "drop_zone", "saved_plans", "plans_refresh",
     "plan_load", "track_info", "track_canvas",
+    "track_loader_card", "auto_apply", "paste_json", "paste_preview",
+    "inbox_files", "inbox_load", "inbox_refresh", "standalone_badge",
+    "pin_position", "pin_undo", "pin_clear", "pin_count", "pin_build",
     "obsurl", "obspw", "obsst", "obs_check", "obs_remember", "obsscene", "obssrc",
     "obsprev", "out",
 }
@@ -91,12 +94,20 @@ globalThis.fetch = async (url, opts) => {
   let j = {};
   if (url === '/api/state') j = {degraded:false, target_lost:false, shots:['start_line','corner_01_pan'],
                                  targets:['Driver'], rehearsal:false, running:false};
-  else if (url === '/api/live_events') j = {events:[{name:'Current Trial', is_member:true,
+  else if (url === '/api/live_events') j = globalThis.__noLiveEvents ? {events:[]} : {events:[{name:'Current Trial', is_member:true,
     waypoints:[{x:0,y:0,z:0,gate_m:18},{x:4000,y:0,z:0,gate_m:18},{x:8000,y:0,z:0,gate_m:18}]}]};
   else if (url === '/api/plans') j = {plans:[]};
-  return {json: async () => j};
+  else if (url === '/api/inbox') j = {has_drop_file:true, files:['event.json','route.txt']};
+  else if (url && url.indexOf('/api/inbox_file?') === 0) j = globalThis.__inboxContent || '{}';
+  else if (url === '/api/my_pos') {
+    const i = (globalThis.__pinSeq = (globalThis.__pinSeq || 0) + 1);
+    j = {x:i*1800.0, y:(i%2)*900.0, z:0, yaw:0};
+  }
+  return {json: async () => j,
+          text: async () => (typeof j === 'string' ? j : JSON.stringify(j))};
 };
 globalThis.WebSocket = class { constructor(u){ this.url = u; this.readyState = 0; } send(){} close(){} };
+globalThis.FileReader = class { readAsText(f){ this.result = (f && f._text) || ''; if (this.onload) this.onload(); } };
 """
 
 
@@ -391,6 +402,261 @@ class RoutePlannerTests(unittest.TestCase):
                           [[7, 8, 9], [17, 18, 19]]])
         self.assertEqual([r["gates"] for r in result], [[20, 20], [21, 21], [22, 22]])
         self.assertEqual([r["name"] for r in result], ["A", "B", "C"])
+
+
+class UniversalInputTests(unittest.TestCase):
+    """Universal normalizer + non-/setup_event UX (Task 1-3)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S).group(1)
+
+    def _normalize(self, raws):
+        body = r"""
+          const rp = globalThis.routePlanner;
+          const out = RAWS.map(r => {
+            try {
+              const res = rp.parseAnyInput(r.text, r.hint || 'test.json');
+              return {ok:true, mode:res.mode, plan_id:res.plan_id,
+                name: res.parsed ? res.parsed.name : ((res.plan && res.plan.name) || null),
+                points: res.parsed ? res.parsed.points : null,
+                gates: res.parsed ? res.parsed.gates : null,
+                shotIds: (res.plan && Array.isArray(res.plan.shots)) ? res.plan.shots.map(s=>s.id) : [],
+                routeOk: !!res.route,
+                routePassthrough: !!(res.route && res.route.samples)};
+            } catch(e) { return {ok:false, error:String(e)}; }
+          });
+          console.log(JSON.stringify(out));
+        """
+        return parse_result(run_node(
+            self.js, body,
+            extra="(new Function(PANEL_JS))();\nconst RAWS = " + json.dumps(raws) + ";"))
+
+    def test_new_universal_ui_present(self):
+        for snippet in ["id=\"track_loader_card\"", "Auto-apply on drop", "Paste JSON",
+                        "Parse &amp; Preview", "Dropped Files (racecam/inbox/)",
+                        "Load Dropped File", "Standalone / File Mode",
+                        "Requires active in-game event", "Pin Position", "Undo Pin",
+                        "Clear Pins", "0 pins", "Build &amp; Load Pins",
+                        "/api/inbox", "/api/inbox_file", "/api/my_pos",
+                        "parseAnyInput", "parsePasted", "refreshInbox", "buildPins"]:
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.lua)
+
+    def test_parse_any_input_all_six_shapes(self):
+        event_to_table = {
+            "EventName": "Jeju Circuit Sprint",
+            "RaceSetup": {"Route": {"RouteName": "Jeju Circuit", "Waypoints": [
+                {"Translation": {"X": 0, "Y": 0, "Z": 0}, "Scale3D": {"Y": 18}},
+                {"Translation": {"X": 4000, "Y": 0, "Z": 50}, "Scale3D": {"Y": 18}},
+                {"Translation": {"X": 8000, "Y": 3000, "Z": 100}, "Scale3D": {"Y": 18}},
+            ]}}
+        }
+        snake_case = {
+            "name": "AMC Drift Meet",
+            "race_setup": {"route": {"route_name": "Harbor Drift", "waypoints": [
+                {"translation": {"x": 10, "y": 20, "z": 30}, "scale3d": {"y": 22}},
+                {"translation": {"x": 110, "y": 220, "z": 330}, "scale3d": {"y": 22}},
+                {"translation": {"x": 210, "y": 320, "z": 430}, "scale3d": {"y": 22}},
+            ]}}
+        }
+        track_editor = {
+            "config": {"Route": {"RouteName": "Quarry Hill", "Waypoints": [
+                {"Location": {"X": 1, "Y": 2, "Z": 3}, "Scale3D": {"Y": 20}},
+                {"Location": {"X": 11, "Y": 12, "Z": 13}, "Scale3D": {"Y": 20}},
+                {"Location": {"X": 21, "Y": 22, "Z": 23}, "Scale3D": {"Y": 20}},
+            ]}}
+        }
+        bare = [{"X": 100, "Y": 200, "Z": 300},
+                {"x": 400, "y": 500, "z": 600, "gate_m": 25},
+                [700, 800, 900]]
+        prebuilt = {
+            "plan_id": "hand tuned!",
+            "shots": [{"id": "start_line", "kind": "look_at", "location": [1, 2, 3],
+                       "look_at": [4, 5, 6], "fov": 55}],
+            "route": {"samples": [{"x": 0, "y": 0, "z": 0}], "closed_loop": False},
+        }
+        discord = {"RouteName": "Discord Rally", "Waypoints": [
+            {"Location": {"X": 5, "Y": 6, "Z": 7}, "Scale3D": {"Y": 19}},
+            {"Location": {"X": 105, "Y": 106, "Z": 107}, "Scale3D": {"Y": 19}},
+            {"Location": {"X": 205, "Y": 206, "Z": 207}, "Scale3D": {"Y": 19}},
+        ]}
+        raws = [
+            {"text": json.dumps(event_to_table), "hint": "event_to_table.json"},
+            {"text": json.dumps(snake_case), "hint": "scheduled_event.json"},
+            {"text": json.dumps(track_editor), "hint": "track_editor.json"},
+            {"text": json.dumps(bare), "hint": "bare_waypoints.json"},
+            {"text": json.dumps(prebuilt), "hint": "plan.json"},
+            {"text": "```json\n" + json.dumps(discord) + "\n```", "hint": "discord.txt"},
+        ]
+        got = self._normalize(raws)
+        self.assertEqual(len(got), 6)
+        for res in got:
+            self.assertTrue(res["ok"], res.get("error"))
+
+        # 1. full Motor Town EventToTable
+        self.assertEqual(got[0]["mode"], "route")
+        self.assertEqual(got[0]["name"], "Jeju Circuit Sprint")
+        self.assertEqual(got[0]["points"], [[0, 0, 0], [4000, 0, 50], [8000, 3000, 100]])
+        self.assertEqual(got[0]["gates"], [18, 18, 18])
+        # 2. AMC snake_case race_setup (lowercase scale3d)
+        self.assertEqual(got[1]["mode"], "route")
+        self.assertEqual(got[1]["name"], "AMC Drift Meet")
+        self.assertEqual(got[1]["gates"], [22, 22, 22])
+        # 3. Track Editor / config.Route
+        self.assertEqual(got[2]["mode"], "route")
+        self.assertEqual(got[2]["name"], "Quarry Hill")
+        self.assertEqual(got[2]["gates"], [20, 20, 20])
+        # 4. bare waypoints incl. PascalCase object + numeric tuple
+        self.assertEqual(got[3]["mode"], "route")
+        self.assertEqual(got[3]["points"], [[100, 200, 300], [400, 500, 600], [700, 800, 900]])
+        self.assertEqual(got[3]["gates"], [18, 25, 18])
+        self.assertEqual(got[3]["plan_id"], "bare_waypoints_json")
+        # 5. pre-built plan passthrough (no regeneration, custom shots preserved)
+        self.assertEqual(got[4]["mode"], "prebuilt_plan")
+        self.assertEqual(got[4]["plan_id"], "hand_tuned")
+        self.assertEqual(got[4]["shotIds"], ["start_line"])
+        self.assertTrue(got[4]["routePassthrough"])
+        # 6. Discord ```json fenced paste
+        self.assertEqual(got[5]["mode"], "route")
+        self.assertEqual(got[5]["name"], "Discord Rally")
+        self.assertEqual(got[5]["points"], [[5, 6, 7], [105, 106, 107], [205, 206, 207]])
+
+        for res in got[:4] + [got[5]]:
+            with self.subTest(plan_id=res["plan_id"]):
+                self.assertEqual(res["shotIds"][:9], UNIVERSAL)
+                self.assertEqual(res["shotIds"][0], "start_line")
+                self.assertTrue(res["routeOk"])
+                self.assertIn("finish_line", res["shotIds"])
+                self.assertIn("route_flyover", res["shotIds"])
+                self.assertTrue(any(i.startswith("corner_") for i in res["shotIds"]))
+
+    def test_standalone_badge_disables_auto_flags(self):
+        result = parse_result(run_node(self.js, r"""
+          await sleep(30);
+          const badge = document.getElementById('standalone_badge');
+          const liveState = {display:badge.style.display,
+            disabled:document.getElementById('auto_start').disabled};
+          globalThis.__noLiveEvents = true;
+          await globalThis.racecamPanel.refreshLiveEvents();
+          const alone = {display:badge.style.display, text:badge.textContent,
+            disabled:document.getElementById('auto_start').disabled,
+            title:document.getElementById('auto_start').title,
+            followDisabled:document.getElementById('follow_leader').disabled};
+          globalThis.__noLiveEvents = false;
+          await globalThis.racecamPanel.refreshLiveEvents();
+          const back = {display:badge.style.display,
+            disabled:document.getElementById('auto_start').disabled,
+            title:document.getElementById('auto_start').title};
+          console.log(JSON.stringify({liveState:liveState, alone:alone, back:back}));
+        """, extra="(new Function(PANEL_JS))();"))
+        self.assertEqual(result["liveState"]["display"], "none")
+        self.assertFalse(result["liveState"]["disabled"])
+        self.assertEqual(result["alone"]["display"], "inline-block")
+        self.assertIn("Standalone / File Mode", result["alone"]["text"])
+        self.assertTrue(result["alone"]["disabled"])
+        self.assertTrue(result["alone"]["followDisabled"])
+        self.assertEqual(result["alone"]["title"], "Requires active in-game event")
+        self.assertEqual(result["back"]["display"], "none")
+        self.assertFalse(result["back"]["disabled"])
+        self.assertEqual(result["back"]["title"], "")
+
+    def test_full_card_drop_and_auto_apply(self):
+        doc = {"RouteName": "Dropped Track", "Waypoints": [
+            {"Location": {"X": 0, "Y": 0, "Z": 0}, "Scale3D": {"Y": 18}},
+            {"Location": {"X": 3000, "Y": 0, "Z": 0}, "Scale3D": {"Y": 18}},
+            {"Location": {"X": 3000, "Y": 4000, "Z": 0}, "Scale3D": {"Y": 18}},
+        ]}
+        result = parse_result(run_node(self.js, r"""
+          const card = document.getElementById('track_loader_card');
+          const file = {name:'dropped.json', _text:JSON.stringify(DOC)};
+          const ev = {preventDefault(){}, dataTransfer:{dropEffect:'', files:[file]}};
+          card._ev.dragover({preventDefault(){}, dataTransfer:{}});
+          const highlighted = card.className;
+          card._ev.drop(ev);
+          const first = {info:document.getElementById('track_info').textContent,
+            cls:card.className, planPosts:fetchLog.filter(x=>x.url==='/api/plan').length};
+          document.getElementById('auto_apply').checked = true;
+          card._ev.drop(ev);
+          await sleep(10);
+          const second = {planPosts:fetchLog.filter(x=>x.url==='/api/plan').length,
+            info:document.getElementById('track_info').textContent};
+          console.log(JSON.stringify({highlighted:highlighted, first:first, second:second}));
+        """, extra="(new Function(PANEL_JS))();\nconst DOC = " + json.dumps(doc) + ";"))
+        self.assertIn("drop-over", result["highlighted"])
+        self.assertIn("3 waypoints", result["first"]["info"])
+        self.assertEqual(result["first"]["cls"], "card")
+        self.assertEqual(result["first"]["planPosts"], 0)
+        self.assertEqual(result["second"]["planPosts"], 1)
+
+    def test_discord_paste_card_handler_and_inbox(self):
+        paste_doc = {"RouteName": "Discord Rally", "Waypoints": [
+            {"Location": {"X": 0, "Y": 0, "Z": 0}, "Scale3D": {"Y": 18}},
+            {"Location": {"X": 2500, "Y": 0, "Z": 0}, "Scale3D": {"Y": 18}},
+            {"Location": {"X": 2500, "Y": 3500, "Z": 0}, "Scale3D": {"Y": 18}},
+        ]}
+        inbox_doc = {"RaceSetup": {"Route": {"RouteName": "Inbox Event", "Waypoints": [
+            {"Translation": {"X": 1, "Y": 2, "Z": 3}, "Scale3D": {"Y": 18}},
+            {"Translation": {"X": 1001, "Y": 2, "Z": 3}, "Scale3D": {"Y": 18}},
+            {"Translation": {"X": 2001, "Y": 2, "Z": 3}, "Scale3D": {"Y": 18}},
+        ]}}}
+        result = parse_result(run_node(self.js, r"""
+          const card = document.getElementById('track_loader_card');
+          const fenced = '```json\n' + JSON.stringify(PASTE_DOC) + '\n```';
+          card._ev.paste({preventDefault(){}, clipboardData:{getData(){return fenced}}});
+          const pastedValue = document.getElementById('paste_json').value;
+          await globalThis.racecamPanel.parsePasted();
+          const pastedInfo = document.getElementById('track_info').textContent;
+          const names = await globalThis.racecamPanel.refreshInbox();
+          const sel = document.getElementById('inbox_files');
+          const opts = sel.options.map(o=>o.value);
+          sel.value = 'drop_event.json';
+          globalThis.__inboxContent = JSON.stringify(INBOX_DOC);
+          await globalThis.racecamPanel.loadInboxFile();
+          const inboxFetch = fetchLog.filter(x=>x.url && x.url.indexOf('/api/inbox_file?')===0).pop();
+          console.log(JSON.stringify({pastedValue:pastedValue, pastedInfo:pastedInfo,
+            names:names, opts:opts, inboxUrl:inboxFetch && inboxFetch.url,
+            inboxInfo:document.getElementById('track_info').textContent}));
+        """, extra=("(new Function(PANEL_JS))();\nconst PASTE_DOC = "
+                    + json.dumps(paste_doc) + ";\nconst INBOX_DOC = " + json.dumps(inbox_doc) + ";")))
+        self.assertTrue(result["pastedValue"].startswith("```json"))
+        self.assertIn("Discord Rally", result["pastedInfo"])
+        self.assertEqual(result["names"], ["drop_event.json", "event.json", "route.txt"])
+        self.assertEqual(result["opts"], ["drop_event.json", "event.json", "route.txt"])
+        self.assertEqual(result["inboxUrl"], "/api/inbox_file?name=drop_event.json")
+        self.assertIn("Inbox Event", result["inboxInfo"])
+
+    def test_pin_position_builds_valid_shot_deck(self):
+        result = parse_result(run_node(self.js, r"""
+          const p = globalThis.racecamPanel;
+          await p.pinPosition(); await p.pinPosition(); await p.pinPosition();
+          const count = document.getElementById('pin_count').textContent;
+          const enabled = !document.getElementById('pin_build').disabled;
+          const posCalls = fetchLog.filter(x=>x.url==='/api/my_pos').length;
+          await p.buildPins();
+          await sleep(10);
+          const planCall = fetchLog.filter(x=>x.url==='/api/plan').pop();
+          const body = JSON.parse(planCall.opts.body);
+          const ids = body.plan.shots.map(s=>s.id);
+          const before = fetchLog.filter(x=>x.url==='/api/plan').length;
+          await p.clearPins(); await p.pinPosition(); await p.pinPosition(); await p.buildPins();
+          const after = fetchLog.filter(x=>x.url==='/api/plan').length;
+          console.log(JSON.stringify({count:count, enabled:enabled, posCalls:posCalls,
+            plan_id:body.plan_id, shotCount:ids.length, routeOk:!!body.route,
+            hasCore:['start_line','finish_line','route_flyover'].every(x=>ids.indexOf(x)>=0),
+            corners:ids.filter(x=>/^corner_\d+_pan$/.test(x)).length,
+            before:before, after:after}));
+        """, extra="(new Function(PANEL_JS))();"))
+        self.assertEqual(result["count"], "3 pins")
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["posCalls"], 3)
+        self.assertEqual(result["plan_id"], "free_roam")
+        self.assertTrue(result["hasCore"])
+        self.assertGreater(result["corners"], 0)
+        self.assertGreaterEqual(result["shotCount"], 11)
+        self.assertTrue(result["routeOk"])
+        self.assertEqual(result["after"], result["before"],
+                         "buildPins must not post with fewer than 3 pins")
 
 
 if __name__ == "__main__":

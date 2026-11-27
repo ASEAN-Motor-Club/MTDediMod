@@ -32,7 +32,9 @@ const PIPE_UP: &str = r"\\.\pipe\mt_overlay_up";
 const PIPE_DOWN: &str = r"\\.\pipe\mt_overlay_down";
 
 /// Admin-only RaceCam snapshot. Never sent by player builds or by an older
-/// Lua mod, which is why GameState's field defaults to `None`.
+/// Lua mod, which is why GameState's field defaults to `None`. Gated with the
+/// feature so `--no-default-features` compiles with zero dead-code warnings.
+#[cfg(feature = "admin")]
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RaceCamStatus {
@@ -166,6 +168,59 @@ struct Request {
 struct Response {
     visible: bool,
     commands: Vec<Command>,
+    /// Admin only: sorted `.json` filenames currently in the RaceCam inbox.
+    /// `None` on player builds and on polls that did not rescan (the directory
+    /// is only read once every ~2 s so pipe traffic stays tiny).
+    #[cfg(feature = "admin")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inbox_files: Option<Vec<String>>,
+}
+
+/// Admin only: list the `.json` files an operator dropped into the RaceCam
+/// inbox. Runs on this background bridge thread (never the game thread), uses
+/// plain `std::fs::read_dir` (no `cmd.exe` / console flash), and never panics
+/// when the folder is missing. Names must match ASCII `[A-Za-z0-9._-]+\.json`
+/// so a `GET /api/inbox_file` can never be pointed outside the inbox.
+#[cfg(feature = "admin")]
+fn valid_inbox_json_name(name: &str) -> bool {
+    let stem_len = name.len().saturating_sub(".json".len());
+    stem_len > 0
+        && name.ends_with(".json")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-')
+}
+
+#[cfg(feature = "admin")]
+fn scan_inbox_files() -> Vec<String> {
+    const REL: &str = "ue4ss/Mods/MotorTownClientMod/racecam/inbox";
+
+    // The DLL lives next to the game .exe, so current_exe()'s directory is the
+    // game's Binaries/Win64. Fall back to the same path relative to the cwd
+    // (e.g. a dev harness) when the exe path cannot be resolved or has no
+    // inbox yet.
+    let mut dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|parent| parent.join(REL)))
+        .unwrap_or_else(|| std::path::PathBuf::from(REL));
+    if !dir.is_dir() {
+        dir = std::path::PathBuf::from(REL);
+    }
+
+    let mut names = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let os_name = entry.file_name();
+            let name = os_name.to_string_lossy();
+            if valid_inbox_json_name(&name) {
+                names.push(name.into_owned());
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    names.truncate(100);
+    names
 }
 
 #[derive(Default)]
@@ -269,6 +324,15 @@ fn serve_one_client() -> std::io::Result<()> {
         s.connected = true;
     }
 
+    // Inbox scan is throttled on this background thread: read the directory at
+    // most once every 2 s and only put the file list on the pipe when we have
+    // something new (i.e. on each scan). Initialised stale so the very first
+    // response carries the current list to a freshly connected Lua mod.
+    #[cfg(feature = "admin")]
+    let mut last_inbox_scan = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(2))
+        .unwrap_or_else(std::time::Instant::now);
+
     let mut line = String::new();
     loop {
         line.clear();
@@ -320,10 +384,28 @@ fn serve_one_client() -> std::io::Result<()> {
             }
         };
 
+        // Rescan at most once every ~2 s. Only a scan poll carries the list,
+        // so the 50 ms Lua poll cadence does not flood the pipe with JSON.
+        #[cfg(feature = "admin")]
+        let inbox_files_now = {
+            let now = std::time::Instant::now();
+            if now
+                .checked_duration_since(last_inbox_scan)
+                .map_or(false, |elapsed| elapsed >= std::time::Duration::from_secs(2))
+            {
+                last_inbox_scan = now;
+                Some(scan_inbox_files())
+            } else {
+                None
+            }
+        };
+
         // Always reply, even to a bad request: Lua is blocked on this line.
         let resp = Response {
             visible: crate::any_open(),
             commands,
+            #[cfg(feature = "admin")]
+            inbox_files: inbox_files_now,
         };
         let mut out = serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into());
         out.push('\n');

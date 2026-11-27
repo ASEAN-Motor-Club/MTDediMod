@@ -7,6 +7,40 @@ local LiveEvents = require("RaceCam/live_events")
 local H = {}
 local D = Paths.data_dir()
 
+-- Names listed by the overlay's background directory watcher (or injected by
+-- the host Lua test harness). Nothing here enumerates the filesystem on the
+-- game thread — that would flash a cmd.exe window on Windows.
+local inbox_files = {}
+
+local SAFE_JSON_NAME = "^[A-Za-z0-9._-]+%.json$"
+
+--- Strict allow-list: only a single flat basename ending in .json is legal.
+--- The regex already excludes path separators and NUL; the extra checks reject
+--- `..` sequences that the regex alone would accept (e.g. `..json`).
+---@param name any
+---@return boolean
+local function valid_json_name(name)
+  return type(name) == "string"
+    and name:match(SAFE_JSON_NAME) ~= nil
+    and not name:find("%.%.")
+    and not name:find("/")
+    and not name:find("\\")
+    and not name:find("%z")
+end
+
+--- Replace the advertised inbox listing. Invalid entries are dropped instead
+--- of rejected so a buggy producer can never smuggle a traversal name through.
+---@param list table?
+function H.set_inbox_files(list)
+  inbox_files = {}
+  if type(list) ~= "table" then return end
+  for _, name in ipairs(list) do
+    if valid_json_name(name) then
+      inbox_files[#inbox_files + 1] = name
+    end
+  end
+end
+
 local socket = require("socket")
 
 local okj, JsonLib = pcall(require, "JsonParser")
@@ -330,6 +364,77 @@ local function dispatch(item)
   return "unknown " .. jstr(cmd)
 end
 
+--- Decode application/x-www-form-urlencoded query values, including `%00`.
+local function url_decode(s)
+  s = tostring(s or "")
+  s = s:gsub("+", " ")
+  s = s:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
+  return s
+end
+
+local function query_value(path, key)
+  local q = path:match("%?(.*)$")
+  if not q then return nil end
+  for part in q:gmatch("[^&]+") do
+    local k, v = part:match("^([^=]+)=(.*)$")
+    if k == key then return url_decode(v) end
+  end
+  return nil
+end
+
+local function vec_xyz(v)
+  if type(v) ~= "table" then return nil end
+  local x, y, z = tonumber(v.X or v.x), tonumber(v.Y or v.y), tonumber(v.Z or v.z)
+  if not x or not y or not z then return nil end
+  return x, y, z
+end
+
+local function pose_from(loc, rot)
+  if not loc or not rot then return nil end
+  local x, y, z = vec_xyz(loc)
+  if not x then return nil end
+  local yaw = tonumber(rot.Yaw or rot.yaw)
+  if not yaw then return nil end
+  return { x = x, y = y, z = z, yaw = yaw }
+end
+
+--- Best-effort local pawn/camera pose. Every UE4SS call is pcall-guarded so a
+--- missing global or invalid UObject can never break the HTTP tick. `M._pos_provider`
+--- is a test seam for the Lua 5.4 host harness (and harmless in production).
+local function local_pose()
+  local ok, res = pcall(function()
+    local pc = type(GetMyPlayerController) == "function" and GetMyPlayerController() or nil
+    if not pc then return nil end
+    if type(pc.IsValid) == "function" and pc:IsValid() == false then return nil end
+    local pawn = pc.Pawn
+    if not pawn and type(pc.GetPawn) == "function" then pawn = pc:GetPawn() end
+    if not pawn then return nil end
+    if type(pawn.IsValid) == "function" and pawn:IsValid() == false then return nil end
+    local loc = type(pawn.K2_GetActorLocation) == "function" and pawn:K2_GetActorLocation() or nil
+    local rot = type(pawn.K2_GetActorRotation) == "function" and pawn:K2_GetActorRotation() or nil
+    return pose_from(loc, rot)
+  end)
+  if ok and type(res) == "table" then return res end
+
+  local okc, cres = pcall(function()
+    local mgr = nil
+    if type(_G.PlayerCameraManager) == "function" then
+      mgr = _G.PlayerCameraManager()
+    elseif type(_G.PlayerCameraManager) == "table" then
+      mgr = _G.PlayerCameraManager
+    elseif type(_G.GetPlayerCameraManager) == "function" then
+      mgr = _G.GetPlayerCameraManager()
+    end
+    if not mgr then return nil end
+    if type(mgr.IsValid) == "function" and mgr:IsValid() == false then return nil end
+    local loc = type(mgr.GetCameraLocation) == "function" and mgr:GetCameraLocation() or nil
+    local rot = type(mgr.GetCameraRotation) == "function" and mgr:GetCameraRotation() or nil
+    return pose_from(loc, rot)
+  end)
+  if okc and type(cres) == "table" then return cres end
+  return nil
+end
+
 local function make_response(req)
   if req.too_large then
     local b = '{"error":"body too large"}'
@@ -352,6 +457,67 @@ local function make_response(req)
     touch()
     local ok, events = pcall(function() return LiveEvents.list() end)
     code, body = 200, json_encode({ events = (ok and type(events) == "table") and events or {} })
+  elseif req.method == "GET" and req.path == "/api/inbox" then
+    authed = true
+    touch()
+    local has_drop = false
+    local ok, f = pcall(io.open, Paths.drop_file(), "rb")
+    if ok and f then
+      has_drop = true
+      pcall(function() f:close() end)
+    end
+    code, body = 200, json_encode({ files = inbox_files, has_drop_file = has_drop })
+  elseif req.method == "GET" and (req.path == "/api/inbox_file" or req.path:match("^/api/inbox_file%?")) then
+    authed = true
+    touch()
+    local name = query_value(req.path, "name")
+    local target = nil
+    if name == "drop_event.json" then
+      target = Paths.drop_file()
+    elseif valid_json_name(name) then
+      target = Paths.inbox_dir() .. name
+    else
+      code, body = 400, '{"error":"invalid filename"}'
+    end
+    if target then
+      local ok, f = pcall(io.open, target, "rb")
+      if not ok or not f then
+        code, body = 404, '{"error":"not found"}'
+      else
+        local okr, content = pcall(f.read, f, 512 * 1024 + 1)
+        pcall(function() f:close() end)
+        if not okr or type(content) ~= "string" then
+          code, body = 404, '{"error":"not found"}'
+        elseif #content > 512 * 1024 then
+          code, body = 413, '{"error":"file too large"}'
+        else
+          code, body, ctype = 200, content, "application/json"
+        end
+      end
+    end
+  elseif req.method == "GET" and req.path == "/api/my_pos" then
+    authed = true
+    touch()
+    local pose = nil
+    local hook_ok, hook_pose = pcall(function()
+      return type(H._pos_provider) == "function" and H._pos_provider() or nil
+    end)
+    if hook_ok and type(hook_pose) == "table" then
+      pose = {
+        x = tonumber(hook_pose.x), y = tonumber(hook_pose.y),
+        z = tonumber(hook_pose.z), yaw = tonumber(hook_pose.yaw),
+      }
+    end
+    if not (pose and pose.x and pose.y and pose.z and pose.yaw) then
+      pose = local_pose()
+    end
+    if pose and pose.x and pose.y and pose.z and pose.yaw then
+      code, body = 200, json_encode({
+        ok = true, x = pose.x, y = pose.y, z = pose.z, yaw = pose.yaw,
+      })
+    else
+      code, body = 503, '{"ok":false,"error":"no local pawn or camera"}'
+    end
   elseif req.method == "GET" and req.path == "/api/plans" then
     authed = true
     touch()
@@ -414,7 +580,12 @@ local function make_response(req)
     audit("command", cmd, last_result)
     code, body = 200, '{"status":"' .. jstr(last_result) .. '"}'
   end
-  local reason = code == 200 and "OK" or "Bad Request"
+  local reasons = {
+    [200] = "OK", [400] = "Bad Request", [404] = "Not Found",
+    [413] = "Payload Too Large", [500] = "Internal Server Error",
+    [503] = "Service Unavailable",
+  }
+  local reason = reasons[code] or "Bad Request"
   return "HTTP/1.1 " .. code .. " " .. reason .. "\r\nContent-Type: " .. ctype ..
     "\r\nContent-Length: " .. #body .. "\r\nConnection: close\r\n\r\n" .. body
 end
@@ -525,5 +696,9 @@ function H.start()
     " failsafe_timeout=" .. tostring(hb_timeout()) .. "s")
   return "listening " .. host .. ":8767"
 end
+
+-- Test seam for the Lua 5.4 host harness: exercise make_response without
+-- binding a socket. Production callers never touch this field.
+H._make_response = make_response
 
 return H

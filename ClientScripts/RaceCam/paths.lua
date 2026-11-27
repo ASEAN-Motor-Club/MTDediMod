@@ -35,11 +35,29 @@ function P.log_path(filename)
     return P.data_dir() .. filename
 end
 
---- Best-effort directory creation. The game runs on Windows, but the same
---- module is unit-tested on Linux, so use the matching shell command.
+--- Drop folder for event/route/plan JSON files. Operators can copy files here
+--- straight from Discord downloads or a shared event pack; no cmd.exe `dir`
+--- enumeration is performed on the game thread (the HTTP layer lists files
+--- from `http.set_inbox_files` instead).
+---@return string
+function P.inbox_dir()
+    return P.data_dir() .. "inbox/"
+end
+
+--- Single well-known drop file. Renaming any event JSON to `drop_event.json`
+--- works even when no directory listing provider is available.
+---@return string
+function P.drop_file()
+    return P.data_dir() .. "drop_event.json"
+end
+
+--- Best-effort single directory creation. The game runs on Windows, but the
+--- same module is unit-tested on Linux, so use the matching shell command.
+--- `mkdir -p` / `if not exist` are no-ops when the directory already exists;
+--- the pcall keeps a failure from ever surfacing in the game console.
 ---@param dir string
 ---@return boolean
-function P.ensure_dir(dir)
+local function mkdir_best_effort(dir)
     if not dir or dir == "" then return false end
     local ok = pcall(function()
         if package.config:sub(1, 1) == "\\" then
@@ -50,6 +68,18 @@ function P.ensure_dir(dir)
         end
     end)
     return ok == true
+end
+
+--- Ensure the requested directory plus the RaceCam runtime directories exist.
+--- Creating the inbox here means a freshly installed mod is immediately ready
+--- to accept dropped JSON files without any operator setup step.
+---@param dir string?
+---@return boolean
+function P.ensure_dir(dir)
+    mkdir_best_effort(dir)
+    mkdir_best_effort(P.data_dir())
+    mkdir_best_effort(P.inbox_dir())
+    return true
 end
 
 local function trim(s)

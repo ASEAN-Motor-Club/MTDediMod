@@ -199,6 +199,17 @@ local function Poll()
     if type(resp.commands) == "table" then
         for _, cmd in ipairs(resp.commands) do ApplyCommand(cmd) end
     end
+
+    -- The Rust overlay scans racecam/inbox/ on its own thread and pushes the
+    -- current sorted .json list down the bridge. Forward it to RaceCam's HTTP
+    -- module so the panel can show the "Dropped Files" list. A missing or
+    -- broken RaceCam/http must never stop the bridge.
+    if type(resp.inbox_files) == "table" and RaceCam then
+        pcall(function()
+            local h = require("RaceCam/http")
+            if h and h.set_inbox_files then h.set_inbox_files(resp.inbox_files) end
+        end)
+    end
 end
 
 -- ── Public API ────────────────────────────────────────────────────────────

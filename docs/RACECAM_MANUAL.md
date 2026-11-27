@@ -25,6 +25,39 @@ All runtime paths are resolved **dynamically** — via the `RACECAM_DIR` environ
 
 ---
 
+## Quick Start — Zero-Python Workflow
+
+RaceCam is designed so an operator needs **no Python, no token file, and no manual path** on the game PC: install with one double-click, launch with one hotkey, then load a track with one of four paths (in priority order).
+
+### 1-Click Install
+
+Double-click **`Install-AMCAdminMod.bat`** inside the Admin Mod zip. The installer:
+
+- auto-detects Motor Town on **any** Steam drive/library (no hardcoded drive letters);
+- preserves your existing `config.json` and `racecam/` data folder on re-install (no settings or plans lost);
+- lays down UE4SS, the LuaSocket runtime, and the `racecam/inbox/` drop folder.
+
+### Zero-Config Launch
+
+1. Start Motor Town and join the server.
+2. Press **`Ctrl+Shift+F10`** to open the admin overlay, then click **Load Current Event & Open Panel** (or just **Open Panel** to browse tracks).
+3. The local auth token is generated automatically on first run and appended to the panel URL as `#token=...`, so the browser authenticates itself — **no token copy/paste by hand**. (The token never leaves the game PC; see §9.)
+
+### The 4 Track-Loading Paths (Priority Order)
+
+1. **Live In-Game Event (1 click)** — With an event running, use **Load Current Event & Open Panel**. RaceCam reads the live route straight from `Net_EventSystem.Net_Events`, so it works for both `/setup_event` races **and** native Motor Town events. Optional **Auto-Start on Green Light** and **Follow Race Leader** checkboxes keep the camera on the action with no manual cueing.
+2. **Non-`/setup_event` Event / Route / Plan File** — No live event? Load a file instead:
+   - drag-and-drop any `.json` straight onto the browser panel;
+   - paste JSON copied from Discord (including `` ```json `` fenced blocks) into the **Paste JSON** box; or
+   - drop `.json` files into `racecam/inbox/` (or save a single one as `racecam/drop_event.json`) — they appear in the **Dropped Files** list, refreshed automatically by the Rust overlay.
+   - Accepted formats: full **`EventToTable`** event exports, snake_case **`race_setup`** / AMC `ScheduledEvent` JSON, Track Editor / `RaceSetup` routes, bare waypoint arrays / `[x, y, z]` tuples, and pre-built **`{ shots: [...] }`** plans (loaded as-is, custom camera coordinates preserved).
+3. **Zero-File Free-Roam Capture** — No file at all? While driving or teleporting along your convoy / drift / time-trial route, click **Pin Position** 3+ times (the 2D preview updates after each pin), then click **Build & Load Pins** to generate the full universal `1`–`9` + `corner_XX_pan` + `route_flyover` shot deck on the spot.
+4. **Quick Follow (No Track)** — Need a camera *now*? Just press **`A` (Arm)**. The built-in follow/orbit shots work car-relative anywhere on the map — no track, no file, no pins.
+
+> The offline Python plan builder in §4 still works for hand-tuned, repeatable broadcasts, but it is **optional**: paths 1–4 above cover every event without running Python on the game PC.
+
+---
+
 ## 2. Prerequisites
 
 | Requirement | Detail |

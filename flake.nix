@@ -657,6 +657,15 @@
                               'generated plan_<track>.lua / route_<track>.lua files here.' \
                               'See docs/RACECAM_MANUAL.md for full installation and operator instructions.' \
                               > "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam/README.txt"
+
+                            # Drop-zone for ad-hoc events: any event / route /
+                            # plan .json dropped here appears in the panel's
+                            # "Dropped Files" list (or save as drop_event.json).
+                            mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam/inbox"
+                            printf '%s\n' \
+                              'Drop any event / route / plan .json file here (or save it as racecam/drop_event.json)' \
+                              'to load it in 1 click from the RaceCam panel (Ctrl+Shift+F10 -> Open Panel).' \
+                              > "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam/inbox/README.txt"
                           fi
                           # The 1-click installer is admin tooling: ship it in
                           # the admin zip root only, never in the player zip.
