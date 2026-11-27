@@ -20,7 +20,9 @@ use windows::core::{w, Error, Interface, Result, HRESULT};
 use windows::Win32::Foundation::{E_FAIL, HINSTANCE, HMODULE, HWND, TRUE};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0;
-use windows::Win32::Graphics::Direct3D12::{D3D12CreateDevice, ID3D12CommandQueue, ID3D12Device};
+use windows::Win32::Graphics::Direct3D12::{
+    D3D12CreateDevice, ID3D12CommandQueue, ID3D12Device, D3D12_COMMAND_LIST_TYPE_DIRECT,
+};
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
@@ -38,6 +40,7 @@ type ExecuteCommandListsFn =
 static PRESENT_ORIG: AtomicUsize = AtomicUsize::new(0);
 static RESIZE_ORIG: AtomicUsize = AtomicUsize::new(0);
 static EXEC_ORIG: AtomicUsize = AtomicUsize::new(0);
+static D3D12_QUEUE_CAPTURED: AtomicBool = AtomicBool::new(false);
 static WARNED_NO_DEVICE: AtomicBool = AtomicBool::new(false);
 
 /// Per-swapchain render state. Only touched from Present/ResizeBuffers, which
@@ -172,10 +175,9 @@ unsafe fn exec_vtable_entry() -> Result<ExecuteCommandListsFn> {
     let device = device.ok_or_else(|| fail("no D3D12 device"))?;
     let desc = windows::Win32::Graphics::Direct3D12::D3D12_COMMAND_QUEUE_DESC::default();
     let queue: ID3D12CommandQueue = device.CreateCommandQueue(&desc)?;
-    let vtable = *(queue.as_raw() as *const *const usize);
-    // ID3D12CommandQueue: UpdateTileMappings(7), CopyTileMappings(8),
-    // ExecuteCommandLists(9), SetMarker(10)...
-    let f = *vtable.add(9);
+    // Read ExecuteCommandLists directly from the typed vtable (index 10)
+    // instead of hardcoding a raw offset.
+    let f = Interface::vtable(&queue).ExecuteCommandLists as usize;
     Ok(std::mem::transmute::<usize, ExecuteCommandListsFn>(f))
 }
 
@@ -184,16 +186,19 @@ unsafe extern "system" fn exec_hook(
     count: u32,
     lists: *const *mut c_void,
 ) {
-    // Capture the first queue that submits command lists: UE's D3D12 RHI has
-    // a single direct queue that both renders and presents.
-    let mut slot = D3D12_QUEUE.lock().unwrap_or_else(|p| p.into_inner());
-    if slot.0.is_none() {
-        if let Some(q) = ID3D12CommandQueue::from_raw_borrowed(
-            &this,
-        ) {
-            slot.0 = Some(q.clone());
-            drop(slot);
-            log::info("captured D3D12 command queue");
+    // Fast path: once we have captured the DIRECT queue, avoid locking on
+    // every ExecuteCommandLists submission.
+    if !D3D12_QUEUE_CAPTURED.load(Ordering::Relaxed) {
+        if let Some(q) = ID3D12CommandQueue::from_raw_borrowed(&this) {
+            if q.GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT {
+                let mut slot = D3D12_QUEUE.lock().unwrap_or_else(|p| p.into_inner());
+                if slot.0.is_none() {
+                    slot.0 = Some(q.clone());
+                    D3D12_QUEUE_CAPTURED.store(true, Ordering::Release);
+                    drop(slot);
+                    log::info("captured D3D12 DIRECT command queue");
+                }
+            }
         }
     }
     let orig: ExecuteCommandListsFn = std::mem::transmute(EXEC_ORIG.load(Ordering::Relaxed));
