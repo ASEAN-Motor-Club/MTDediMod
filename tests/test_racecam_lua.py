@@ -395,6 +395,189 @@ print("INBOX_OK")
 '''
 
 
+# Third host harness: live standings sorting/compact snapshot, the new
+# /api/state `standings` field, and auto-disengage on manual /api/target.
+LUA_STANDINGS_HARNESS = r'''
+local DATA_DIR = "__DATA_DIR__"
+local ROOT = "__REPO_ROOT__/ClientScripts"
+package.path = ROOT .. "/?.lua;" .. ROOT .. "/?/init.lua;" .. package.path
+
+local real_getenv = os.getenv
+os.getenv = function(k)
+  if k == "RACECAM_DIR" then return DATA_DIR end
+  return real_getenv(k)
+end
+
+RequireSafe = function() return nil end
+CreateInvalidObject = function() return { IsValid = function() return false end } end
+FindAllOf = function() return {} end
+FindFirstOf = function() return nil end
+StaticFindObject = function() return nil end
+GetCachedWorld = function() return CreateInvalidObject() end
+LogOutput = function() end
+LoopInGameThreadWithDelay = function() return true end
+LoopInGameThreadAfterFrames = function() return true end
+IsValid = function(o) return o ~= nil end
+package.preload["socket"] = function()
+  return { bind = function() error("socket.bind must not be called in this test") end }
+end
+
+-- JsonParser stub: state_json builds its JSON by hand; /api/target uses
+-- json_field, so a minimal stringify is enough for the other routes.
+package.loaded["JsonParser"] = (function()
+  local function encode(v)
+    if type(v) == "table" then
+      if #v > 0 then
+        local parts = {}
+        for _, x in ipairs(v) do parts[#parts + 1] = encode(x) end
+        return "[" .. table.concat(parts, ",") .. "]"
+      end
+      local keys, parts = {}, {}
+      for k in pairs(v) do keys[#keys + 1] = k end
+      table.sort(keys)
+      for _, k in ipairs(keys) do parts[#parts + 1] = '"' .. tostring(k) .. '":' .. encode(v[k]) end
+      return "{" .. table.concat(parts, ",") .. "}"
+    elseif type(v) == "string" then
+      return '"' .. v:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+    elseif type(v) == "boolean" then
+      return tostring(v)
+    end
+    return tostring(v)
+  end
+  return { stringify = encode, parse = function() return nil end, null = {} }
+end)()
+
+local function fname(s) return { ToString = function() return s end } end
+local function player(name, rank, laps, section, best, last, finished, dq)
+  return {
+    PlayerName = fname(name), Rank = rank,
+    Laps = laps, SectionIndex = section,
+    BestLapTime = best, LastSectionTotalTimeSeconds = last,
+    bFinished = finished or false, bDisqualified = dq or false,
+  }
+end
+local function wp(x, y, z, sy)
+  return { Translation = { X = x, Y = y, Z = z }, Scale3D = { Y = sy } }
+end
+
+-- Deliberately shuffled: P2, DQ, P1, finished-P3. Expected order P1,P2,P3,DQ.
+local EVENTS = {
+  {
+    EventGuid = { A = 1, B = 2, C = 3, D = 4 },
+    EventName = fname("Grand Final"),
+    State = 3, bInCountdown = false,
+    Players = {
+      player("P2", 2, 3, 5, 90.5, 180.0, false, false),
+      player("DQ", 0, 1, 2, 88.0, 60.0, false, true),
+      player("P1", 1, 4, 6, 88.2, 240.0, false, false),
+      player("P3", 3, 5, 7, 87.0, 300.0, true, false),
+    },
+    RaceSetup = {
+      NumLaps = 5,
+      Route = {
+        RouteName = fname("Coast"),
+        Waypoints = { wp(1, 2, 3, 1.0), wp(4, 5, 6, 1.0) },
+      },
+    },
+  },
+}
+GetMotorTownGameState = function()
+  return {
+    IsValid = function() return true end,
+    Net_EventSystem = { IsValid = function() return true end, Net_Events = EVENTS },
+  }
+end
+-- Local driver is a spectator (not one of the four contestants), which also
+-- exercises the active_standings fallback to the first populated race.
+GetMyPlayerController = function()
+  return {
+    IsValid = function() return true end,
+    PlayerState = { IsValid = function() return true end, PlayerName = fname("Spectator") },
+  }
+end
+
+local LiveEvents = require("RaceCam/live_events")
+local evs = LiveEvents.list("Spectator")
+assert(#evs == 1, "expected one event, got " .. tostring(#evs))
+local ev = evs[1]
+assert(ev.num_laps == 5, "num_laps must be read from RaceSetup.NumLaps, got " .. tostring(ev.num_laps))
+local order = {}
+for i, r in ipairs(ev.standings) do order[i] = r.name end
+assert(table.concat(order, ",") == "P1,P2,P3,DQ",
+       "standings sort order wrong: " .. table.concat(order, ","))
+local p1 = ev.standings[1]
+assert(p1.rank == 1 and p1.name == "P1" and p1.laps == 4 and p1.section == 6
+       and p1.best_lap_s == 88.2 and p1.last_sec_s == 240.0
+       and p1.finished == false and p1.disqualified == false,
+       "P1 standings fields wrong: " .. tostring(p1.name))
+assert(ev.standings[3].name == "P3" and ev.standings[3].finished == true,
+       "finished-P3 must be third with finished=true")
+assert(ev.standings[4].name == "DQ" and ev.standings[4].disqualified == true,
+       "DQ must be last with disqualified=true")
+
+LiveEvents.clear_cache()
+local active = LiveEvents.active_standings("Spectator")
+assert(active ~= nil, "active_standings must find the spectated race")
+assert(active.event_name == "Grand Final" and type(active.event_guid) == "string"
+       and #active.event_guid > 0, "compact snapshot identity fields")
+assert(active.state == 3 and active.in_countdown == false and active.num_laps == 5
+       and active.waypoint_count == 2, "compact snapshot race fields")
+assert(#active.standings == 4 and active.standings[1].name == "P1", "compact snapshot standings")
+assert(active.waypoints == nil, "active_standings must NOT copy waypoints[]")
+
+local Init = require("RaceCam/init")
+local Http = require("RaceCam/http")
+local Paths = require("RaceCam/paths")
+local tok = Paths.ensure_token()
+assert(type(tok) == "string" and #tok == 64, "token setup failed")
+
+_G.RACECAM_SHOTS = {
+  target_name = nil,
+  list_targets = function() return { "P1", "P2", "P3" } end,
+  set_target_by_name = function(self, name)
+    self.target_name = name
+    return true, "target " .. name
+  end,
+}
+Init.follow_leader = true
+
+local function req(method, path, token_value, request_body)
+  return Http._make_response({
+    method = method or "GET", path = path,
+    headers = token_value and { ["x-racecam-token"] = token_value } or {},
+    body = request_body or "",
+  })
+end
+local function status(resp) return tonumber(resp:match("^HTTP/1.1 (%d+)")) end
+local function body(resp) return resp:match("\r\n\r\n(.*)$") or "" end
+local function has(hay, needle) return hay:find(needle, 1, true) ~= nil end
+
+local r = req("GET", "/api/state", tok)
+local b = body(r)
+assert(status(r) == 200, "GET /api/state failed: " .. tostring(status(r)))
+assert(has(b, '"standings":[{"rank":1,"name":"P1"'),
+       "/api/state must include sorted standings: " .. b)
+for _, needle in ipairs({
+  '"laps":4', '"section":6', '"best_lap_s":88.2', '"last_sec_s":240',
+  '"finished":false', '"disqualified":false', '"finished":true', '"disqualified":true',
+  '"event_name":"Grand Final"', '"num_laps":5', '"waypoint_count":2',
+}) do
+  assert(has(b, needle), "/api/state standings missing " .. needle .. ": " .. b)
+end
+assert(not has(b, '"waypoints"'), "/api/state must not include waypoints: " .. b)
+assert(has(b, '"follow_leader":true'), "follow_leader must start on: " .. b)
+
+local r2 = req("POST", "/api/target", tok, '{"name":"P3"}')
+assert(status(r2) == 200 and has(body(r2), '"ok":true'),
+       "POST /api/target must succeed: " .. tostring(status(r2)) .. " " .. body(r2))
+local r3 = req("GET", "/api/state", tok)
+assert(status(r3) == 200 and has(body(r3), '"follow_leader":false'),
+       "manual /api/target must disengage follow_leader: " .. body(r3))
+
+print("STANDINGS_OK")
+'''
+
+
 class RaceCamLuaTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -613,6 +796,37 @@ class RaceCamLuaTests(unittest.TestCase):
                 f"behaviour harness failed:\n{proc.stdout}\n{proc.stderr}",
             )
             self.assertIn("BEHAVIOR_OK", proc.stdout, f"{proc.stdout}\n{proc.stderr}")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+    def test_lua_live_standings_and_manual_target(self) -> None:
+        """Lua 5.4 harness: sorted standings in /api/state, manual target hands control off."""
+        tmpdir = Path(tempfile.mkdtemp(prefix="racecam_standings_", dir=SCRATCH))
+        try:
+            harness = LUA_STANDINGS_HARNESS.replace("__DATA_DIR__", str(tmpdir)).replace(
+                "__REPO_ROOT__", str(REPO)
+            )
+            harness_path = tmpdir / "harness.lua"
+            harness_path.write_text(harness, encoding="utf-8")
+            wrapper_path = tmpdir / "run_harness.sh"
+            wrapper_path.write_text(
+                "#!/usr/bin/env bash\nset -u\n"
+                f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [str(HOSTRUN), str(wrapper_path)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            self.assertEqual(
+                0,
+                proc.returncode,
+                f"standings harness failed:\n{proc.stdout}\n{proc.stderr}",
+            )
+            self.assertIn("STANDINGS_OK", proc.stdout, f"{proc.stdout}\n{proc.stderr}")
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 

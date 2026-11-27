@@ -136,6 +136,23 @@ function M.local_name()
     return nil
 end
 
+--- Standings sort: ranked (rank > 0) first by rank asc, then the pre-start
+--- grid (rank == 0) alphabetically, then disqualified alphabetically. Rank
+--- ties break on laps desc, section desc, then name asc.
+local function standing_cmp(a, b)
+    if a.disqualified ~= b.disqualified then return not a.disqualified end
+    if not a.disqualified then
+        local a_ranked, b_ranked = a.rank > 0, b.rank > 0
+        if a_ranked ~= b_ranked then return a_ranked end
+        if a_ranked then
+            if a.rank ~= b.rank then return a.rank < b.rank end
+            if a.laps ~= b.laps then return a.laps > b.laps end
+            if a.section ~= b.section then return a.section > b.section end
+        end
+    end
+    return a.name < b.name
+end
+
 local function build_event(ev, wanted_name)
     local ok, data = pcall(function()
         local players = {}
@@ -144,12 +161,24 @@ local function build_event(ev, wanted_name)
             local nm = name_of(field(p, "PlayerName"))
             if nm then
                 players[#players + 1] = {
-                    name = nm,
                     rank = tonumber(field(p, "Rank")) or 0,
+                    name = nm,
+                    laps = tonumber(field(p, "Laps")) or 0,
+                    section = tonumber(field(p, "SectionIndex")) or 0,
+                    best_lap_s = tonumber(field(p, "BestLapTime")) or 0,
+                    last_sec_s = tonumber(field(p, "LastSectionTotalTimeSeconds")) or 0,
+                    finished = field(p, "bFinished") and true or false,
                     disqualified = field(p, "bDisqualified") and true or false,
                 }
             end
         end)
+
+        -- Compact, sorted leaderboard. Shares the already-built player tables
+        -- (no deep copy) so this stays cheap for the 700 ms /api/state poll.
+        local standings = {}
+        for _, p in ipairs(players) do standings[#standings + 1] = p end
+        table.sort(standings, standing_cmp)
+        local num_laps = tonumber(field(field(ev, "RaceSetup"), "NumLaps")) or 0
 
         local is_member = false
         if wanted_name then
@@ -198,6 +227,8 @@ local function build_event(ev, wanted_name)
             player_count = #players,
             waypoint_count = #waypoints,
             leader_name = leader,
+            num_laps = num_laps,
+            standings = standings,
             waypoints = waypoints,
         }
     end)
@@ -232,6 +263,57 @@ function M.current_event(local_player_name)
         if ev.is_member then return ev end
     end
     return nil
+end
+
+--- Compact snapshot of the leaderboard for the /api/state poll. Cached for
+--- 0.5 s so the panel's 700 ms poll does not re-scan the event list on every
+--- request. Deliberately omits waypoints[] — only the leaderboard is needed.
+local standings_cache = { key = nil, t = -math.huge, value = nil }
+
+--- Drop the cache (test seam; also harmless in production).
+function M.clear_cache()
+    standings_cache.key, standings_cache.t, standings_cache.value = nil, -math.huge, nil
+end
+
+---@param local_player_name string?
+---@return table? { event_name, event_guid, state, in_countdown, num_laps,
+---                 waypoint_count, standings } or nil when no event has players.
+function M.active_standings(local_player_name)
+    local wanted = name_of(local_player_name) or M.local_name()
+    local key = wanted or ""
+    local now = os.clock()
+    if standings_cache.key == key and now - standings_cache.t < 0.5 then
+        return standings_cache.value
+    end
+    standings_cache.key, standings_cache.t = key, now
+
+    local events = M.list(wanted)
+    local chosen = nil
+    for _, ev in ipairs(events) do
+        if ev.is_member and #ev.standings > 0 then chosen = ev break end
+    end
+    -- Spectating outside an event (or an empty member event): fall back to
+    -- the first live race with a populated leaderboard.
+    if not chosen then
+        for _, ev in ipairs(events) do
+            if #ev.standings > 0 then chosen = ev break end
+        end
+    end
+
+    local value = nil
+    if chosen and #chosen.standings > 0 then
+        value = {
+            event_name = chosen.name,
+            event_guid = chosen.guid,
+            state = chosen.state,
+            in_countdown = chosen.in_countdown,
+            num_laps = chosen.num_laps,
+            waypoint_count = chosen.waypoint_count,
+            standings = chosen.standings,
+        }
+    end
+    standings_cache.value = value
+    return value
 end
 
 return M

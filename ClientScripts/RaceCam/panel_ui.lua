@@ -26,6 +26,24 @@ pre{background:#0c0c0c;border:1px solid #333;padding:8px;max-height:220px;overfl
 #banner.rehearsal{display:block;background:#975a16;color:#fff}
 .kbd{color:#888;font-size:12px;margin-top:6px}
 .muted{color:#999;font-size:12px}
+/* Live leaderboard / contestant button deck (replaces the old dropdown). */
+.roster{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.roster.standalone{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.roster button.rc-driver{display:flex;align-items:center;gap:8px;width:100%;margin:0;
+  padding:6px 8px;text-align:left;background:#1f2733;border:1px solid #3a4756;border-radius:4px}
+.roster button.rc-driver:hover{background:#2a3a4d}
+.roster button.rc-driver.onair{border-color:#48bb78;box-shadow:inset 0 0 0 1px #48bb78;background:#17301f}
+.rc-pos{flex:0 0 32px;text-align:center;font-weight:bold;border-radius:3px;padding:2px 3px;background:#444;color:#ddd}
+.rc-pos.p1{background:#b8860b;color:#fff}.rc-pos.p2{background:#8a8a8a;color:#fff}
+.rc-pos.p3{background:#8c5a2b;color:#fff}.rc-pos.dq{background:#5a2323;color:#e8a0a0}
+.rc-name{flex:1 1 auto;font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rc-tele{margin-left:auto;font-family:ui-monospace,monospace;font-size:11px;color:#cbd5e0;
+  text-align:right;white-space:nowrap}
+.rc-gap{color:#f6ad55}
+.onair-pill{background:#48bb78;color:#06281a;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:bold;margin-left:6px}
+.status-pill{font-size:11px;padding:1px 7px;border-radius:9px;margin-left:6px;background:#2b6cb0;color:#fff}
+.status-pill.counting{background:#975a16}.status-pill.racing{background:#2f855a}
+.status-pill.finished{background:#4a5568;color:#e2e8f0}
 #drop_zone{border:1px dashed #555;border-radius:6px;padding:10px;text-align:center;color:#999;margin:6px 0;cursor:pointer}
 #drop_zone.over{background:#234;color:#fff}
 .card.drop-over{border-color:#63b3ed;background:#1c2733;box-shadow:inset 0 0 0 2px rgba(99,179,237,.35)}
@@ -90,8 +108,9 @@ Active: <b id="shot">—</b> &nbsp; FOV: <b id="fov">—</b> &nbsp; Plan: <b id=
 <button onclick="cmd('arm')">Arm (A)</button><button onclick="cmd('start')">Start (S)</button>
 <button onclick="cmd('stop')">Stop / restore view (X)</button><button onclick="undo()">Last-shot undo (Z)</button><br>
 <select id="sid"></select><button onclick="trigger(sid.value)">Trigger shot (1-9)</button><br>
-Contestant: <select id="pname"></select><button onclick="cmd('select',pname.value)">Follow</button>
-or type: <input id="pname_text" size="12" placeholder="driver name"><button onclick="followTyped()">Follow typed</button>
+<div id="standings_hdr" class="kbd">Live Vehicles (click to target)</div>
+<div id="contestants" class="roster"></div>
+Manual target: <input id="tgt_name" size="12" placeholder="driver name"><button onclick="lockTyped()">Lock</button>
 </div>
 <div class="card">
 OBS WebSocket: <input id="obsurl" size="28" value="ws://127.0.0.1:4455">
@@ -108,7 +127,7 @@ Source: <select id="obssrc"></select> <button onclick="obsShot()">Preview</butto
 <img id="obsprev" style="max-width:320px;display:none;border:1px solid #444;margin-top:6px">
 </div>
 <div class="card"><pre id="out"></pre>
-<div class="kbd">A arm · S start · X stop · 1-9 trigger shot · N next cue · Z last-shot undo · R rehearsal toggle</div></div>
+<div class="kbd">A arm · S start · X stop · 1-9 trigger shot · Alt+1-9 target contestant · N next cue · Z last-shot undo · R rehearsal toggle</div></div>
 <script>
 const $=id=>document.getElementById(id);
 let tok=localStorage.getItem('rc_tok')||sessionStorage.getItem('racecam_tok')||'';$('tok').value=tok;
@@ -148,11 +167,134 @@ function enqueue(){
   $('qat').value='';
 }
 function undo(){shotHist.pop();const p=shotHist[shotHist.length-1];if(p)cmd('trigger',p);else cmd('stop')}
-function followTyped(){const n=$('pname_text').value.trim();if(n)cmd('select',n)}
+/* ---- Live leaderboard / 1-click contestant targeting ---- */
+let lastState=null,lastRosterSig=null,rosterNames=[];
+function escHtml(s){return String(s===undefined||s===null?'':s).replace(/&/g,'&amp;')
+  .replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function fmtBest(sec){
+  const v=Number(sec);
+  if(!isFinite(v)||v<=0)return '';
+  const m=Math.floor(v/60),r=v-m*60;
+  return m+':'+(r<10?'0':'')+r.toFixed(1);
+}
+function rcStatus(sd){
+  if(sd.in_countdown)return 'COUNTDOWN';
+  const st=Number(sd.state);
+  if(st===3)return 'FINISHED';
+  if(st===2)return 'RACING';
+  if(st===1)return 'COUNTDOWN';
+  return 'LOBBY';
+}
+function rcProgress(row,numLaps,wpCount){
+  if(row.finished)return 'FIN';
+  if(row.disqualified)return 'DQ';
+  const laps=Number(row.laps)||0,sec=Number(row.section)||0;
+  const lapPart=numLaps>0?('L'+laps+'/'+numLaps+' · '):'';
+  return lapPart+'G'+sec+(wpCount>0?('/'+wpCount):'');
+}
+function rcGap(row,p1){
+  if(!p1||row.disqualified||row.finished)return '';
+  if((Number(row.rank)||0)<=1)return '';
+  if((Number(row.laps)||0)!==(Number(p1.laps)||0))return '';
+  if((Number(row.section)||0)!==(Number(p1.section)||0))return '';
+  const d=(Number(row.last_sec_s)||0)-(Number(p1.last_sec_s)||0);
+  return d>0?('+'+d.toFixed(1)+'s'):'';
+}
+function rcPos(row){
+  if(row.disqualified)return {label:'DQ',cls:'dq'};
+  const rank=Number(row.rank)||0;
+  if(rank<=0)return {label:'—',cls:''};
+  return {label:'P'+rank,cls:rank===1?'p1':(rank===2?'p2':(rank===3?'p3':''))};
+}
+function onAirPill(on){return on?' <span class="onair-pill">● ON AIR</span>':''}
+/* Click-safe: only touch the DOM when the compact signature actually changes.
+   700 ms polls must never replace a button under the producer's cursor. */
+function renderContestants(state){
+  if(state)lastState=state;
+  const s=state||lastState||{};
+  const sd=s.standings;
+  const eventMode=!!sd&&Array.isArray(sd.standings)&&sd.standings.length>0;
+  const target=String(s.target_name||'');
+  let headerText,headerHtml,cls,html,sig;
+  if(eventMode){
+    const numLaps=Number(sd.num_laps)||0,wpCount=Number(sd.waypoint_count)||0;
+    const status=rcStatus(sd),evName=String(sd.event_name||'Live Event');
+    const statusCls=status==='COUNTDOWN'?'counting':(status==='RACING'?'racing':(status==='FINISHED'?'finished':''));
+    headerText=evName+' · '+(numLaps>0?('Laps: '+numLaps):'Point-to-Point')+' · '+status;
+    headerHtml=escHtml(evName)+' · '+(numLaps>0?('Laps: '+numLaps):'Point-to-Point')+
+      '<span class="status-pill '+statusCls+'">'+status+'</span>';
+    cls='roster';
+    const rows=sd.standings;
+    const p1=rows.find(r=>!r.disqualified&&Number(r.rank)===1)||rows[0];
+    let out='';
+    sig=['event',headerText];
+    rosterNames=[];
+    rows.forEach(row=>{
+      const name=String(row.name||''),onAir=name===target,pos=rcPos(row);
+      const bits=[],best=fmtBest(row.best_lap_s),gap=rcGap(row,p1);
+      if(best)bits.push(best);
+      if(gap)bits.push(gap);
+      const tele=rcProgress(row,numLaps,wpCount)+(bits.length?(' · '+bits.join(' · ')):'');
+      rosterNames.push(name);
+      sig.push([pos.label,name,row.laps,row.section,row.best_lap_s,row.last_sec_s,
+                !!row.finished,!!row.disqualified,onAir].join('|'));
+      out+='<button type="button" class="rc-driver'+(onAir?' onair':'')+'" data-rc-target="'+escHtml(name)+'">'+
+        '<span class="rc-pos '+pos.cls+'">'+pos.label+'</span>'+
+        '<span class="rc-name">'+escHtml(name)+onAirPill(onAir)+'</span>'+
+        '<span class="rc-tele">'+escHtml(tele)+'</span></button>';
+    });
+    html=out;
+  }else{
+    const targets=Array.isArray(s.targets)?s.targets:[];
+    headerText=targets.length?'Live Vehicles (click to target)':'No vehicles detected';
+    headerHtml=escHtml(headerText);
+    cls='roster standalone';
+    let out='';
+    sig=['standalone',headerText];
+    rosterNames=[];
+    targets.forEach(t=>{
+      const name=String(t||''),onAir=name===target;
+      rosterNames.push(name);
+      sig.push(name+'|'+onAir);
+      out+='<button type="button" class="rc-driver'+(onAir?' onair':'')+'" data-rc-target="'+escHtml(name)+'">'+
+        '<span class="rc-name">'+escHtml(name)+onAirPill(onAir)+'</span></button>';
+    });
+    html=out;
+  }
+  const fullSig=sig.join('~');
+  if(fullSig===lastRosterSig)return fullSig;
+  lastRosterSig=fullSig;
+  $('standings_hdr').innerHTML=headerHtml;
+  const el=$('contestants');el.className=cls;el.innerHTML=html;
+  return fullSig;
+}
+async function setTargetByName(name){
+  name=String(name===undefined||name===null?'':name).trim();
+  if(!name)return null;
+  const fl=$('follow_leader');
+  if(fl&&fl.checked){fl.checked=false;try{await postAutoFlags()}catch(e){}}
+  if(lastState){lastState.target_name=name;renderContestants(lastState)}
+  try{
+    const r=await fetch('/api/target',{method:'POST',
+      headers:Object.assign({'content-type':'application/json'},hdr()),
+      body:JSON.stringify({name:name})});
+    const j=await r.json();
+    $('out').textContent='TARGET '+name+' → '+JSON.stringify(j)+'\n'+$('out').textContent;
+    return j;
+  }catch(e){$('out').textContent='TARGET ERR '+e+'\n'+$('out').textContent;return null}
+}
+function lockTyped(){const n=$('tgt_name').value.trim();return n?setTargetByName(n):null}
 document.addEventListener('keydown',e=>{
   const t=(e.target&&e.target.tagName)||'';
   if(/INPUT|SELECT|TEXTAREA/.test(t))return;
   const k=e.key.toLowerCase();
+  // Alt+1..9 cut the target without stealing the 1..9 camera shot slots.
+  if(e.altKey&&!e.ctrlKey&&!e.metaKey&&e.key>='1'&&e.key<='9'){
+    const name=rosterNames[+k-1];
+    if(name){e.preventDefault();setTargetByName(name)}
+    return;
+  }
+  if(e.altKey)return;                        // any other Alt combo is not a camera slot
   if(k==='a')cmd('arm');
   else if(k==='s')cmd('start');
   else if(k==='x')cmd('stop');
@@ -189,12 +331,7 @@ async function poll(){
       s.shots.forEach((shot,i)=>{let o=document.createElement('option');o.value=shot;o.textContent=(i<9?(i+1)+'. ':'· ')+shot;$('sid').appendChild(o)});
       if([...$('sid').options].some(o=>o.value===keep))$('sid').value=keep;
     }
-    if(s.targets&&s.targets.length){
-      const keep=$('pname').value;
-      $('pname').innerHTML='';
-      s.targets.forEach(n=>{let o=document.createElement('option');o.value=n;o.textContent=n;$('pname').appendChild(o)});
-      if([...$('pname').options].some(o=>o.value===keep))$('pname').value=keep;
-    }
+    renderContestants(s);
   }catch(e){}
   if((++pollTick%30)===0)refreshInbox();   // inbox can change while the panel is open
   setTimeout(poll,700);
@@ -903,6 +1040,12 @@ function obsRememberChange(){
 /* ---- boot: hash token + autoload, live events, plans, OBS reconnect ---- */
 (function boot(){
   $('track_file').addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(f)readTrackFile(f)});
+  // One delegated handler survives every roster rebuild: a click on any driver
+  // button cuts the target immediately, even between 700 ms polls.
+  $('contestants').addEventListener('click',e=>{
+    const t=e&&e.target,btn=t&&t.closest&&t.closest('button[data-rc-target]');
+    if(btn)setTargetByName(btn.getAttribute('data-rc-target'));
+  });
   $('drop_zone').addEventListener('click',pickTrackFile);
   const card=$('track_loader_card');
   card.addEventListener('dragover',e=>{
@@ -968,7 +1111,9 @@ window.racecamPanel={cmd:cmd,trigger:trigger,enqueue:enqueue,undo:undo,toggleReh
   pinPosition:pinPosition,undoPin:undoPin,clearPins:clearPins,buildPins:buildPins,
   refreshPlans:refreshPlans,loadPlanFromServer:loadPlanFromServer,
   obsConnect:obsConnect,obsCheck:obsCheck,obsScenes:obsScenes,obsShot:obsShot,
-  sha256:sha256,sha256b64:sha256b64,routePlanner:window.routePlanner};
+  sha256:sha256,sha256b64:sha256b64,routePlanner:window.routePlanner,
+  renderContestants:renderContestants,setTargetByName:setTargetByName,lockTyped:lockTyped,
+  getRosterNames:()=>rosterNames.slice(),getRosterSig:()=>lastRosterSig};
 </script></body></html>]=]
 
 return M

@@ -38,7 +38,7 @@ UNIVERSAL = ["start_line", "fly_up", "auto_trackside", "heli_follow", "follow_fo
 # fabrication, and the test asserts BOTH directions against the real HTML.
 VALID_IDS = {
     "banner", "tok", "rehb", "prog", "prv", "shot", "fov", "plan", "cd", "hb", "run",
-    "queue", "qat", "sid", "pname", "pname_text",
+    "queue", "qat", "sid", "tgt_name", "standings_hdr", "contestants",
     "live_current", "live_load_btn", "live_refresh", "live_events", "auto_start",
     "follow_leader", "track_file", "drop_zone", "saved_plans", "plans_refresh",
     "plan_load", "track_info", "track_canvas",
@@ -66,6 +66,7 @@ function mkEl(id){
   o.click = () => {};
   o.getContext = () => null;                    // canvas not needed in Node
   Object.defineProperty(o, 'innerHTML', {
+    configurable: true,
     get(){ return o._html || ''; },
     set(v){ o._html = v; if (v === '') o.options.length = 0; }
   });
@@ -92,7 +93,7 @@ const fetchLog = [];
 globalThis.fetch = async (url, opts) => {
   fetchLog.push({url:url, opts:opts || {}});
   let j = {};
-  if (url === '/api/state') j = {degraded:false, target_lost:false, shots:['start_line','corner_01_pan'],
+  if (url === '/api/state') j = globalThis.__stateOverride || {degraded:false, target_lost:false, shots:['start_line','corner_01_pan'],
                                  targets:['Driver'], rehearsal:false, running:false};
   else if (url === '/api/live_events') j = globalThis.__noLiveEvents ? {events:[]} : {events:[{name:'Current Trial', is_member:true,
     waypoints:[{x:0,y:0,z:0,gate_m:18},{x:4000,y:0,z:0,gate_m:18},{x:8000,y:0,z:0,gate_m:18}]}]};
@@ -203,11 +204,12 @@ class PanelSourceTests(unittest.TestCase):
     def test_existing_broadcast_controls_preserved(self):
         for snippet in ["cmd('arm')", "cmd('start')", "cmd('stop')", "cmd('next')",
                         "cmd('queue_clear')", "cmd('queue'", "enqueue()", "undo()",
-                        "toggleRehearsal()", "trigger(sid.value)", "cmd('select',pname.value)",
-                        "followTyped()", "id=\"pname_text\"",
+                        "toggleRehearsal()", "trigger(sid.value)",
+                        "lockTyped()", "id=\"tgt_name\"", "id=\"standings_hdr\"",
+                        "id=\"contestants\"", "setTargetByName(name)",
                         "obsConnect()", "obsDisc()", "obsRec(true)", "obsRec(false)",
                         "obsScenes()", "obsSetScene()", "obsShot()", "id=\"qat\"",
-                        "A arm · S start · X stop · 1-9 trigger shot · N next cue · Z last-shot undo · R rehearsal toggle"]:
+                        "A arm · S start · X stop · 1-9 trigger shot · Alt+1-9 target contestant"]:
             with self.subTest(snippet=snippet):
                 self.assertIn(snippet, self.html)
         for snippet in ["setTimeout(poll,700)", "'x-racecam-token'", "DEGRADED", "TARGET LOST",
@@ -660,6 +662,210 @@ class UniversalInputTests(unittest.TestCase):
         self.assertTrue(result["routeOk"])
         self.assertEqual(result["after"], result["before"],
                          "buildPins must not post with fewer than 3 pins")
+
+
+class LiveLeaderboardTests(unittest.TestCase):
+    """Task 2: 1-click contestant deck, Alt+1..9 hotkeys, click-safe DOM diff."""
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        m = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S)
+        assert m, "no <script> block in panel_ui.lua"
+        cls.js = m.group(1)
+
+    @staticmethod
+    def event_state():
+        return {
+            "standings": {
+                "event_name": "Aewol Sprint", "state": 2, "in_countdown": False,
+                "num_laps": 5, "waypoint_count": 12,
+                "standings": [
+                    {"rank": 1, "name": "Alice", "laps": 2, "section": 7,
+                     "best_lap_s": 84.3, "last_sec_s": 120.0,
+                     "finished": False, "disqualified": False},
+                    {"rank": 2, "name": "Bob", "laps": 2, "section": 7,
+                     "best_lap_s": 88.0, "last_sec_s": 121.4,
+                     "finished": False, "disqualified": False},
+                    {"rank": 3, "name": "Cara", "laps": 5, "section": 12,
+                     "best_lap_s": 82.0, "last_sec_s": 600.0,
+                     "finished": True, "disqualified": False},
+                    {"rank": 0, "name": "Dex", "laps": 0, "section": 0,
+                     "best_lap_s": 0, "last_sec_s": 0,
+                     "finished": False, "disqualified": True},
+                ],
+            },
+            "target_name": "Alice",
+            "targets": ["Alice", "Bob", "Cara", "Dex"],
+        }
+
+    def test_dropdown_replaced_by_button_deck(self):
+        for gone in ['<select id="tgt"', '<select id="pname"', 'id="pname_text"',
+                     "cmd('select',pname.value)", "followTyped()"]:
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, self.lua)
+        for want in ['<div id="standings_hdr" class="kbd">',
+                     '<div id="contestants" class="roster">',
+                     '<input id="tgt_name"', 'onclick="lockTyped()"',
+                     'data-rc-target', "Alt+1-9 target contestant", "/api/target",
+                     "renderContestants", "lastRosterSig"]:
+            with self.subTest(want=want):
+                self.assertIn(want, self.lua)
+
+    def test_event_mode_rankings_gaps_highlight_and_click(self):
+        state = self.event_state()
+        result = parse_result(run_node(self.js, r"""
+          (new Function(PANEL_JS))();
+          const p = globalThis.racecamPanel;
+          p.renderContestants(EVENT);
+          document.getElementById('follow_leader').checked = true;
+          const el = document.getElementById('contestants');
+          const html = el.innerHTML, hdr = document.getElementById('standings_hdr').innerHTML;
+          el._ev.click({target:{closest:()=>({getAttribute:()=> 'Bob'})}});
+          await sleep(20);
+          console.log(JSON.stringify({
+            hdr: hdr, html: html, names: p.getRosterNames(),
+            targets: fetchLog.filter(x=>x.url==='/api/target').map(x=>JSON.parse(x.opts.body)),
+            autoFlags: fetchLog.filter(x=>x.url==='/api/auto_flags').map(x=>JSON.parse(x.opts.body)),
+            followChecked: document.getElementById('follow_leader').checked
+          }));
+        """, extra=("globalThis.__stateOverride = " + json.dumps(state) + ";\n"
+                    "const EVENT = " + json.dumps(state) + ";")))
+        html = result["html"]
+        self.assertEqual(result["names"], ["Alice", "Bob", "Cara", "Dex"])
+        self.assertEqual(html.count("<button"), 4)
+        self.assertNotIn("<select", html)
+        # Rank badges: gold / silver / bronze ordering, DQ muted.
+        self.assertIn('<span class="rc-pos p1">P1</span>', html)
+        self.assertIn('<span class="rc-pos p2">P2</span>', html)
+        self.assertIn('<span class="rc-pos dq">DQ</span>', html)
+        # Header: event, lap count, live status pill.
+        self.assertIn("Aewol Sprint · Laps: 5", result["hdr"])
+        self.assertIn(">RACING</span>", result["hdr"])
+        # Telemetry: lap/gate, m:ss.t best lap, same-lap/gate +delta gap, FIN / DQ.
+        self.assertIn("L2/5 · G7/12 · 1:24.3", html)
+        self.assertIn("L2/5 · G7/12 · 1:28.0 · +1.4s", html)
+        self.assertIn("FIN · 1:22.0", html)
+        self.assertIn('<span class="rc-tele">DQ</span>', html)
+        # Active target: bright green border + ON AIR pill, exactly once.
+        self.assertIn('class="rc-driver onair" data-rc-target="Alice"', html)
+        self.assertEqual(html.count("● ON AIR"), 1)
+        # Click cuts the target via POST /api/target and hands off follow_leader.
+        self.assertIn({"name": "Bob"}, result["targets"])
+        self.assertFalse(result["followChecked"])
+        self.assertTrue(any(f.get("follow_leader") is False
+                            for f in result["autoFlags"]))
+
+    def test_event_best_lap_formats_minutes_and_seconds(self):
+        state = self.event_state()
+        state["standings"]["standings"][0]["best_lap_s"] = 64.3
+        result = parse_result(run_node(self.js, r"""
+          (new Function(PANEL_JS))();
+          globalThis.racecamPanel.renderContestants(EVENT);
+          console.log(JSON.stringify({html:document.getElementById('contestants').innerHTML}));
+        """, extra="const EVENT = " + json.dumps(state) + ";"))
+        self.assertIn("L2/5 · G7/12 · 1:04.3", result["html"])
+
+    def test_point_to_point_omits_lap_progress(self):
+        state = self.event_state()
+        state["standings"]["num_laps"] = 0
+        state["standings"]["in_countdown"] = True
+        result = parse_result(run_node(self.js, r"""
+          (new Function(PANEL_JS))();
+          globalThis.racecamPanel.renderContestants(EVENT);
+          console.log(JSON.stringify({hdr:document.getElementById('standings_hdr').innerHTML,
+                                      html:document.getElementById('contestants').innerHTML}));
+        """, extra="const EVENT = " + json.dumps(state) + ";"))
+        self.assertIn("Point-to-Point", result["hdr"])
+        self.assertIn(">COUNTDOWN</span>", result["hdr"])
+        self.assertIn('<span class="rc-tele">G7/12 · 1:24.3</span>', result["html"])
+
+    def test_standalone_mode_renders_one_click_vehicle_buttons(self):
+        state = {"standings": None, "targets": ["Zoe", "Yan"], "target_name": "Yan"}
+        result = parse_result(run_node(self.js, r"""
+          (new Function(PANEL_JS))();
+          const p = globalThis.racecamPanel;
+          p.renderContestants(EVENT);
+          const el = document.getElementById('contestants');
+          const withVehicles = {hdr:document.getElementById('standings_hdr').innerHTML,
+            cls:el.className, html:el.innerHTML, names:p.getRosterNames()};
+          p.renderContestants({standings:null, targets:[], target_name:''});
+          const empty = {hdr:document.getElementById('standings_hdr').innerHTML,
+            html:document.getElementById('contestants').innerHTML};
+          console.log(JSON.stringify({withVehicles:withVehicles, empty:empty}));
+        """, extra="const EVENT = " + json.dumps(state) + ";")) 
+        deck = result["withVehicles"]
+        self.assertEqual(deck["hdr"], "Live Vehicles (click to target)")
+        self.assertEqual(deck["cls"], "roster standalone")
+        self.assertEqual(deck["names"], ["Zoe", "Yan"])
+        self.assertEqual(deck["html"].count("<button"), 2)
+        self.assertNotIn("<select", deck["html"])
+        self.assertIn('class="rc-driver onair" data-rc-target="Yan"', deck["html"])
+        self.assertEqual(deck["html"].count("● ON AIR"), 1)
+        self.assertEqual(result["empty"]["hdr"], "No vehicles detected")
+        self.assertEqual(result["empty"]["html"], "")
+
+    def test_alt_hotkeys_target_without_firing_camera_slots(self):
+        state = self.event_state()
+        result = parse_result(run_node(self.js, r"""
+          (new Function(PANEL_JS))();
+          await sleep(20);   // let boot's initial poll settle
+          const sid = document.getElementById('sid');
+          sid.options.push({value:'start_line'},{value:'corner_01_pan'});
+          let prevented = 0;
+          const fire = (key, alt) => keyHandler({key:key, altKey:alt, ctrlKey:false,
+            metaKey:false, target:{tagName:'DIV'}, preventDefault(){prevented++}});
+          fire('1', true); fire('2', true);
+          await sleep(20);
+          const targets = fetchLog.filter(x=>x.url==='/api/target').map(x=>JSON.parse(x.opts.body));
+          const cameraAfterAlt = fetchLog.filter(x=>x.url==='/api/command')
+            .map(x=>JSON.parse(x.opts.body));
+          fire('1', false);   // plain 1 must still fire the camera slot
+          await sleep(20);
+          const cameraAfterPlain = fetchLog.filter(x=>x.url==='/api/command')
+            .map(x=>JSON.parse(x.opts.body));
+          console.log(JSON.stringify({names:globalThis.racecamPanel.getRosterNames(),
+            targets:targets, prevented:prevented, cameraAfterAlt:cameraAfterAlt,
+            cameraAfterPlain:cameraAfterPlain}));
+        """, extra=("let keyHandler=null;\n"
+                    "document.addEventListener=(ev,fn)=>{if(ev==='keydown')keyHandler=fn};\n"
+                    "globalThis.__stateOverride = " + json.dumps(state) + ";\n")))
+        self.assertEqual(result["names"], ["Alice", "Bob", "Cara", "Dex"])
+        self.assertEqual(result["targets"], [{"name": "Alice"}, {"name": "Bob"}])
+        self.assertEqual(result["prevented"], 2)
+        self.assertEqual(result["cameraAfterAlt"], [],
+                         "Alt+1/Alt+2 must not trigger 1/2 camera shots")
+        self.assertIn({"cmd": "trigger", "args": "start_line"}, result["cameraAfterPlain"])
+
+    def test_identical_state_does_not_rebuild_dom(self):
+        state = self.event_state()
+        result = parse_result(run_node(self.js, r"""
+          (new Function(PANEL_JS))();
+          await sleep(20);   // initial standalone poll
+          const c=document.getElementById('contestants'), h=document.getElementById('standings_hdr');
+          let cWrites=0,hWrites=0;
+          Object.defineProperty(c,'innerHTML',{get(){return c._html||''},
+            set(v){c._html=v;cWrites++;if(v==='')c.options.length=0}});
+          Object.defineProperty(h,'innerHTML',{get(){return h._html||''},
+            set(v){h._html=v;hWrites++}});
+          const p=globalThis.racecamPanel;
+          p.renderContestants(EVENT);
+          const sig1=p.getRosterSig(), w1=[cWrites,hWrites];
+          p.renderContestants(EVENT_COPY);            // identical values, new object
+          const sig2=p.getRosterSig(), w2=[cWrites,hWrites];
+          const CHANGED=JSON.parse(JSON.stringify(EVENT));
+          CHANGED.standings.standings[1].laps=3;
+          p.renderContestants(CHANGED);
+          const w3=[cWrites,hWrites];
+          console.log(JSON.stringify({sig1:sig1,sig2:sig2,w1:w1,w2:w2,w3:w3}));
+        """, extra=("globalThis.__stateOverride = {standings:null, targets:['Driver'], target_name:''};\n"
+                    "const EVENT = " + json.dumps(state) + ";\n"
+                    "const EVENT_COPY = JSON.parse(JSON.stringify(EVENT));\n")))
+        self.assertEqual(result["sig1"], result["sig2"])
+        self.assertEqual(result["w1"], [1, 1])
+        self.assertEqual(result["w2"], [1, 1],
+                         "identical state must not rebuild the contestant DOM")
+        self.assertEqual(result["w3"], [2, 2],
+                         "a changed row must rebuild exactly once")
 
 
 if __name__ == "__main__":

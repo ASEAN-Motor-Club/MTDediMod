@@ -365,6 +365,14 @@ function M.panic_stop()
     return pcall(function() return Core.stop() end) == true
 end
 
+--- Stop Follow Race Leader after the producer manually selects a driver.
+--- No-op when follow mode is already off.
+function M.disengage_follow_leader()
+    if not M.follow_leader then return end
+    M.follow_leader = false
+    automation.last_leader = nil
+end
+
 --- Opt-in live-event automation flags.
 function M.set_auto_flags(opts)
     if type(opts) == "table" then

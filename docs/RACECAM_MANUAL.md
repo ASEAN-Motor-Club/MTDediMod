@@ -45,7 +45,7 @@ Double-click **`Install-AMCAdminMod.bat`** inside the Admin Mod zip. The install
 
 ### The 4 Track-Loading Paths (Priority Order)
 
-1. **Live In-Game Event (1 click)** — With an event running, use **Load Current Event & Open Panel**. RaceCam reads the live route straight from `Net_EventSystem.Net_Events`, so it works for both `/setup_event` races **and** native Motor Town events. Optional **Auto-Start on Green Light** and **Follow Race Leader** checkboxes keep the camera on the action with no manual cueing.
+1. **Live In-Game Event (1 click)** — With an event running, use **Load Current Event & Open Panel**. RaceCam reads the live route straight from `Net_EventSystem.Net_Events`, so it works for both `/setup_event` races **and** native Motor Town events. Optional **Auto-Start on Green Light** and **Follow Race Leader** checkboxes keep the camera on the action with no manual cueing. The panel's **Live Standings / Contestants** deck turns every driver into a 1-click target with live rank, lap/gate and gap (see §8).
 2. **Non-`/setup_event` Event / Route / Plan File** — No live event? Load a file instead:
    - drag-and-drop any `.json` straight onto the browser panel;
    - paste JSON copied from Discord (including `` ```json `` fenced blocks) into the **Paste JSON** box; or
@@ -230,6 +230,7 @@ Focus must be outside text inputs for single-key hotkeys to fire.
 | `A` | Arm | Restart the camera loop (`Core.restart()`) after stop / fail-safe |
 | `S` | Start Race | Sends the `start` signal (`t = 0`), triggers `2. fly_up`, starts timed cues |
 | `1`–`9` | Cut to shot | Universal shot slots 1 through 9 |
+| `Alt+1`–`Alt+9` | Target contestant | 1-click cut to the 1st–9th driver in the **Live Leaderboard** (event mode) or live-vehicle list (standalone), keeping the current camera angle. Never fires shot slots 1–9 |
 | `Q` | Queue Cue | Adds the selected dropdown shot to the queue (optional `t+N` delay in the **At t+** box) |
 | `N` | Next Cue | Fires the head of the cue queue immediately |
 | `Z` | Clear Queue | Empties all pending queued cues |
@@ -238,11 +239,42 @@ Focus must be outside text inputs for single-key hotkeys to fire.
 
 ---
 
-## 8. Contestant Targeting
+## 8. Contestant Targeting — Live Leaderboard Button Deck
 
-- Use the **Target** dropdown (populated from live pawns in the session) or type a player name and click **Select**.
-- Targeting matches by **player name first**, falling back to numeric pawn index only if no player has that name.
-- If the followed player disconnects or respawns, RaceCam **holds the last camera pose**, displays a red **`TARGET LOST`** banner, and retries name lookup every `0.5 s` until they return (or you switch targets/shots).
+The contestant dropdown is **gone**. The **Live Standings / Contestants** card is now a 1-click button deck that refreshes from `/api/state` every `700 ms`. There is no contestant `<select>` in either mode.
+
+### Event Mode (an in-game event is active)
+
+The header shows `<event name> · Laps: N` (or `Point-to-Point` when the event's `NumLaps` is `0`) plus a live status pill: `LOBBY`, `COUNTDOWN`, `RACING`, or `FINISHED`. Every contestant gets a full-width button sorted by live race position:
+
+- **Position badge** — `P1` (gold), `P2` (silver), `P3` (bronze), `P4…`, or `DQ` (muted red).
+- **Driver name** — bold and left-aligned.
+- **Live telemetry** — compact monospace, right-aligned:
+  - Progress: `FIN` / `DQ`, otherwise `L2/5 · G7/12` (the lap segment is omitted for point-to-point events).
+  - Timing: best lap as `m:ss.t` when one is set, plus a live gap `+1.4s` when the driver is on the same lap and gate as P1 and trailing on cumulative section time.
+- **Active target** — bright green border and a `● ON AIR` pill.
+
+Click a driver button to cut the camera to them immediately (`POST /api/target`); the current camera angle is preserved.
+
+### Standalone / Non-Event Mode
+
+With no active event (or an empty standings list), the header reads **Live Vehicles (click to target)** — or **No vehicles detected** — and the same card becomes a responsive 2-column grid of 1-click buttons built from the live server player list. The active target keeps the green border and `● ON AIR` pill.
+
+### Manual Off-List Fallback
+
+To target a name not in the current list, type it into the compact **Manual target** input below the deck and click **Lock**. It uses the same `POST /api/target` path.
+
+### Follow Leader Handoff
+
+When **Follow Race Leader** is ticked and you click a specific driver (or press `Alt+1`–`Alt+9`), the checkbox is automatically unticked and the change is posted to `/api/auto_flags`. That hands control cleanly back to the producer so auto-follow cannot yank the camera away after a manual cut. Re-tick **Follow Race Leader** to re-engage it.
+
+### Click-Safe Refresh
+
+The roster DOM is rebuilt only when its signature changes — mode, header, and each row's `rank|name|laps|section|best|last|fin|dq|onAir`. Routine 700 ms polls therefore never replace a button under the producer's cursor mid-click.
+
+### Target Loss
+
+Targeting matches by **player name first**, falling back to numeric pawn index only if no player has that name. If the followed player disconnects or respawns, RaceCam **holds the last camera pose**, displays a red **`TARGET LOST`** banner, and retries name lookup every `0.5 s` until they return (or you switch targets/shots).
 
 ---
 

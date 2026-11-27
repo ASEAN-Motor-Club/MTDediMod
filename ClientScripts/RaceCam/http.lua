@@ -213,6 +213,31 @@ local function speclist(t)
   return "[" .. table.concat(q, ",") .. "]"
 end
 
+--- Compact JSON for one active leaderboard (never includes waypoints[]).
+local function standings_json(s)
+  if not s then return "null" end
+  local parts = {}
+  parts[#parts + 1] = '"event_name":"' .. jstr(s.event_name) .. '"'
+  parts[#parts + 1] = '"event_guid":"' .. jstr(s.event_guid) .. '"'
+  parts[#parts + 1] = '"state":' .. tostring(tonumber(s.state) or 0)
+  parts[#parts + 1] = '"in_countdown":' .. tostring(s.in_countdown and true or false)
+  parts[#parts + 1] = '"num_laps":' .. tostring(tonumber(s.num_laps) or 0)
+  parts[#parts + 1] = '"waypoint_count":' .. tostring(tonumber(s.waypoint_count) or 0)
+  local rows = {}
+  for _, r in ipairs(s.standings or {}) do
+    rows[#rows + 1] = '{"rank":' .. tostring(tonumber(r.rank) or 0) ..
+      ',"name":"' .. jstr(r.name) .. '"' ..
+      ',"laps":' .. tostring(tonumber(r.laps) or 0) ..
+      ',"section":' .. tostring(tonumber(r.section) or 0) ..
+      ',"best_lap_s":' .. tostring(tonumber(r.best_lap_s) or 0) ..
+      ',"last_sec_s":' .. tostring(tonumber(r.last_sec_s) or 0) ..
+      ',"finished":' .. tostring(r.finished and true or false) ..
+      ',"disqualified":' .. tostring(r.disqualified and true or false) .. '}'
+  end
+  parts[#parts + 1] = '"standings":[' .. table.concat(rows, ",") .. ']'
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
 local function state_json()
   local e = _G.RACECAM_SHOTS
   local st = engine_status()
@@ -225,6 +250,12 @@ local function state_json()
   parts[#parts + 1] = '"fov":' .. tostring(tonumber(fov) or 0)
   local plan_id = (e and e.plan and e.plan.source and e.plan.source.plan_id) or (e and e.plan and e.plan.name) or "unknown"
   parts[#parts + 1] = '"plan":"' .. jstr(tostring(plan_id)) .. '"'
+  local tname = (e and e.target_name) or (st and st.target_name) or nil
+  if tname and tname ~= "" then
+    parts[#parts + 1] = '"target_name":"' .. jstr(tostring(tname)) .. '"'
+  else
+    parts[#parts + 1] = '"target_name":null'
+  end
   if st and st.target_lost ~= nil then parts[#parts + 1] = '"target_lost":' .. tostring(st.target_lost) end
   if st and st.target_lost_for then parts[#parts + 1] = '"target_lost_for":' .. string.format("%.1f", st.target_lost_for) end
   parts[#parts + 1] = '"result":"' .. jstr(last_result) .. '"'
@@ -243,6 +274,9 @@ local function state_json()
   local ok_ev, ev = pcall(function() return LiveEvents.current_event() end)
   parts[#parts + 1] = '"active_event":' ..
     ((ok_ev and ev and ev.name and ev.name ~= "") and ('"' .. jstr(ev.name) .. '"') or "null")
+  -- Live leaderboard: cached 500 ms in live_events.lua, no waypoints copied.
+  local ok_s, active_standings = pcall(function() return LiveEvents.active_standings() end)
+  parts[#parts + 1] = '"standings":' .. (ok_s and standings_json(active_standings) or "null")
   local targets = {}
   if e and type(e.list_targets) == "function" then
     local ok, found = pcall(function() return e:list_targets() end)
@@ -579,6 +613,33 @@ local function make_response(req)
     log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
     audit("command", cmd, last_result)
     code, body = 200, '{"status":"' .. jstr(last_result) .. '"}'
+  elseif req.method == "POST" and req.path == "/api/target" then
+    authed = true
+    touch()
+    -- Manual "follow this driver" click. json_field keeps this working even
+    -- when JsonParser is unavailable on the client.
+    local name = json_field(req.body, "name") or json_field(req.body, "target")
+    if type(name) ~= "string" or name == "" then
+      code, body = 400, '{"error":"invalid target"}'
+    else
+      local e = _G.RACECAM_SHOTS
+      local ok, selok, msg = false, nil, nil
+      if e and type(e.set_target_by_name) == "function" then
+        ok, selok, msg = pcall(function() return e:set_target_by_name(name) end)
+      end
+      if ok and selok then
+        code, body = 200, '{"ok":true,"target":"' .. jstr(name) .. '"}'
+        -- The producer chose a driver explicitly; automation must not yank
+        -- the camera back to the leader on the next tick.
+        local init = get_init()
+        if init and type(init.disengage_follow_leader) == "function" then
+          pcall(function() init.disengage_follow_leader() end)
+        end
+        audit("target", name, "manual target; follow_leader disengaged")
+      else
+        code, body = 400, '{"error":"' .. jstr(tostring(ok and msg or selok)) .. '"}'
+      end
+    end
   end
   local reasons = {
     [200] = "OK", [400] = "Bad Request", [404] = "Not Found",
