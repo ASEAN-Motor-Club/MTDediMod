@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc12] - 2026-11-27
+
+#### Fixed
+- Backported the UE4SS delayed-action re-entrancy fix (#88): a game-thread Lua callback that registered another delayed action could invalidate `std::erase_if` iterators in `process_delayed_actions`, causing an `EXCEPTION_ACCESS_VIOLATION` that wedged `UEngine::Tick` and made all Lua HTTP routes return 504.
+
 ### [server/v0.44.0-rc11] - 2026-11-27
 
 #### Fixed
