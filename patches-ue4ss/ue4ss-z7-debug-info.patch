@@ -1,0 +1,18 @@
+diff --git a/cmake/modules/CompilerOptions/msvc-compatible.cmake b/cmake/modules/CompilerOptions/msvc-compatible.cmake
+--- a/cmake/modules/CompilerOptions/msvc-compatible.cmake
++++ b/cmake/modules/CompilerOptions/msvc-compatible.cmake
+@@ -33,3 +33,5 @@
+-set(Shipping_FLAGS "/Zi" PARENT_SCOPE)  # Add debug symbols to release
+-
++# /Z7 embeds CodeView info in each .obj, keeping the TU cacheable by sccache;
++# lld-link /DEBUG:FULL still folds it into the same PDB for crash analysis.
++set(Shipping_FLAGS "/Z7" PARENT_SCOPE)  # Add cacheable debug symbols to release
++
+ # Configuration-specific linker flags
+diff --git a/cmake/modules/ProjectConfig.cmake b/cmake/modules/ProjectConfig.cmake
+--- a/cmake/modules/ProjectConfig.cmake
++++ b/cmake/modules/ProjectConfig.cmake
+@@ -151,2 +151,2 @@
+-    # Append to existing Shipping_FLAGS if already set (preserves /Zi from msvc-compatible.cmake)
++    # Append to existing Shipping_FLAGS if already set (preserves /Z7 from msvc-compatible.cmake)
+     if(DEFINED Shipping_FLAGS)

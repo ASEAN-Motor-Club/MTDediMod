@@ -83,6 +83,7 @@
 
           patches = [
             ./patches-ue4ss/ue4ss-cross-compile.patch
+            ./patches-ue4ss/ue4ss-z7-debug-info.patch
             ./patches-ue4ss/lua-lgc-weak-table-metatable-fix.patch
             ./patches-ue4ss/ue4ss-skip-delegate-properties-in-struct-conversion.patch
             # Backport of upstream PR #1201 (272ce2f8): pending queues +
@@ -102,11 +103,36 @@
           '';
         };
 
+        # Resolve the sccache binary from the environment. Do NOT add nixpkgs'
+        # sccache to runtimeInputs: it would shadow mozilla-actions/sccache-action's
+        # binary (which carries the Actions Cache v2 credentials). The action
+        # exports SCCACHE_PATH as an absolute path and SCCACHE_GHA_ENABLED is
+        # set in the workflow env. USE_SCCACHE=0 opts out.
+        sccacheEnv = ''
+          SCCACHE_BIN="''${SCCACHE_BIN:-}"
+          if [ -z "$SCCACHE_BIN" ] && [ "''${USE_SCCACHE:-1}" != "0" ]; then
+            SCCACHE_BIN="''${SCCACHE_PATH:-}"
+          fi
+          if [ -z "$SCCACHE_BIN" ] && [ "''${USE_SCCACHE:-1}" != "0" ]; then
+            SCCACHE_BIN="$(command -v sccache 2>/dev/null || true)"
+          fi
+          if [ -n "$SCCACHE_BIN" ] && [ "''${USE_SCCACHE:-1}" != "0" ]; then
+            export SCCACHE_BIN
+            # Corrosion's cargo build of patternsleuth and the egui overlay
+            # both go through rustc; sccache is a drop-in RUSTC_WRAPPER.
+            export RUSTC_WRAPPER="$SCCACHE_BIN"
+            echo "sccache enabled: $SCCACHE_BIN (GHA: ''${SCCACHE_GHA_ENABLED:-false})"
+          else
+            echo "sccache disabled (USE_SCCACHE=''${USE_SCCACHE:-auto})"
+          fi
+        '';
+
         # Environment variables for cross-compilation
         crossCompileEnv = ''
           export CLANG_UNWRAPPED_BIN="${pkgs.llvmPackages.clang-unwrapped}/bin/clang"
           export CLANG_CL_UNWRAPPED_BIN="${pkgs.llvmPackages.clang-unwrapped}/bin/clang-cl"
           export UE4SS_SOURCE_DIR="${patchedUE4SS}"
+          ${sccacheEnv}
         '';
 
         # === Mod-specific configuration ===
@@ -150,6 +176,9 @@
                           # Create CMakeLists.txt wrapper
                           cat > CMakeLists.txt <<EOF
             cmake_minimum_required(VERSION 3.22)
+            if(POLICY CMP0141)
+                cmake_policy(SET CMP0141 NEW)
+            endif()
             project(UE4SSWrapper)
             if(NOT UE4SS_SOURCE_DIR)
                 set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
@@ -392,6 +421,9 @@
                           # Create CMakeLists.txt wrapper (same as server — mod DLL will be built but not packaged)
                           cat > CMakeLists.txt <<EOF
             cmake_minimum_required(VERSION 3.22)
+            if(POLICY CMP0141)
+                cmake_policy(SET CMP0141 NEW)
+            endif()
             project(UE4SSWrapper)
             if(NOT UE4SS_SOURCE_DIR)
                 set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
@@ -444,6 +476,7 @@
           runtimeInputs = crossCompileBuildInputs;
           text = ''
             set -e
+            ${sccacheEnv}
             VARIANT="''${1:-admin}"
             case "$VARIANT" in
               admin)  FEATURES=""; TARGET_DIR="overlay/target" ;;
