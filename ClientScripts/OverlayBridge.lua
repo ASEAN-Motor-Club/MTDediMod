@@ -12,6 +12,11 @@
 
 local json = require("JsonParser")
 
+-- RaceCam ships only with the Admin build. A missing (or broken) module must
+-- not stop the bridge: player builds and disabled RaceCam stay camera-free.
+local ok_rc, RaceCam = pcall(require, "RaceCam/init")
+if not ok_rc or type(RaceCam) ~= "table" then RaceCam = nil end
+
 local SHORTCUTS ---@type table filled in by Init()
 
 -- ── Config ────────────────────────────────────────────────────────────────
@@ -58,6 +63,25 @@ local TRIGGERS = {
     despawn = function() SHORTCUTS.DespawnAimed() end,
     door = function() SHORTCUTS.DoorToggle() end,
     engine = function() SHORTCUTS.EngineAimed() end,
+    racecam_open = function()
+        if not RaceCam then return end
+        local ok, url = pcall(RaceCam.panel_url, false)
+        if ok and type(url) == "string" then
+            -- The URL carries #token=: never log it, hand it straight to the DLL.
+            table.insert(pendingEvents, { kind = "open_url", url = url })
+        end
+    end,
+    racecam_load_event = function()
+        if not RaceCam then return end
+        local ok, url = pcall(RaceCam.panel_url, true)
+        if ok and type(url) == "string" then
+            table.insert(pendingEvents, { kind = "open_url", url = url })
+        end
+    end,
+    racecam_stop = function()
+        if not RaceCam then return end
+        pcall(RaceCam.panic_stop)
+    end,
 }
 
 ---Send a chat line as the local player (/tp and emotes are chat commands).
@@ -117,6 +141,12 @@ local function BuildRequest()
         origin = SHORTCUTS.GetImpulseOriginMode(),
         right_click = SHORTCUTS.GetRightClickAction(),
     }
+    if RaceCam then
+        local okStatus, status = pcall(RaceCam.status)
+        if okStatus and type(status) == "table" then
+            state.racecam = status
+        end
+    end
     if overlayVisible and pollCounter % MASS_EVERY_N_POLLS == 0 then
         local okMass, mass = pcall(SHORTCUTS.GetAimedMassKg)
         state.aimed_mass_kg = okMass and mass or 0

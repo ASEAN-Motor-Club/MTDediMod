@@ -658,6 +658,13 @@
                               'See docs/RACECAM_MANUAL.md for full installation and operator instructions.' \
                               > "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam/README.txt"
                           fi
+                          # The 1-click installer is admin tooling: ship it in
+                          # the admin zip root only, never in the player zip.
+                          if [ "$VARIANT" = "admin" ]; then
+                            cp "${./tools/Install-AMCAdminMod.ps1}" "$PACKAGE_DIR/"
+                            cp "${./tools/Install-AMCAdminMod.bat}" "$PACKAGE_DIR/"
+                            echo "✓ Bundled 1-click admin installer"
+                          fi
                           # Player sources are build inputs, never shipped as a subtree.
                           rm -rf "$SCRIPTS_OUT/variants"
 

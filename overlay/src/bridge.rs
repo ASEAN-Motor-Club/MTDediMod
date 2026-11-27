@@ -31,6 +31,75 @@ use crate::log;
 const PIPE_UP: &str = r"\\.\pipe\mt_overlay_up";
 const PIPE_DOWN: &str = r"\\.\pipe\mt_overlay_down";
 
+/// Admin-only RaceCam snapshot. Never sent by player builds or by an older
+/// Lua mod, which is why GameState's field defaults to `None`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct RaceCamStatus {
+    pub armed: bool,
+    pub plan_id: String,
+    pub current_event: Option<String>,
+    pub port: u16,
+}
+
+/// Lua sends plain strings for the existing toggles, and a small object for
+/// URL launches. `#[serde(untagged)]` keeps both shapes in one array; the
+/// object variant defaults its fields so an unknown/malformed event cannot
+/// break the whole bridge request.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Event {
+    Named(String),
+    Detail {
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        url: String,
+    },
+}
+
+// `ShellExecuteW` lives in shell32, which is not behind a feature of any
+// Win32 crate currently in Cargo.toml. Declaring it here keeps the launcher
+// self-contained and avoids an extra dependency feature just for one call.
+#[link(name = "shell32")]
+extern "system" {
+    fn ShellExecuteW(
+        hwnd: HANDLE,
+        operation: *const u16,
+        file: *const u16,
+        parameters: *const u16,
+        directory: *const u16,
+        show_cmd: i32,
+    ) -> HANDLE;
+}
+
+/// Open a loopback URL in the default Windows browser. The URL carries a
+/// `#token=` fragment: it must never be written to the log, and must never
+/// escape to a remote host. `ShellExecuteW` is used deliberately — no
+/// `cmd /c start`, so no shell parsing of an attacker-influenced string.
+fn open_url(url: &str) {
+    if !url.starts_with("http://127.0.0.1:") || url.contains('\0') {
+        log::warn("bridge: refused open_url (not a loopback URL)");
+        return;
+    }
+    let file: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
+    let open: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+    // 1 == SW_SHOWNORMAL. > 32 means the shell accepted the request.
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            open.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if result as isize <= 32 {
+        log::warn("bridge: ShellExecuteW failed for open_url");
+    }
+}
+
 /// Snapshot of the Lua-side settings, pushed up on every poll.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -50,6 +119,11 @@ pub struct GameState {
     /// `None` when Lua skipped the aim trace this poll (it traces every ~500 ms).
     #[cfg(feature = "admin")]
     pub aimed_mass_kg: Option<f64>,
+    /// `None` on player builds, when RaceCam is not loaded, or when an older
+    /// Lua mod predates the field.
+    #[cfg(feature = "admin")]
+    #[serde(default)]
+    pub racecam: Option<RaceCamStatus>,
 }
 
 /// One change for Lua to apply through the Shortcuts API.
@@ -69,6 +143,8 @@ pub enum Command {
     #[cfg(feature = "admin")]
     SetRightClick(String),
     /// "despawn" | "impulse" | "door" | "engine" — runs on the aimed actor.
+    /// Admin overlay also sends "racecam_open", "racecam_load_event" and
+    /// "racecam_stop" through this same string channel.
     #[cfg(feature = "admin")]
     Trigger(String),
     /// Teleport point name; Lua sends `/tp <name>` through chat.
@@ -81,7 +157,7 @@ pub enum Command {
 struct Request {
     state: Option<GameState>,
     #[serde(default)]
-    events: Vec<String>,
+    events: Vec<Event>,
     /// TeleportManager's point names, sent once per connection.
     teleport_points: Option<Vec<String>>,
 }
@@ -115,6 +191,8 @@ pub static SHARED: Mutex<Shared> = Mutex::new(Shared {
         right_click: String::new(),
         #[cfg(feature = "admin")]
         aimed_mass_kg: None,
+        #[cfg(feature = "admin")]
+        racecam: None,
     },
     connected: false,
     pending: Vec::new(),
@@ -202,11 +280,21 @@ fn serve_one_client() -> std::io::Result<()> {
         let commands = match serde_json::from_str::<Request>(line.trim()) {
             Ok(req) => {
                 for ev in &req.events {
-                    match ev.as_str() {
-                        #[cfg(feature = "admin")]
-                        "toggle" => crate::toggle(&crate::ADMIN_OPEN, "admin panel"),
-                        "toggle_teleport" => crate::toggle(&crate::TELEPORT_OPEN, "teleport menu"),
-                        _ => log::warn(&format!("bridge: unknown event {ev}")),
+                    match ev {
+                        Event::Named(kind) => match kind.as_str() {
+                            #[cfg(feature = "admin")]
+                            "toggle" => crate::toggle(&crate::ADMIN_OPEN, "admin panel"),
+                            "toggle_teleport" => crate::toggle(&crate::TELEPORT_OPEN, "teleport menu"),
+                            _ => log::warn(&format!("bridge: unknown event {kind}")),
+                        },
+                        Event::Detail { kind, url } => {
+                            if kind.as_str() == "open_url" {
+                                // open_url never logs `url`: it holds a #token=.
+                                open_url(url);
+                            } else {
+                                log::warn(&format!("bridge: unknown event {kind}"));
+                            }
+                        }
                     }
                 }
                 if let Some(points) = req.teleport_points {
