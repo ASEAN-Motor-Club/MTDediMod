@@ -2,6 +2,8 @@ name: Nix Client Build and Release
 
 on:
   push:
+    branches:
+      - master
     tags:
       - 'client/v*'
   workflow_dispatch:
@@ -100,6 +102,32 @@ jobs:
             "$BIN" --show-stats
           else
             echo "sccache unavailable - no stats"
+          fi
+
+      - name: Report sccache hit rate
+        if: always()
+        shell: bash
+        run: |
+          BIN="${SCCACHE_BIN:-${SCCACHE_PATH:-}}"
+          if [ -z "$BIN" ]; then BIN="$(command -v sccache 2>/dev/null || true)"; fi
+          if [ ! -x "$BIN" ]; then
+            echo "sccache unavailable - no cache-health data" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          STATS="$("$BIN" --show-stats)"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$STATS" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          HITS="$(echo "$STATS" | awk '$1 == "Cache" && $2 == "hits" && $3 ~ /^[0-9]+$/ { print $3; exit }')"
+          MISSES="$(echo "$STATS" | awk '$1 == "Cache" && $2 == "misses" && $3 ~ /^[0-9]+$/ { print $3; exit }')"
+          if [ -n "$HITS" ] && [ -n "$MISSES" ]; then
+            RATE="$(awk -v h="$HITS" -v m="$MISSES" 'BEGIN { t = h + m; printf "%.1f", (t > 0 ? 100 * h / t : 0) }')"
+            echo "sccache hit rate: ${RATE}% (${HITS} hits / ${MISSES} misses)" >> "$GITHUB_STEP_SUMMARY"
+            if awk -v r="$RATE" 'BEGIN { exit !(r < 80) }'; then
+              echo "::warning::sccache hit rate ${RATE}% is below 80% - this run is cache-cold or its cache scope changed"
+            fi
+          else
+            echo "sccache stats did not contain hit/miss counters" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Package both client variants
