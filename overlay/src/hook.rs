@@ -40,6 +40,7 @@ type ExecuteCommandListsFn =
 static PRESENT_ORIG: AtomicUsize = AtomicUsize::new(0);
 static RESIZE_ORIG: AtomicUsize = AtomicUsize::new(0);
 static EXEC_ORIG: AtomicUsize = AtomicUsize::new(0);
+static D3D12_TARGET_DEVICE: AtomicUsize = AtomicUsize::new(0);
 static D3D12_QUEUE_CAPTURED: AtomicBool = AtomicBool::new(false);
 static WARNED_NO_DEVICE: AtomicBool = AtomicBool::new(false);
 
@@ -75,6 +76,7 @@ impl PainterAny {
 
     unsafe fn paint(
         &mut self,
+        swapchain: &IDXGISwapChain,
         back_index: u32,
         primitives: &[egui::epaint::ClippedPrimitive],
         delta: &egui::TexturesDelta,
@@ -84,7 +86,7 @@ impl PainterAny {
             Self::D3d11(p) => p.paint(primitives, delta, ppp),
             Self::D3d12(p) => {
                 let queue = captured_queue();
-                p.paint(queue.as_ref(), back_index, primitives, delta, ppp)
+                p.paint(swapchain, queue.as_ref(), back_index, primitives, delta, ppp)
             }
         }
     }
@@ -186,17 +188,27 @@ unsafe extern "system" fn exec_hook(
     count: u32,
     lists: *const *mut c_void,
 ) {
-    // Fast path: once we have captured the DIRECT queue, avoid locking on
-    // every ExecuteCommandLists submission.
+    // Fast path: once we have captured the swapchain device's DIRECT queue,
+    // avoid locking on every ExecuteCommandLists submission.
     if !D3D12_QUEUE_CAPTURED.load(Ordering::Relaxed) {
-        if let Some(q) = ID3D12CommandQueue::from_raw_borrowed(&this) {
-            if q.GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT {
-                let mut slot = D3D12_QUEUE.lock().unwrap_or_else(|p| p.into_inner());
-                if slot.0.is_none() {
-                    slot.0 = Some(q.clone());
-                    D3D12_QUEUE_CAPTURED.store(true, Ordering::Release);
-                    drop(slot);
-                    log::info("captured D3D12 DIRECT command queue");
+        let target_dev = D3D12_TARGET_DEVICE.load(Ordering::Relaxed);
+        if target_dev != 0 {
+            if let Some(q) = ID3D12CommandQueue::from_raw_borrowed(&this) {
+                if q.GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT {
+                    let mut dev: Option<ID3D12Device> = None;
+                    if q.GetDevice(&mut dev).is_ok() {
+                        if let Some(d) = dev {
+                            if d.as_raw() as usize == target_dev {
+                                let mut slot = D3D12_QUEUE.lock().unwrap_or_else(|p| p.into_inner());
+                                if slot.0.is_none() {
+                                    slot.0 = Some(q.clone());
+                                    D3D12_QUEUE_CAPTURED.store(true, Ordering::Release);
+                                    drop(slot);
+                                    log::info("captured D3D12 DIRECT command queue");
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -313,6 +325,7 @@ unsafe fn draw_overlay(this: *mut c_void) -> Result<()> {
         // UE5 defaults to D3D12; Motor Town's -dx11 path is D3D11. Try D3D12
         // first, then fall back to the original D3D11 painter.
         let (painter, api) = if let Ok(d3d12) = swapchain.GetDevice::<ID3D12Device>() {
+            D3D12_TARGET_DEVICE.store(d3d12.as_raw() as usize, Ordering::Release);
             (PainterAny::D3d12(painter12::Painter::new(&d3d12)?), "D3D12")
         } else if let Ok(device) = swapchain.GetDevice::<ID3D11Device>() {
             (PainterAny::D3d11(Painter::new(&device)?), "D3D11")
@@ -369,5 +382,5 @@ unsafe fn draw_overlay(this: *mut c_void) -> Result<()> {
         .unwrap_or(0);
     overlay
         .painter
-        .paint(back_index, &primitives, &output.textures_delta, output.pixels_per_point)
+        .paint(swapchain, back_index, &primitives, &output.textures_delta, output.pixels_per_point)
 }

@@ -81,8 +81,6 @@ pub struct Painter {
     textures: HashMap<TextureId, Texture>,
     /// Back-buffer size; RTVs live in `rtv_heap` slots 0..rtv_count.
     target: Option<(u32, u32)>,
-    /// VB/IB upload heaps have been transitioned out of GENERIC_READ.
-    buffers_state_set: bool,
 }
 
 fn fail(msg: &str) -> Error {
@@ -353,7 +351,6 @@ impl Painter {
             staged: Vec::new(),
             textures: HashMap::new(),
             target: None,
-            buffers_state_set: false,
         })
     }
 
@@ -411,6 +408,7 @@ impl Painter {
 
     pub unsafe fn paint(
         &mut self,
+        swapchain: &IDXGISwapChain,
         queue: Option<&ID3D12CommandQueue>,
         back_index: u32,
         primitives: &[ClippedPrimitive],
@@ -428,7 +426,7 @@ impl Painter {
             return Ok(());
         };
 
-        let result = self.draw(&queue, back_index, primitives, pixels_per_point);
+        let result = self.draw(swapchain, &queue, back_index, primitives, pixels_per_point);
 
         // Free after drawing: this frame's meshes may still reference them.
         for id in &delta.free {
@@ -441,6 +439,7 @@ impl Painter {
 
     unsafe fn draw(
         &mut self,
+        swapchain: &IDXGISwapChain,
         queue: &ID3D12CommandQueue,
         back_index: u32,
         primitives: &[ClippedPrimitive],
@@ -477,6 +476,11 @@ impl Painter {
             return Ok(());
         }
 
+        // Borrow the active back buffer for this draw call only (dropped on
+        // return so ResizeBuffers is never blocked by us).
+        let index = back_index.min(self.rtv_count.saturating_sub(1));
+        let backbuffer: ID3D12Resource = swapchain.GetBuffer(index)?;
+
         // Anything fallible below runs while a command list may already be
         // open; on error we still close/execute/wait so the allocator stays
         // usable and the game's queue is left with no dangling work.
@@ -491,7 +495,8 @@ impl Painter {
             width,
             height,
             ppp,
-            back_index,
+            index,
+            &backbuffer,
             &vertices,
             &indices,
             &draws,
@@ -508,6 +513,16 @@ impl Painter {
                     if self.fence.SetEventOnCompletion(value, self.fence_event).is_ok() {
                         WaitForSingleObject(self.fence_event, INFINITE);
                     }
+                }
+                static LOGGED_FIRST: AtomicBool = AtomicBool::new(false);
+                if !LOGGED_FIRST.swap(true, Ordering::Relaxed) {
+                    crate::log::info(&format!(
+                        "D3D12 first frame rendered ({}x{}, {} draws, back_index={})",
+                        width,
+                        height,
+                        draws.len(),
+                        index
+                    ));
                 }
             }
             Err(_) => {
@@ -531,7 +546,8 @@ impl Painter {
         width: u32,
         height: u32,
         ppp: f32,
-        back_index: u32,
+        index: u32,
+        backbuffer: &ID3D12Resource,
         vertices: &[Vertex],
         indices: &[u32],
         draws: &[(TextureId, egui::Rect, u32, u32, i32)],
@@ -542,29 +558,18 @@ impl Painter {
         // Texture copies for this frame's staged updates.
         self.record_texture_copies();
 
-        // Vertex/index data: straight out of upload-heap buffers.
+        // Vertex/index data: straight out of upload-heap buffers (which stay
+        // permanently in D3D12_RESOURCE_STATE_GENERIC_READ per D3D12 spec).
         let vview = self.write_buffer(true, bytes_of(vertices))?;
         let iview = self.write_buffer(false, bytes_of(indices))?;
 
-        // Transition the upload heaps out of GENERIC_READ once; afterwards the
-        // CPU may still write them (we fence-wait between frames).
-        if !self.buffers_state_set {
-            self.buffers_state_set = true;
-            if let Some((vres, _, _)) = &self.vbuf {
-                self.resource_barrier(
-                    vres,
-                    D3D12_RESOURCE_STATE_GENERIC_READ,
-                    D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,
-                );
-            }
-            if let Some((ires, _, _)) = &self.ibuf {
-                self.resource_barrier(
-                    ires,
-                    D3D12_RESOURCE_STATE_GENERIC_READ,
-                    D3D12_RESOURCE_STATE_INDEX_BUFFER,
-                );
-            }
-        }
+        // At IDXGISwapChain::Present time the back buffer is in PRESENT state;
+        // transition to RENDER_TARGET before drawing and back to PRESENT after.
+        self.resource_barrier(
+            backbuffer,
+            D3D12_RESOURCE_STATE_PRESENT,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+        );
 
         self.list.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         self.list.IASetVertexBuffers(
@@ -589,7 +594,6 @@ impl Painter {
             MaxDepth: 1.0,
         }]);
 
-        let index = back_index.min(self.rtv_count.saturating_sub(1));
         let rtv = D3D12_CPU_DESCRIPTOR_HANDLE {
             ptr: self.rtv_start.ptr + (index as usize) * (self.rtv_step as usize),
         };
@@ -623,6 +627,12 @@ impl Painter {
             self.list.SetGraphicsRootDescriptorTable(1, gpu);
             self.list.DrawIndexedInstanced(*count, 1, *first, *base, 0);
         }
+
+        self.resource_barrier(
+            backbuffer,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            D3D12_RESOURCE_STATE_PRESENT,
+        );
         Ok(())
     }
 
