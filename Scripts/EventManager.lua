@@ -208,7 +208,11 @@ local function CreateNewEvent(event)
 
       eventSystem.Net_Events[last].RaceSetup.Route.Waypoints:Empty()
       for index, value in ipairs(event.RaceSetup.Route and event.RaceSetup.Route.Waypoints or {}) do
-        eventSystem.Net_Events[last].RaceSetup.Route.Waypoints[index] = value
+        eventSystem.Net_Events[last].RaceSetup.Route.Waypoints[index] = {
+          Translation = value.Location or value.Translation,
+          Rotation = value.Rotation,
+          Scale3D = value.Scale3D,
+        }
       end
 
       eventSystem.Net_Events[last].RaceSetup.EngineKeys:Empty()
@@ -356,19 +360,23 @@ local function UpdateEventRaceSetup(eventGuid, raceSetup)
 
         eventSystem.Net_Events[i].RaceSetup.EngineKeys:Empty()
         for index, value in ipairs(raceSetup.EngineKeys) do
-          eventSystem.Net_Events[i].RaceSetup.EngineKeys[index - 1] = FName(value)
+          eventSystem.Net_Events[i].RaceSetup.EngineKeys[index] = FName(value)
         end
 
         eventSystem.Net_Events[i].RaceSetup.VehicleKeys:Empty()
         for index, value in ipairs(raceSetup.VehicleKeys) do
-          eventSystem.Net_Events[i].RaceSetup.VehicleKeys[index - 1] = FName(value)
+          eventSystem.Net_Events[i].RaceSetup.VehicleKeys[index] = FName(value)
         end
 
         eventSystem.Net_Events[i].RaceSetup.Route.RouteName = raceSetup.Route.RouteName
 
         eventSystem.Net_Events[i].RaceSetup.Route.Waypoints:Empty()
         for index, value in ipairs(raceSetup.Route.Waypoints) do
-          eventSystem.Net_Events[i].RaceSetup.Route.Waypoints[index - 1] = value
+          eventSystem.Net_Events[i].RaceSetup.Route.Waypoints[index] = {
+            Translation = value.Location or value.Translation,
+            Rotation = value.Rotation,
+            Scale3D = value.Scale3D,
+          }
         end
         return true
       end
