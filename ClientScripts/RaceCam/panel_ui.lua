@@ -50,6 +50,9 @@ pre{background:#0c0c0c;border:1px solid #333;padding:8px;max-height:220px;overfl
 .badge.standalone{background:#2b6cb0;color:#fff;font-weight:normal}
 #paste_json{width:100%;height:90px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical}
 .pin-row button{padding:5px 9px;font-size:12px}
+/* Camera smoothing preset toggle — compact, active mode stays green. */
+.sm-btn{padding:5px 9px;font-size:12px}
+.sm-btn.on{background:#2f855a;box-shadow:inset 0 0 0 1px #48bb78}
 #track_canvas{display:block;width:100%;max-width:640px;height:auto;background:#0c0c0c;border:1px solid #444;border-radius:4px;margin-top:8px}
 hr{border:0;border-top:1px solid #333;margin:10px 0}
 /* Collapsible operator guide — same dark card as the controls above. */
@@ -116,6 +119,10 @@ Active: <b id="shot">—</b> &nbsp; FOV: <b id="fov">—</b> &nbsp; Plan: <b id=
 <button onclick="cmd('arm')">Arm (A)</button><button onclick="cmd('start')">Start (S)</button>
 <button onclick="cmd('stop')">Stop / restore view (X)</button><button onclick="undo()">Last-shot undo (Z)</button><br>
 <select id="sid"></select><button onclick="trigger(sid.value)">Trigger shot (1-9)</button><br>
+<div class="pin-row" style="margin-top:6px">Smoothing:
+<button id="sm_tight" class="sm-btn" onclick="setSmoothing('tight')">Tight</button>
+<button id="sm_normal" class="sm-btn on" onclick="setSmoothing('normal')">Normal</button>
+<button id="sm_cinematic" class="sm-btn" onclick="setSmoothing('cinematic')">Cinematic</button></div>
 <div id="standings_hdr" class="kbd">Live Vehicles (click to target)</div>
 <div id="contestants" class="roster"></div>
 Manual target: <input id="tgt_name" size="12" placeholder="driver name"><button onclick="lockTyped()">Lock</button>
@@ -193,6 +200,19 @@ let tok=localStorage.getItem('rc_tok')||sessionStorage.getItem('racecam_tok')||'
 function save(){tok=$('tok').value;try{localStorage.setItem('rc_tok',tok)}catch(e){}try{sessionStorage.setItem('racecam_tok',tok)}catch(e){}}
 function hdr(){return tok?{'x-racecam-token':tok}:{}}
 let rehearsal=false,shotHist=[],windowDegraded=false,windowTargetLost=false;
+/* ---- Camera smoothing preset (tight / normal / cinematic) ----
+   The panel is a thin operator surface: Lua owns the time constants, we only
+   send the chosen preset and mirror the engine's answer back into the deck. */
+const SMOOTHING_MODES=['tight','normal','cinematic'];
+let smoothingMode='normal';
+function highlightSmoothing(mode){
+  SMOOTHING_MODES.forEach(m=>{const el=$('sm_'+m);if(el)el.className='sm-btn'+(m===mode?' on':'')});
+}
+async function setSmoothing(mode){
+  if(SMOOTHING_MODES.indexOf(mode)<0)return null;
+  smoothingMode=mode;highlightSmoothing(mode);
+  return cmd('smoothing',mode);
+}
 
 async function toggleRehearsal(){
   const next=!rehearsal;
@@ -369,6 +389,8 @@ async function poll(){
     let s=await(await fetch('/api/state',{headers:hdr()})).json();
     windowDegraded=!!s.degraded;
     windowTargetLost=!!s.target_lost;
+    const sMode=SMOOTHING_MODES.indexOf(s.smoothing)>=0?s.smoothing:'normal';
+    smoothingMode=sMode;highlightSmoothing(sMode);
     if(s.rehearsal!=null&&s.rehearsal!==rehearsal){rehearsal=!!s.rehearsal;$('rehb').textContent=rehearsal?'ON':'OFF'}
     banner();
     const cur=s.current||s.active_shot||'none';
@@ -1172,6 +1194,8 @@ window.racecamPanel={cmd:cmd,trigger:trigger,enqueue:enqueue,undo:undo,toggleReh
   obsConnect:obsConnect,obsCheck:obsCheck,obsScenes:obsScenes,obsShot:obsShot,
   sha256:sha256,sha256b64:sha256b64,routePlanner:window.routePlanner,
   renderContestants:renderContestants,setTargetByName:setTargetByName,lockTyped:lockTyped,
+  setSmoothing:setSmoothing,highlightSmoothing:highlightSmoothing,poll:poll,
+  getSmoothingMode:()=>smoothingMode,
   getRosterNames:()=>rosterNames.slice(),getRosterSig:()=>lastRosterSig};
 </script></body></html>]=]
 

@@ -39,6 +39,7 @@ UNIVERSAL = ["start_line", "fly_up", "auto_trackside", "heli_follow", "follow_fo
 VALID_IDS = {
     "banner", "tok", "rehb", "prog", "prv", "shot", "fov", "plan", "cd", "hb", "run",
     "queue", "qat", "sid", "tgt_name", "standings_hdr", "contestants",
+    "sm_tight", "sm_normal", "sm_cinematic",
     "live_current", "live_load_btn", "live_refresh", "live_events", "auto_start",
     "follow_leader", "track_file", "drop_zone", "saved_plans", "plans_refresh",
     "plan_load", "track_info", "track_canvas",
@@ -918,6 +919,100 @@ class LiveLeaderboardTests(unittest.TestCase):
                          "identical state must not rebuild the contestant DOM")
         self.assertEqual(result["w3"], [2, 2],
                          "a changed row must rebuild exactly once")
+
+
+class SmoothingControlTests(unittest.TestCase):
+    """Operator camera-smoothing toggle: tight | normal | cinematic."""
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S).group(1)
+        cls.handlers = {}
+        for mode in ("tight", "normal", "cinematic"):
+            m = re.search(r'id="sm_%s"[^>]*onclick="([^"]+)"' % mode, cls.lua)
+            assert m, "missing onclick handler for sm_%s" % mode
+            cls.handlers[mode] = m.group(1)
+        # No Windows drive-letter paths in the panel (Scale3D: is not a path).
+        self_free = re.search(r"\bD:[\\/]", cls.lua)
+        assert self_free is None, "panel must not use D: paths"
+
+    @staticmethod
+    def _state(smoothing=None):
+        state = {"degraded": False, "target_lost": False, "shots": ["start_line"],
+                 "targets": ["Driver"], "rehearsal": False, "running": False}
+        if smoothing is not None:
+            state["smoothing"] = smoothing
+        return state
+
+    def _click(self, mode):
+        """Fire the real inline onclick string from the HTML on a live panel."""
+        extra = ("(new Function(PANEL_JS))();\n"
+                 "const CLICK = " + json.dumps(self.handlers[mode]) + ";\n")
+        result = parse_result(run_node(self.js, r"""
+          await sleep(20);                       // let boot's first poll settle
+          const p = globalThis.racecamPanel;
+          (new Function('setSmoothing', CLICK))(p.setSmoothing);
+          await sleep(20);
+          const cls = ['tight','normal','cinematic'].map(m =>
+            document.getElementById('sm_'+m).className);
+          console.log(JSON.stringify({
+            posts: fetchLog.filter(x => x.url === '/api/command')
+                           .map(x => JSON.parse(x.opts.body)),
+            classes: cls, mode: p.getSmoothingMode()
+          }));
+        """, extra=extra))
+        return result
+
+    def test_markup_and_handler_wiring(self):
+        for mode in ("tight", "normal", "cinematic"):
+            with self.subTest(mode=mode):
+                self.assertIn('id="sm_%s"' % mode, self.lua)
+                self.assertEqual(self.handlers[mode],
+                                 "setSmoothing('%s')" % mode)
+        for snippet in ["const SMOOTHING_MODES=['tight','normal','cinematic']",
+                        "return cmd('smoothing',mode)", "highlightSmoothing(sMode)",
+                        "s.smoothing"]:
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.js)
+
+    def test_click_sm_tight_posts_smoothing_command(self):
+        result = self._click("tight")
+        self.assertIn({"cmd": "smoothing", "args": "tight"}, result["posts"])
+        self.assertEqual(result["mode"], "tight")
+        self.assertEqual(result["classes"],
+                         ["sm-btn on", "sm-btn", "sm-btn"])
+
+    def test_click_sm_cinematic_posts_smoothing_command(self):
+        result = self._click("cinematic")
+        self.assertIn({"cmd": "smoothing", "args": "cinematic"}, result["posts"])
+        self.assertEqual(result["mode"], "cinematic")
+        self.assertEqual(result["classes"],
+                         ["sm-btn", "sm-btn", "sm-btn on"])
+
+    def test_poll_syncs_highlight_from_state(self):
+        extra = ("globalThis.__stateOverride = "
+                 + json.dumps(self._state("cinematic")) + ";\n"
+                 + "(new Function(PANEL_JS))();\n"
+                 + "const NORMAL_STATE = "
+                 + json.dumps(self._state("normal")) + ";\n")
+        result = parse_result(run_node(self.js, r"""
+          await sleep(30);                       // boot's poll has applied
+          const p = globalThis.racecamPanel;
+          const read = () => ['tight','normal','cinematic'].map(m =>
+            document.getElementById('sm_'+m).className);
+          const cinematic = {classes:read(), mode:p.getSmoothingMode()};
+          globalThis.__stateOverride = NORMAL_STATE;
+          await p.poll();
+          await sleep(20);
+          const normal = {classes:read(), mode:p.getSmoothingMode()};
+          console.log(JSON.stringify({cinematic:cinematic, normal:normal}));
+        """, extra=extra))
+        self.assertEqual(result["cinematic"]["classes"],
+                         ["sm-btn", "sm-btn", "sm-btn on"])
+        self.assertEqual(result["cinematic"]["mode"], "cinematic")
+        self.assertEqual(result["normal"]["classes"],
+                         ["sm-btn", "sm-btn on", "sm-btn"])
+        self.assertEqual(result["normal"]["mode"], "normal")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 -- presets.lua — named camera presets for AMC RaceCam.
 -- All distances are UE centimetres; fov is degrees; duration is seconds.
+-- flag tau_* values are smoothing time constants in seconds (dt-invariant).
+-- `smoothing_alpha` is retained for backwards compatibility with older plans.
 local P = {}
 
 P.types = { fixed = true, look_at = true, follow = true, orbit = true, flyover = true }
@@ -15,7 +17,8 @@ P.presets = {
     fov = 70.0,
     duration = 0.0,
     easing = "linear",
-    flags = { pin_view_target = true, smoothing_alpha = 0.12, heading_alpha = 0.10, use_route_tangent = false },
+    flags = { pin_view_target = true, smoothing_alpha = 0.12, heading_alpha = 0.10, use_route_tangent = false,
+              tau_pos = 0.12, tau_look = 0.10, tau_hdg = 0.18, tau_fov = 0.25 },
   },
   route_flyover = {
     id = "route_flyover",
@@ -26,7 +29,8 @@ P.presets = {
     fov = 76.0,
     duration = 0.0,
     easing = "arc_length_spline",
-    flags = { pin_view_target = true, smoothing_alpha = 1.0, step_cm = 50.0, use_route_tangent = true },
+    flags = { pin_view_target = true, smoothing_alpha = 1.0, step_cm = 50.0, use_route_tangent = true,
+              tau_pos = 0.16, tau_look = 0.20, tau_hdg = 0.20, tau_fov = 0.25 },
   },
   trackside_low = {
     id = "trackside_low",
@@ -37,7 +41,8 @@ P.presets = {
     fov = 55.0,
     duration = 4.0,
     easing = "ease_in_out_cubic",
-    flags = { pin_view_target = true, smoothing_alpha = 0.20, use_route_tangent = true },
+    flags = { pin_view_target = true, smoothing_alpha = 0.20, use_route_tangent = true,
+              tau_pos = 0.14, tau_look = 0.10, tau_hdg = 0.18, tau_fov = 0.25 },
   },
   overview_high = {
     id = "overview_high",
@@ -48,7 +53,8 @@ P.presets = {
     fov = 90.0,
     duration = 5.0,
     easing = "ease_in_out_cubic",
-    flags = { pin_view_target = true, smoothing_alpha = 0.15, use_route_tangent = false },
+    flags = { pin_view_target = true, smoothing_alpha = 0.15, use_route_tangent = false,
+              tau_pos = 0.18, tau_look = 0.20, tau_hdg = 0.20, tau_fov = 0.25 },
   },
   finish_line = {
     id = "finish_line",
@@ -59,7 +65,8 @@ P.presets = {
     fov = 65.0,
     duration = 6.0,
     easing = "ease_in_out_cubic",
-    flags = { pin_view_target = true, smoothing_alpha = 0.18, use_route_tangent = true },
+    flags = { pin_view_target = true, smoothing_alpha = 0.18, use_route_tangent = true,
+              tau_pos = 0.14, tau_look = 0.12, tau_hdg = 0.20, tau_fov = 0.25 },
   },
   chase_wide = {
     id = "chase_wide",
@@ -70,7 +77,8 @@ P.presets = {
     fov = 75.0,
     duration = 0.0,
     easing = "linear",
-    flags = { pin_view_target = true, smoothing_alpha = 0.10, use_route_tangent = false },
+    flags = { pin_view_target = true, smoothing_alpha = 0.10, use_route_tangent = false,
+              tau_pos = 0.18, tau_look = 0.14, tau_hdg = 0.20, tau_fov = 0.25 },
   },
   heli_follow = {
     id = "heli_follow",
@@ -81,7 +89,8 @@ P.presets = {
     fov = 55.0,
     duration = 0.0,
     easing = "linear",
-    flags = { pin_view_target = true, smoothing_alpha = 0.05, use_route_tangent = false },
+    flags = { pin_view_target = true, smoothing_alpha = 0.05, use_route_tangent = false,
+              tau_pos = 0.35, tau_look = 0.22, tau_hdg = 0.28, tau_fov = 0.25 },
   },
   front_chase = {
     id = "front_chase",
@@ -92,7 +101,8 @@ P.presets = {
     fov = 65.0,
     duration = 0.0,
     easing = "linear",
-    flags = { pin_view_target = true, smoothing_alpha = 0.14, use_route_tangent = false },
+    flags = { pin_view_target = true, smoothing_alpha = 0.14, use_route_tangent = false,
+              tau_pos = 0.14, tau_look = 0.12, tau_hdg = 0.20, tau_fov = 0.25 },
   },
   side_tracking = {
     id = "side_tracking",
@@ -103,7 +113,8 @@ P.presets = {
     fov = 68.0,
     duration = 0.0,
     easing = "linear",
-    flags = { pin_view_target = true, smoothing_alpha = 0.14, use_route_tangent = false },
+    flags = { pin_view_target = true, smoothing_alpha = 0.14, use_route_tangent = false,
+              tau_pos = 0.14, tau_look = 0.12, tau_hdg = 0.18, tau_fov = 0.25 },
   },
   orbit_hero = {
     id = "orbit_hero",
@@ -114,7 +125,8 @@ P.presets = {
     fov = 60.0,
     duration = 0.0,
     easing = "linear",
-    flags = { pin_view_target = true, smoothing_alpha = 1.0, use_route_tangent = false },
+    flags = { pin_view_target = true, smoothing_alpha = 1.0, use_route_tangent = false,
+              tau_pos = 0.20, tau_look = 0.12, tau_hdg = 0.20, tau_fov = 0.25 },
   },
 }
 
@@ -139,6 +151,12 @@ function P.validate()
       errors[#errors + 1] = id .. ": bad smoothing_alpha"
     end
     if type(f.use_route_tangent) ~= "boolean" then errors[#errors + 1] = id .. ": bad use_route_tangent" end
+    for _, key in ipairs({ "tau_pos", "tau_look", "tau_hdg", "tau_fov" }) do
+      local v = f[key]
+      if type(v) ~= "number" or v < 0.0 or v ~= v then
+        errors[#errors + 1] = id .. ": bad " .. key
+      end
+    end
   end
   return errors
 end
