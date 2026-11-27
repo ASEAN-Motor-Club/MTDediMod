@@ -27,6 +27,7 @@ local modConfig = {
     impulseOrigin = "impact", ---@type string "impact" | "com"
     rightClickAction = "despawn", ---@type string "despawn" | "trunk" | "engine"
     useEguiOverlay = true, -- false = keep the UMG teleport/emote widgets
+    enableRaceCam = true,  -- admin-only: start RaceCam HTTP panel in standby (127.0.0.1:8767)
     hotbarLocation = "default", ---@type HotBarLocation
     uiScale = 1.0,
     modName = statics.ModName,
