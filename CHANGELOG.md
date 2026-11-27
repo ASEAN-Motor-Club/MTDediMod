@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc13] - 2026-11-27
+
+#### Fixed
+- The event-create guid lookup compared a plain Lua GUID table (which `GuidToString` renders as `0000`) against the stored native FGuid, so every create returned HTTP 400 ("event not found in Net_Events after add"). It now matches against the original request `EventGuid` string (#91).
+
 ### [server/v0.44.0-rc12] - 2026-11-27
 
 #### Fixed
