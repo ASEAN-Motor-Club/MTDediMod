@@ -317,10 +317,17 @@ local function is_live(o)
   return ok and live ~= false
 end
 
+local function is_callable(v)
+  local t = type(v)
+  return t == "function" or t == "userdata"
+end
+
 local function has_actor_pose(o)
   if not is_live(o) then return false end
   local ok, get_loc, get_rot = pcall(function() return o.K2_GetActorLocation, o.K2_GetActorRotation end)
-  return ok and type(get_loc) == "function" and type(get_rot) == "function"
+  -- In UE4SS Lua, bound UFunctions have type() == "userdata" (callable via __call),
+  -- whereas unit-test mocks use plain Lua "function"s. Accept both!
+  return ok and is_callable(get_loc) and is_callable(get_rot)
 end
 
 local function seated_vehicle(p)
