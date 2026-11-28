@@ -177,6 +177,17 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
         <button id="sm_tight" class="sm-btn" onclick="setSmoothing('tight')">Tight</button>
         <button id="sm_normal" class="sm-btn on" onclick="setSmoothing('normal')">Normal</button>
         <button id="sm_cinematic" class="sm-btn" onclick="setSmoothing('cinematic')">Cinematic</button>
+        <button id="sm_tune_btn" class="sm-btn" onclick="toggleSmoothingTune()">Tune</button>
+      </div>
+      <div id="sm_tune_box" style="display:none;margin:6px 0 8px;padding:8px;background:#101624;border:1px solid #263147;border-radius:6px;font-size:12px">
+        <div class="pin-row" style="gap:8px;flex-wrap:wrap">
+          <label>Pos τ <input id="sm_tau_pos" type="range" min="0.05" max="2.00" step="0.02" value="0.28" oninput="onSmoothingInput()"> <span id="sm_tau_pos_v">0.28s</span></label>
+          <label>Hdg τ <input id="sm_tau_hdg" type="range" min="0.05" max="2.50" step="0.05" value="0.38" oninput="onSmoothingInput()"> <span id="sm_tau_hdg_v">0.38s</span></label>
+          <label>Look τ <input id="sm_tau_look" type="range" min="0.05" max="1.50" step="0.02" value="0.22" oninput="onSmoothingInput()"> <span id="sm_tau_look_v">0.22s</span></label>
+          <label>FOV τ <input id="sm_tau_fov" type="range" min="0.05" max="1.50" step="0.05" value="0.25" oninput="onSmoothingInput()"> <span id="sm_tau_fov_v">0.25s</span></label>
+          <label title="Uncheck for pure EMA damping with zero velocity prediction"><input id="sm_predict" type="checkbox" checked onchange="onSmoothingInput()"> Predict</label>
+          <button id="sm_reset" class="mini" onclick="resetSmoothingTune()">Reset</button>
+        </div>
       </div>
       <div class="select-row"><select id="sid"></select><button class="mini" onclick="trigger(sid.value)">Fire selected</button></div>
     </div>
@@ -360,6 +371,49 @@ async function setSmoothing(mode){
   if(SMOOTHING_MODES.indexOf(mode)<0)return null;
   smoothingMode=mode;highlightSmoothing(mode);
   return cmd('smoothing',mode);
+}
+let smTuneTimer=null,smTuneDirtyAt=0;
+function toggleSmoothingTune(){
+  const b=$('sm_tune_box');if(!b)return;
+  const open=b.style.display==='none';
+  b.style.display=open?'':'none';
+  const btn=$('sm_tune_btn');if(btn)btn.className='sm-btn'+(open?' on':'');
+}
+function syncSmoothingCfg(cfg){
+  if(!cfg||Date.now()-smTuneDirtyAt<1200)return;
+  const set=(id,vid,v)=>{const el=$(id);if(el&&v!=null){el.value=Number(v).toFixed(2);const sp=$(vid);if(sp)sp.textContent=Number(v).toFixed(2)+'s'}};
+  set('sm_tau_pos','sm_tau_pos_v',cfg.tau_pos);
+  set('sm_tau_hdg','sm_tau_hdg_v',cfg.tau_hdg);
+  set('sm_tau_look','sm_tau_look_v',cfg.tau_look);
+  set('sm_tau_fov','sm_tau_fov_v',cfg.tau_fov);
+  const pr=$('sm_predict');if(pr&&cfg.use_vel_predict!=null)pr.checked=!!cfg.use_vel_predict;
+}
+async function sendSmoothing(payload){
+  try{
+    const r=await fetch('/api/smoothing',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},hdr()),body:JSON.stringify(payload)});
+    return await r.json();
+  }catch(e){return null}
+}
+function onSmoothingInput(){
+  smTuneDirtyAt=Date.now();
+  const payload={
+    tau_pos:Number($('sm_tau_pos').value),
+    tau_hdg:Number($('sm_tau_hdg').value),
+    tau_look:Number($('sm_tau_look').value),
+    tau_fov:Number($('sm_tau_fov').value),
+    use_vel_predict:!!$('sm_predict').checked
+  };
+  $('sm_tau_pos_v').textContent=payload.tau_pos.toFixed(2)+'s';
+  $('sm_tau_hdg_v').textContent=payload.tau_hdg.toFixed(2)+'s';
+  $('sm_tau_look_v').textContent=payload.tau_look.toFixed(2)+'s';
+  $('sm_tau_fov_v').textContent=payload.tau_fov.toFixed(2)+'s';
+  if(smTuneTimer)clearTimeout(smTuneTimer);
+  smTuneTimer=setTimeout(()=>sendSmoothing(payload),80);
+}
+async function resetSmoothingTune(){
+  smTuneDirtyAt=0;
+  const r=await sendSmoothing({reset:true});
+  if(r&&r.smoothing_cfg)syncSmoothingCfg(r.smoothing_cfg);
 }
 
 /* ---- Auto Director: Off / Auto Shots / Auto Full ----
@@ -733,6 +787,7 @@ async function poll(){
     windowTargetLost=!!s.target_lost;
     const sMode=SMOOTHING_MODES.indexOf(s.smoothing)>=0?s.smoothing:'normal';
     smoothingMode=sMode;highlightSmoothing(sMode);
+    if(s.smoothing_cfg)syncSmoothingCfg(s.smoothing_cfg);
     directorMode=DIRECTOR_MODES.indexOf(s.director_mode)>=0?s.director_mode:'off';
     directorReason=String(s.director_reason||'');
     directorOverrideS=Number(s.director_override_s)||0;

@@ -82,7 +82,32 @@ local function wire_engine(e)
         e._racecam_target_wired = true
     end
     apply_smoothing_mode(e)
+    if M.smoothing_cfg and type(e.set_smoothing_config) == "function" then
+        pcall(function() e:set_smoothing_config(M.smoothing_cfg) end)
+    end
     return e
+end
+
+--- Operator API used by the panel via POST /api/smoothing.
+function M.set_smoothing_config(cfg)
+    if type(cfg) ~= "table" then return false, "invalid config" end
+    if cfg.reset then
+        M.smoothing_cfg = nil
+    else
+        M.smoothing_cfg = M.smoothing_cfg or {}
+        for _, k in ipairs({ "tau_pos", "tau_look", "tau_hdg", "tau_fov" }) do
+            local v = tonumber(cfg[k])
+            if v and v > 0.0 then M.smoothing_cfg[k] = v end
+        end
+        if cfg.use_vel_predict ~= nil then
+            M.smoothing_cfg.use_vel_predict = (cfg.use_vel_predict == true)
+        end
+    end
+    local e = M.engine or _G.RACECAM_SHOTS
+    if e and type(e.set_smoothing_config) == "function" then
+        return e:set_smoothing_config(cfg)
+    end
+    return true, M.smoothing_cfg or {}
 end
 
 --- Operator API used by the panel via POST /api/command {"cmd":"smoothing"}.

@@ -279,6 +279,12 @@ local function state_json()
   local smoothing = (e and e.smoothing_mode) or (init and init.smoothing_mode) or "normal"
   if type(smoothing) ~= "string" or smoothing == "" then smoothing = "normal" end
   parts[#parts + 1] = '"smoothing":"' .. jstr(smoothing) .. '"'
+  if e and type(e.get_smoothing_config) == "function" then
+    local ok_sc, sc = pcall(function() return e:get_smoothing_config() end)
+    if ok_sc and type(sc) == "table" then
+      parts[#parts + 1] = '"smoothing_cfg":' .. json_encode(sc)
+    end
+  end
   local ok_ev, ev = pcall(function() return LiveEvents.current_event() end)
   parts[#parts + 1] = '"active_event":' ..
     ((ok_ev and ev and ev.name and ev.name ~= "") and ('"' .. jstr(ev.name) .. '"') or "null")
@@ -622,6 +628,30 @@ local function make_response(req)
         audit("auto_flags", "", tostring(flags.auto_start) .. "/" .. tostring(flags.follow_leader))
       else
         code, body = 400, '{"error":"' .. jstr(tostring(flags)) .. '"}'
+      end
+    end
+  elseif req.method == "POST" and req.path == "/api/smoothing" then
+    authed = true
+    touch()
+    local payload = json_decode(req.body or "")
+    if type(payload) ~= "table" then
+      code, body = 400, '{"ok":false,"error":"invalid json"}'
+    else
+      local init = get_init()
+      local ok, res = false, nil
+      if init and type(init.set_smoothing_config) == "function" then
+        ok, res = pcall(function() return init.set_smoothing_config(payload) end)
+      elseif _G.RACECAM_SHOTS and type(_G.RACECAM_SHOTS.set_smoothing_config) == "function" then
+        ok, res = pcall(function() return _G.RACECAM_SHOTS:set_smoothing_config(payload) end)
+      end
+      if ok and res then
+        local e = _G.RACECAM_SHOTS
+        local cfg = (e and type(e.get_smoothing_config) == "function" and e:get_smoothing_config()) or {}
+        code, body = 200, json_encode({ ok = true, smoothing_cfg = cfg })
+        last_result = payload.reset and "smoothing:reset" or "smoothing:custom"
+        audit("smoothing", "", last_result)
+      else
+        code, body = 400, '{"ok":false,"error":"smoothing config failed"}'
       end
     end
   elseif req.method == "POST" and req.path == "/api/command" then

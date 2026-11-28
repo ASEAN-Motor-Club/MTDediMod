@@ -65,6 +65,10 @@ end
 -- alpha conversion, then a sensible default. Operator smoothing multiplier is
 -- applied to every effective tau.
 local function shot_tau(self, s, preset, name)
+  local ov = self.tau_overrides and self.tau_overrides[name]
+  if type(ov) == "number" and ov > 0.0 then
+    return clamp_num(ov, 0.01, 5.0)
+  end
   local flags = preset and preset.flags or nil
   local v = s and s[name]
   if type(v) ~= "number" or v <= 0.0 then v = flags and flags[name] end
@@ -166,7 +170,43 @@ function E.set_smoothing_mode(self, mode)
   if not SMOOTHING_SCALES[key] then return nil, "invalid mode" end
   self.smoothing_mode = key
   self.smoothing_scale = SMOOTHING_SCALES[key]
+  self.tau_overrides = {}
   return key
+end
+
+function E.set_smoothing_config(self, cfg)
+  if type(cfg) ~= "table" then return false, "invalid config" end
+  if cfg.reset then
+    self.tau_overrides = {}
+    self.use_vel_predict = true
+    return true, self:get_smoothing_config()
+  end
+  self.tau_overrides = self.tau_overrides or {}
+  for _, k in ipairs({ "tau_pos", "tau_look", "tau_hdg", "tau_fov" }) do
+    local v = tonumber(cfg[k])
+    if v and v > 0.0 then
+      self.tau_overrides[k] = clamp_num(v, 0.01, 5.0)
+    end
+  end
+  if cfg.use_vel_predict ~= nil then
+    self.use_vel_predict = (cfg.use_vel_predict == true)
+  end
+  return true, self:get_smoothing_config()
+end
+
+function E.get_smoothing_config(self)
+  local ov = self.tau_overrides or {}
+  local scale = self.smoothing_scale or 1.0
+  local custom = (ov.tau_pos ~= nil or ov.tau_look ~= nil or ov.tau_hdg ~= nil
+    or ov.tau_fov ~= nil or self.use_vel_predict == false)
+  return {
+    tau_pos = ov.tau_pos or (DEFAULT_TAU.tau_pos * scale),
+    tau_look = ov.tau_look or (DEFAULT_TAU.tau_look * scale),
+    tau_hdg = ov.tau_hdg or (DEFAULT_TAU.tau_hdg * scale),
+    tau_fov = ov.tau_fov or (DEFAULT_TAU.tau_fov * scale),
+    use_vel_predict = (self.use_vel_predict ~= false),
+    custom = custom,
+  }
 end
 
 local function reset_rig(self)
@@ -427,34 +467,43 @@ local function target_state(self, s, preset)
     scale = err > 2500.0 and 0.12 or (1200.0 / err)
   end
   ex, ey, ez = ex * scale, ey * scale, ez * scale
-  -- Critically damped alpha-beta predictor (zeta = 1.0, ZERO spring bounce):
-  -- For a 2nd-order critically damped tracker with time constant tau_pos,
-  -- alpha = 1 - exp(-2*dt/tau_pos) and beta_crit = 2 - alpha - 2*sqrt(1-alpha).
   local tau_pos = shot_tau(self, s, preset, "tau_pos")
-  local alpha_pos = exp_alpha(dt, tau_pos * 0.5)
-  local beta_vel = 2.0 - alpha_pos - 2.0 * math.sqrt(math.max(0.0, 1.0 - alpha_pos))
-  f.pos[1], f.pos[2], f.pos[3] = px + ex * alpha_pos, py + ey * alpha_pos, pz + ez * alpha_pos
-  local inv_dt = 1.0 / math.max(dt, 0.008)
-  f.vel[1] = clamp_num(f.vel[1] + ex * inv_dt * beta_vel, -12000.0, 12000.0)
-  f.vel[2] = clamp_num(f.vel[2] + ey * inv_dt * beta_vel, -12000.0, 12000.0)
-  f.vel[3] = clamp_num(f.vel[3] + ez * inv_dt * beta_vel, -12000.0, 12000.0)
-  -- Blend live UE vehicle velocity when available (smoothly low-passed) so
-  -- real multiplayer cars track braking/accel cleanly even at high tau_pos.
-  if not is_remote and tgt then
-    local ok_v, rv = pcall(function()
-      local src = self:seated_vehicle(tgt) or tgt
-      if src and src.GetVelocity then return src:GetVelocity() end
-      return nil
-    end)
-    if ok_v and rv then
-      local vx = rv.X or rv.x or rv[1]
-      local vy = rv.Y or rv.y or rv[2]
-      local vz = rv.Z or rv.z or rv[3]
-      if type(vx) == "number" and type(vy) == "number" and type(vz) == "number" then
-        local kv = exp_alpha(dt, tau_pos * 1.2)
-        f.vel[1] = clamp_num(lerp(f.vel[1], vx, kv), -12000.0, 12000.0)
-        f.vel[2] = clamp_num(lerp(f.vel[2], vy, kv), -12000.0, 12000.0)
-        f.vel[3] = clamp_num(lerp(f.vel[3], vz, kv), -12000.0, 12000.0)
+  if self.use_vel_predict == false then
+    -- Pure 1st-order EMA damping (zero velocity prediction, zero overshoot).
+    local k = exp_alpha(dt, tau_pos)
+    f.pos[1] = lerp(f.pos[1], raw[1], k)
+    f.pos[2] = lerp(f.pos[2], raw[2], k)
+    f.pos[3] = lerp(f.pos[3], raw[3], k)
+    f.vel[1], f.vel[2], f.vel[3] = 0.0, 0.0, 0.0
+  else
+    -- Critically damped alpha-beta predictor (zeta = 1.0, ZERO spring bounce):
+    -- For a 2nd-order critically damped tracker with time constant tau_pos,
+    -- alpha = 1 - exp(-2*dt/tau_pos) and beta_crit = 2 - alpha - 2*sqrt(1-alpha).
+    local alpha_pos = exp_alpha(dt, tau_pos * 0.5)
+    local beta_vel = 2.0 - alpha_pos - 2.0 * math.sqrt(math.max(0.0, 1.0 - alpha_pos))
+    f.pos[1], f.pos[2], f.pos[3] = px + ex * alpha_pos, py + ey * alpha_pos, pz + ez * alpha_pos
+    local inv_dt = 1.0 / math.max(dt, 0.008)
+    f.vel[1] = clamp_num(f.vel[1] + ex * inv_dt * beta_vel, -12000.0, 12000.0)
+    f.vel[2] = clamp_num(f.vel[2] + ey * inv_dt * beta_vel, -12000.0, 12000.0)
+    f.vel[3] = clamp_num(f.vel[3] + ez * inv_dt * beta_vel, -12000.0, 12000.0)
+    -- Blend live UE vehicle velocity when available (smoothly low-passed) so
+    -- real multiplayer cars track braking/accel cleanly even at high tau_pos.
+    if not is_remote and tgt then
+      local ok_v, rv = pcall(function()
+        local src = self:seated_vehicle(tgt) or tgt
+        if src and src.GetVelocity then return src:GetVelocity() end
+        return nil
+      end)
+      if ok_v and rv then
+        local vx = rv.X or rv.x or rv[1]
+        local vy = rv.Y or rv.y or rv[2]
+        local vz = rv.Z or rv.z or rv[3]
+        if type(vx) == "number" and type(vy) == "number" and type(vz) == "number" then
+          local kv = exp_alpha(dt, tau_pos * 1.2)
+          f.vel[1] = clamp_num(lerp(f.vel[1], vx, kv), -12000.0, 12000.0)
+          f.vel[2] = clamp_num(lerp(f.vel[2], vy, kv), -12000.0, 12000.0)
+          f.vel[3] = clamp_num(lerp(f.vel[3], vz, kv), -12000.0, 12000.0)
+        end
       end
     end
   end
