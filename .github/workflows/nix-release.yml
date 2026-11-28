@@ -317,6 +317,16 @@ jobs:
           name: MotorTownMods v${{ needs.build-mod.outputs.version }}
           tag_name: ${{ needs.build-mod.outputs.tag }}
           target_commitish: ${{ github.sha }}
+          body: |
+            ## Installation
+
+            1. Stop the Motor Town dedicated server.
+            2. Extract `MotorTownMods_v${{ needs.build-mod.outputs.version }}.zip` into `<ServerRoot>\MotorTown\Binaries\Win64\` so `version.dll` and the `ue4ss\` folder sit next to `MotorTownServer-Win64-Shipping.exe` (overwrite existing files when updating).
+            3. Start the dedicated server.
+
+            *(UE4SS and Lua native dependencies `luasocket`/`cjson` are bundled. On AMC NixOS hosts, bump `mod-versions.nix` instead of extracting manually.)*
+
+            ---
           files: MotorTownMods_v*.zip
           generate_release_notes: true
           prerelease: ${{ needs.build-mod.outputs.prerelease == 'true' }}
