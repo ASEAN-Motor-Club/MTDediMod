@@ -6,10 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
-### [Unreleased]
+### [server/v0.44.1] - 2026-11-28
 
 #### Changed
-- Versioning now uses a stable `SERVER_VERSION` file. RC suffixes are reserved for explicitly pushed preview tags, not for routine releases.
+- Versioning now uses a stable `SERVER_VERSION` file with single-run automated stable releases on `master` merges (#101, #102). Prerelease suffixes (`-rc*`, `-exp.*`) are reserved for manual branch preview tags.
 
 ### [server/v0.44.0-rc14] - 2026-11-27
 
@@ -577,6 +577,15 @@ Re-release for test container deployment (no server-side code changes since rc5)
 ---
 
 ## Client
+
+### [client/v0.6.2] - 2026-11-28
+
+#### Added
+- RaceCam local broadcast camera panel (#84), network camera smoothing, full-server roster, and Broadcast Desk v2 (#98).
+- Stable semantic version files (`VERSION` / `SERVER_VERSION`) and single-run automated releases from `master` merges (#101, #102).
+
+#### Fixed
+- Removed arrest shortcut from client mod (#100).
 
 ### [client/v0.6.1-rc4] - 2026-11-26
 
