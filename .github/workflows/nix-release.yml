@@ -2,23 +2,40 @@ name: Nix Build and Release
 
 on:
   push:
+    branches:
+      - master
     tags:
       - 'server/v*'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'SERVER_VERSION'
+      - 'Scripts/**'
+      - 'shared/**'
+      - 'src/**'
+      - 'tools/**'
+      - 'patches-ue4ss/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'scripts/check_version.py'
+      - '.github/workflows/nix-release.yml'
   workflow_dispatch:
-    inputs:
-      create_release:
-        description: 'Create a GitHub release'
-        type: boolean
-        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: server-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ============================================================
   # Job 1: Build Lua native dependencies (Windows - cached)
   # ============================================================
   build-lua-deps:
+    # PRs from forks have no UEPSEUDO_PAT, so they cannot build the private UE4SS submodules.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-2022
     steps:
       - name: Cache Lua dependencies
@@ -89,13 +106,17 @@ jobs:
   # Job 2: Build mod with Nix (Linux)
   # ============================================================
   build-mod:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
       USE_SCCACHE: "1"
       RUSTC_WRAPPER: sccache
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      should_release: ${{ steps.release.outputs.should_release }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
 
     steps:
       - name: Checkout
@@ -105,6 +126,59 @@ jobs:
           lfs: true
           submodules: false
           persist-credentials: false
+
+      - name: Validate version and determine release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_version.py
+          FILE_VER="$(tr -d '\r\n' < SERVER_VERSION)"
+
+          SHOULD_RELEASE="false"
+          TAG=""
+          RELEASE_VER="${FILE_VER}-dev-$(git rev-parse --short HEAD)"
+          PRERELEASE="false"
+
+          if [[ "${{ github.ref }}" == refs/tags/server/v* ]]; then
+            TAG="${{ github.ref_name }}"
+            python3 scripts/check_version.py --tag "$TAG"
+            RELEASE_VER="${TAG#server/v}"
+            if [[ "$RELEASE_VER" == *-rc* || "$RELEASE_VER" == *-exp.* ]]; then
+              PRERELEASE="true"
+            else
+              git fetch --no-tags origin master
+              if ! git merge-base --is-ancestor HEAD origin/master; then
+                echo "::error::Stable tag $TAG must point to a commit on master (use -exp.<name>.<N> or -rc.<N> for branch previews)"
+                exit 1
+              fi
+            fi
+            SHOULD_RELEASE="true"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
+            BEFORE="${{ github.event.before }}"
+            if [[ -z "$BEFORE" || "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+              PREVIOUS="$(git show HEAD^:SERVER_VERSION 2>/dev/null | tr -d '\r\n' || true)"
+            else
+              PREVIOUS="$(git show "${BEFORE}:SERVER_VERSION" 2>/dev/null | tr -d '\r\n' || true)"
+            fi
+            if [[ "$FILE_VER" != "$PREVIOUS" ]]; then
+              CANDIDATE="server/v${FILE_VER}"
+              python3 scripts/check_version.py --tag "$CANDIDATE"
+              if git ls-remote --tags origin "refs/tags/$CANDIDATE" | grep -q .; then
+                echo "Tag $CANDIDATE already exists — skipping automatic release"
+              else
+                SHOULD_RELEASE="true"
+                TAG="$CANDIDATE"
+                RELEASE_VER="$FILE_VER"
+              fi
+            fi
+          fi
+
+          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$RELEASE_VER" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Release decision: should_release=$SHOULD_RELEASE tag=$TAG version=$RELEASE_VER prerelease=$PRERELEASE"
 
       - name: Get UE4SS locked revision
         id: ue4ss-rev
@@ -118,6 +192,16 @@ jobs:
           path: .ue4ss-src
           submodules: recursive
           token: ${{ secrets.UEPSEUDO_PAT }}
+
+      - name: Normalize UE4SS source for Nix
+        shell: bash
+        run: |
+          # actions/checkout writes the token into .git/config and adds reflog
+          # entries. A Nix path: input copies that metadata into the store, so
+          # ue4ss-patched gets a new narHash every run and can never be
+          # substituted from cache. Nix git inputs contain no .git at all,
+          # so removing it restores the source shape Nix expects.
+          find .ue4ss-src -name .git -prune -exec rm -rf {} +
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -158,19 +242,34 @@ jobs:
             echo "sccache unavailable - no stats"
           fi
 
+      - name: Report sccache hit rate
+        if: always()
+        shell: bash
+        run: |
+          BIN="${SCCACHE_BIN:-${SCCACHE_PATH:-}}"
+          if [ -z "$BIN" ]; then BIN="$(command -v sccache 2>/dev/null || true)"; fi
+          if [ ! -x "$BIN" ]; then
+            echo "sccache unavailable - no cache-health data" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          STATS="$("$BIN" --show-stats)"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$STATS" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          HITS="$(echo "$STATS" | awk '$1 == "Cache" && $2 == "hits" && $3 ~ /^[0-9]+$/ { print $3; exit }')"
+          MISSES="$(echo "$STATS" | awk '$1 == "Cache" && $2 == "misses" && $3 ~ /^[0-9]+$/ { print $3; exit }')"
+          if [ -n "$HITS" ] && [ -n "$MISSES" ]; then
+            RATE="$(awk -v h="$HITS" -v m="$MISSES" 'BEGIN { t = h + m; printf "%.1f", (t > 0 ? 100 * h / t : 0) }')"
+            echo "sccache hit rate: ${RATE}% (${HITS} hits / ${MISSES} misses)" >> "$GITHUB_STEP_SUMMARY"
+            if awk -v r="$RATE" 'BEGIN { exit !(r < 80) }'; then
+              echo "::warning::sccache hit rate ${RATE}% is below 80% - this run is cache-cold or its cache scope changed"
+            fi
+          else
+            echo "sccache stats did not contain hit/miss counters" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Package
         run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package
-
-      - name: Extract version
-        id: version
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#server/v}"
-          else
-            VERSION="dev-$(git rev-parse --short HEAD)"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Upload mod artifact
         uses: actions/upload-artifact@v4
@@ -179,13 +278,12 @@ jobs:
           path: MotorTownMods-package.zip
           retention-days: 30
 
-
   # ============================================================
-  # Job 3: Merge and release
+  # Job 3: Merge and release (tag push or version bump on master)
   # ============================================================
   create-release:
     needs: [build-lua-deps, build-mod]
-    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
+    if: needs.build-mod.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -217,7 +315,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: MotorTownMods v${{ needs.build-mod.outputs.version }}
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.build-mod.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: MotorTownMods_v*.zip
           generate_release_notes: true
-          make_latest: true
+          prerelease: ${{ needs.build-mod.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.build-mod.outputs.prerelease != 'true' }}
