@@ -352,7 +352,29 @@ local function pose_actor(p)
   return (p and seated_vehicle(p)) or p
 end
 
+local function ps_pawn(ps)
+  if not ps then return nil end
+  local ok, pp = pcall(function()
+    if ps.IsValid and not ps:IsValid() then return nil end
+    return ps.PawnPrivate
+  end)
+  if ok and has_actor_pose(pp) then return pp end
+  return nil
+end
+
 local function target_loc(self)
+  -- If we hold a PlayerState, prefer its live PawnPrivate (which is the
+  -- driven AMTVehicle like Duro_C when driving, or MTPlayerCharacter_C on foot!)
+  -- so we always track the full 60 Hz replicated actor instead of 1.5 Hz
+  -- PlayerState.Location.
+  if self.target_ps then
+    local live_pp = ps_pawn(self.target_ps)
+    if live_pp then
+      self.target = live_pp
+    elseif self.target and not has_actor_pose(self.target) then
+      self.target = nil
+    end
+  end
   if not self.target then
     -- Periodically check whether the live pawn has streamed in (or re-resolve
     -- a lost target).
@@ -688,7 +710,7 @@ function E.pose_of(self, s)
     elseif o.fwd or o.right then
       f_off, r_off, u_off = o.fwd or 0.0, o.right or 0.0, o.up or 0.0
     else
-      f_off, r_off, u_off = -(o.back or 900.0), 0.0, o.up or 350.0
+      f_off, r_off, u_off = -(o.back or 1600.0), 0.0, o.up or 460.0
     end
     local rx, ry = -fy, fx
     local dt = st.dt or (1.0 / 60.0)
@@ -1157,13 +1179,16 @@ function E.set_target_by_name(self, name)
       return true, "target " .. name
     end
   end
-  -- Fallback: driver is on the server (GameState.PlayerArray) but currently
-  -- outside UE5's network relevancy bubble. Track PlayerState.Location until
-  -- their MTPlayerCharacter_C streams in.
-  for _, ps in ipairs(self:player_states(true)) do
+  -- Check GameState.PlayerArray (map-wide): when a player is driving a vehicle
+  -- in Motor Town, their PlayerState.PawnPrivate is the AMTVehicle (e.g. Duro_C),
+  -- NOT an MTPlayerCharacter_C! Prefer PawnPrivate when valid so driving players
+  -- get full 60 Hz vehicle tracking; fall back to PlayerState.Location when out
+  -- of network relevancy.
+  for _, ps in ipairs(self:player_states()) do
     if self:ps_name(ps) == name then
       if self.target_name ~= name then self:reset_smoothing() end
-      self.target = nil
+      local pp = ps_pawn(ps)
+      self.target = pp
       self.target_ps = ps
       self.target_name = name
       self.target_index = nil
