@@ -1054,8 +1054,11 @@ function buildShots(name,points,gates,opts){
   const n=points.length;
   const closed=isClosedLoop(points);
   const d0=directionAt(points,0),nn0=leftNormal(d0),halfGate=(gates[0]*100.0)/2.0;
-  const startLoc=addv(addv(addv(points[0],scalev(d0,-startBackCm)),scalev(nn0,halfGate+sideMarginCm)),[0,0,300.0]);
-  const startAt=addv(points[0],scalev(d0,600.0));
+  // Front-on centerline shot looking back down the starting grid so pit
+  // buildings, barriers, and grandstands on the sides never block the view.
+  const startAheadCm=opts.startAheadCm!==undefined?opts.startAheadCm:1800.0;
+  const startLoc=addv(addv(points[0],scalev(d0,startAheadCm)),[0,0,420.0]);
+  const startAt=addv(addv(points[0],scalev(d0,-600.0)),[0,0,120.0]);
   const fromPose={location:startLoc,look_at:startAt,fov:fovStart};
   const toPose={location:addv(addv(points[0],[0,0,overheadCm]),scalev(nn0,-400.0)),
     look_at:addv(points[0],scalev(d0,1000.0)),fov:fovAir};
@@ -1083,9 +1086,13 @@ function buildShots(name,points,gates,opts){
     }
     return best;
   };
-  const dn=directionAt(points,n-1),nnLast=leftNormal(dn),halfLast=(gates[n-1]*100.0)/2.0;
-  const finishLoc=addv(addv(addv(points[n-1],scalev(nnLast,halfLast+500.0)),scalev(dn,-400.0)),[0,0,tracksideHeightCm]);
-  const finishTarget=closed?points[0]:addv(points[n-1],scalev(dn,-800.0));
+  const dn=directionAt(points,n-1);
+  // Front-on centerline finish shot: sits past the finish line on the road
+  // centerline looking back at oncoming cars so side structures cannot block.
+  const finAnchor=closed?points[0]:points[n-1];
+  const finDir=closed?d0:dn;
+  const finishLoc=addv(addv(finAnchor,scalev(finDir,1800.0)),[0,0,420.0]);
+  const finishTarget=addv(addv(finAnchor,scalev(finDir,-800.0)),[0,0,120.0]);
   shots.push(lookAtShot('finish_line',finishLoc,finishTarget,fovSide));
   let cx=0,cy=0,cz=0;
   for(const p of points){cx+=p[0];cy+=p[1];cz+=p[2]}

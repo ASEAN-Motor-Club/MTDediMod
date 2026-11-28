@@ -406,15 +406,53 @@ class RoutePlannerTests(unittest.TestCase):
     @staticmethod
     def core_projection(plan):
         """Fields still byte-identical to the unchanged Python reference:
-        metadata plus the original 11 shots (slots 1-9, finish_line, overview).
-        The v2 planner deliberately adds broadcast rigs, specialty cameras and
-        outside-apex corners; those are covered by dedicated tests below. The
-        Python reference in amc-racecam is intentionally left untouched here
-        (out of this worktree's file ownership).
+        metadata plus the unchanged follow/overview core shots.
+        v2 deliberately repositions start_line/fly_up/finish_line to front-on
+        centerline angles (avoiding side barriers/grandstands) and adds
+        broadcast rigs, specialty cameras, and outside-apex corners; those are
+        covered by dedicated tests below.
         """
+        front_repositioned = {"start_line", "fly_up", "finish_line"}
         return {"schema": plan["schema"], "name": plan["name"],
                 "source": plan["source"], "units": plan["units"],
-                "shots": plan["shots"][:11]}
+                "shots": [s for s in plan["shots"][:11]
+                          if s.get("id") not in front_repositioned]}
+
+    def test_start_and_finish_line_are_front_on_centerline(self):
+        node = self._node_scripts()
+        for (name, pts, _gates), got in zip((s() for s in SHAPES), node):
+            with self.subTest(shape=name):
+                by_id = {s["id"]: s for s in got["script"]["shots"]}
+                dx = pts[1][0] - pts[0][0]
+                dy = pts[1][1] - pts[0][1]
+                ln = math.hypot(dx, dy)
+                d0x, d0y = dx / ln, dy / ln
+                # start_line sits ahead of points[0] on the centerline (zero lateral offset)
+                st = by_id["start_line"]
+                vx, vy = st["location"][0] - pts[0][0], st["location"][1] - pts[0][1]
+                along = vx * d0x + vy * d0y
+                lateral = abs(-vx * d0y + vy * d0x)
+                self.assertGreater(along, 1000.0)
+                self.assertLess(lateral, 5.0)
+                # looks back toward the grid behind points[0]
+                lx, ly = st["look_at"][0] - pts[0][0], st["look_at"][1] - pts[0][1]
+                self.assertLess(lx * d0x + ly * d0y, -200.0)
+                # finish_line also sits ahead of its anchor on the centerline
+                fin = by_id["finish_line"]
+                closed = got["script"]["source"]["closed_loop"]
+                anchor = pts[0] if closed else pts[-1]
+                if closed:
+                    fdx, fdy = d0x, d0y
+                else:
+                    ex = pts[-1][0] - pts[-2][0]
+                    ey = pts[-1][1] - pts[-2][1]
+                    el = math.hypot(ex, ey)
+                    fdx, fdy = ex / el, ey / el
+                fvx, fvy = fin["location"][0] - anchor[0], fin["location"][1] - anchor[1]
+                self.assertGreater(fvx * fdx + fvy * fdy, 1000.0)
+                self.assertLess(abs(-fvx * fdy + fvy * fdx), 5.0)
+                flx, fly = fin["look_at"][0] - anchor[0], fin["look_at"][1] - anchor[1]
+                self.assertLess(flx * fdx + fly * fdy, -200.0)
 
     @staticmethod
     def corner_ids(plan):
