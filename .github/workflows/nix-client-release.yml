@@ -6,25 +6,44 @@ on:
       - master
     tags:
       - 'client/v*'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'VERSION'
+      - 'ClientScripts/**'
+      - 'shared/**'
+      - 'client-signatures/**'
+      - 'overlay/**'
+      - 'tools/**'
+      - 'patches-ue4ss/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'scripts/check_version.py'
+      - '.github/workflows/nix-client-release.yml'
   workflow_dispatch:
-    inputs:
-      create_release:
-        description: 'Create a GitHub release'
-        type: boolean
-        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: client-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-client-mod:
+    # PRs from forks have no UEPSEUDO_PAT, so they cannot build the private UE4SS submodules.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
       USE_SCCACHE: "1"
       RUSTC_WRAPPER: sccache
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      should_release: ${{ steps.release.outputs.should_release }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
 
     steps:
       - name: Checkout
@@ -34,6 +53,59 @@ jobs:
           lfs: true
           submodules: false
           persist-credentials: false
+
+      - name: Validate version and determine release
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_version.py
+          FILE_VER="$(tr -d '\r\n' < VERSION)"
+
+          SHOULD_RELEASE="false"
+          TAG=""
+          RELEASE_VER="${FILE_VER}-dev-$(git rev-parse --short HEAD)"
+          PRERELEASE="false"
+
+          if [[ "${{ github.ref }}" == refs/tags/client/v* ]]; then
+            TAG="${{ github.ref_name }}"
+            python3 scripts/check_version.py --tag "$TAG"
+            RELEASE_VER="${TAG#client/v}"
+            if [[ "$RELEASE_VER" == *-rc* || "$RELEASE_VER" == *-exp.* ]]; then
+              PRERELEASE="true"
+            else
+              git fetch --no-tags origin master
+              if ! git merge-base --is-ancestor HEAD origin/master; then
+                echo "::error::Stable tag $TAG must point to a commit on master (use -exp.<name>.<N> or -rc.<N> for branch previews)"
+                exit 1
+              fi
+            fi
+            SHOULD_RELEASE="true"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/master" ]]; then
+            BEFORE="${{ github.event.before }}"
+            if [[ -z "$BEFORE" || "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+              PREVIOUS="$(git show HEAD^:VERSION 2>/dev/null | tr -d '\r\n' || true)"
+            else
+              PREVIOUS="$(git show "${BEFORE}:VERSION" 2>/dev/null | tr -d '\r\n' || true)"
+            fi
+            if [[ "$FILE_VER" != "$PREVIOUS" ]]; then
+              CANDIDATE="client/v${FILE_VER}"
+              python3 scripts/check_version.py --tag "$CANDIDATE"
+              if git ls-remote --tags origin "refs/tags/$CANDIDATE" | grep -q .; then
+                echo "Tag $CANDIDATE already exists — skipping automatic release"
+              else
+                SHOULD_RELEASE="true"
+                TAG="$CANDIDATE"
+                RELEASE_VER="$FILE_VER"
+              fi
+            fi
+          fi
+
+          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$RELEASE_VER" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Release decision: should_release=$SHOULD_RELEASE tag=$TAG version=$RELEASE_VER prerelease=$PRERELEASE"
 
       - name: Get UE4SS locked revision
         id: ue4ss-rev
@@ -143,19 +215,18 @@ jobs:
       - name: Package both client variants
         run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package-client-all
 
-      - name: Extract version from VERSION
-        id: version
+      - name: Rename prerelease artifacts to include tag suffix
+        if: steps.release.outputs.prerelease == 'true'
+        shell: bash
         run: |
-          VERSION="$(tr -d '\r\n' < VERSION)"
-          if [[ -z "$VERSION" ]]; then echo "VERSION file is empty"; exit 1; fi
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            if [[ "${{ github.ref_name }}" != "client/v$VERSION" ]]; then
-              echo "Tag ${{ github.ref_name }} does not match VERSION $VERSION"; exit 1
-            fi
-          else
-            VERSION="$VERSION-dev-$(git rev-parse --short HEAD)"
+          set -euo pipefail
+          FILE_VER="$(tr -d '\r\n' < VERSION)"
+          RELEASE_VER="${{ steps.release.outputs.version }}"
+          if [[ "$FILE_VER" != "$RELEASE_VER" ]]; then
+            for variant in admin player; do
+              mv "MotorTownClientMod-${FILE_VER}-${variant}.zip" "MotorTownClientMod-${RELEASE_VER}-${variant}.zip"
+            done
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Upload client artifacts
         uses: actions/upload-artifact@v4
@@ -166,7 +237,7 @@ jobs:
 
   create-release:
     needs: build-client-mod
-    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
+    if: needs.build-client-mod.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -181,9 +252,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: MotorTownClientMod v${{ needs.build-client-mod.outputs.version }}
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.build-client-mod.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: |
             MotorTownClientMod-*-admin.zip
             MotorTownClientMod-*-player.zip
           generate_release_notes: true
+          prerelease: ${{ needs.build-client-mod.outputs.prerelease == 'true' }}
           make_latest: false
