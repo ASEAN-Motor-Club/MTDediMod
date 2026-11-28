@@ -661,18 +661,21 @@ local function make_response(req)
       end
     elseif cmd == "hud" then
       local mode = string.lower(tostring(args or ""))
-      if mode ~= "full" and mode ~= "tags_only" and mode ~= "clean" then
+      local init = get_init()
+      local applied = nil
+      if init and type(init.set_hud_mode) == "function" then
+        local ok, res = pcall(function() return init.set_hud_mode(mode) end)
+        if ok then applied = res end
+      end
+      if not applied then
         code, body = 400, '{"ok":false,"error":"invalid mode"}'
         last_result = "ERR invalid mode"
         audit("command", cmd, last_result)
       else
-        local init = get_init()
-        if init then init.hud_mode = mode end
-        enqueue("hud", mode)
-        last_result = "hud:" .. mode
-        code, body = 200, '{"ok":true,"status":"hud:' .. jstr(mode) ..
-          '","hud_mode":"' .. jstr(mode) .. '"}'
-        log("CMD hud " .. mode .. " -> queued")
+        last_result = "hud:" .. applied
+        code, body = 200, '{"ok":true,"status":"hud:' .. jstr(applied) ..
+          '","hud_mode":"' .. jstr(applied) .. '"}'
+        log("CMD hud " .. applied .. " -> " .. last_result)
         audit("command", cmd, last_result)
       end
     elseif cmd == "director" then

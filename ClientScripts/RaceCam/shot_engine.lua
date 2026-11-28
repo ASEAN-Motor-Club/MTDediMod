@@ -45,7 +45,7 @@ local function norm_xy(x, y, fb_x, fb_y)
 end
 
 local DEFAULT_TAU = {
-  tau_pos = 0.14, tau_look = 0.12, tau_hdg = 0.20, tau_fov = 0.22,
+  tau_pos = 0.26, tau_look = 0.22, tau_hdg = 0.35, tau_fov = 0.22,
 }
 
 -- Trackside broadcast tripods aim a little above the car's root so the car
@@ -421,17 +421,15 @@ local function target_state(self, s, preset)
   local ex, ey, ez = raw[1] - px, raw[2] - py, raw[3] - pz
   local err = math.sqrt(ex * ex + ey * ey + ez * ez)
   local scale = 1.0
-  if err > 300.0 then
+  if err > 1200.0 then
     -- Brief packet-loss rubber-banding: bound the step correction so the
     -- camera glides instead of snapping. >25 m is handled above as a cut.
-    scale = err > 2500.0 and 0.12 or (300.0 / err)
+    scale = err > 2500.0 and 0.12 or (1200.0 / err)
   end
   ex, ey, ez = ex * scale, ey * scale, ez * scale
   -- Critically damped alpha-beta predictor (zeta = 1.0, ZERO spring bounce):
   -- For a 2nd-order critically damped tracker with time constant tau_pos,
   -- alpha = 1 - exp(-2*dt/tau_pos) and beta_crit = 2 - alpha - 2*sqrt(1-alpha).
-  -- This converges in ~4*tau_pos on hard braking/acceleration with zero
-  -- overshoot while crushing 10-15 Hz network packet jitter.
   local tau_pos = shot_tau(self, s, preset, "tau_pos")
   local alpha_pos = exp_alpha(dt, tau_pos * 0.5)
   local beta_vel = 2.0 - alpha_pos - 2.0 * math.sqrt(math.max(0.0, 1.0 - alpha_pos))
@@ -440,6 +438,26 @@ local function target_state(self, s, preset)
   f.vel[1] = clamp_num(f.vel[1] + ex * inv_dt * beta_vel, -12000.0, 12000.0)
   f.vel[2] = clamp_num(f.vel[2] + ey * inv_dt * beta_vel, -12000.0, 12000.0)
   f.vel[3] = clamp_num(f.vel[3] + ez * inv_dt * beta_vel, -12000.0, 12000.0)
+  -- Blend live UE vehicle velocity when available (smoothly low-passed) so
+  -- real multiplayer cars track braking/accel cleanly even at high tau_pos.
+  if not is_remote and tgt then
+    local ok_v, rv = pcall(function()
+      local src = self:seated_vehicle(tgt) or tgt
+      if src and src.GetVelocity then return src:GetVelocity() end
+      return nil
+    end)
+    if ok_v and rv then
+      local vx = rv.X or rv.x or rv[1]
+      local vy = rv.Y or rv.y or rv[2]
+      local vz = rv.Z or rv.z or rv[3]
+      if type(vx) == "number" and type(vy) == "number" and type(vz) == "number" then
+        local kv = exp_alpha(dt, tau_pos * 1.2)
+        f.vel[1] = clamp_num(lerp(f.vel[1], vx, kv), -12000.0, 12000.0)
+        f.vel[2] = clamp_num(lerp(f.vel[2], vy, kv), -12000.0, 12000.0)
+        f.vel[3] = clamp_num(lerp(f.vel[3], vz, kv), -12000.0, 12000.0)
+      end
+    end
+  end
 
   -- Heading: prefer the velocity vector once the car is moving, blended with
   -- the (noisier) replicated actor yaw; fall back to pure smoothed actor yaw

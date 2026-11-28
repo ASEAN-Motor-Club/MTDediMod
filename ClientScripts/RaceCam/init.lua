@@ -571,6 +571,7 @@ end
 
 local HUD_MODES = { full = true, tags_only = true, clean = true }
 local hud_pc_cache = nil
+local hud_orig_vis = nil
 
 local function apply_hud_mode(mode)
     pcall(function()
@@ -583,17 +584,35 @@ local function apply_hud_mode(mode)
         if not pc or (pc.IsValid and not pc:IsValid()) or not pc.GetHUD then return end
         local hud = pc:GetHUD()
         if not hud or (hud.IsValid and not hud:IsValid()) then return end
-        local hud_op = (mode == "full") and 1.0 or 0.0
-        local tag_op = (mode == "clean") and 0.0 or 1.0
+        local hide_hud = (mode ~= "full")
+        local hide_tags = (mode == "clean")
+        local hud_op = hide_hud and 0.0 or 1.0
+        local tag_op = hide_tags and 0.0 or 1.0
         local hw = hud.HUDWidget
-        if hw and (not hw.IsValid or hw:IsValid()) and hw.SetRenderOpacity then
-            hw:SetRenderOpacity(hud_op)
+        if hw and (not hw.IsValid or hw:IsValid()) then
+            if hw.SetRenderOpacity then hw:SetRenderOpacity(hud_op) end
+            -- Also toggle ESlateVisibility (1=Collapsed, 4=SelfHitTestInvisible)
+            -- because widgets like MinimapWidget ignore parent render opacity.
+            if hw.SetVisibility then
+                if hide_hud then
+                    if hud_orig_vis == nil and hw.GetVisibility then
+                        local ok_v, v = pcall(function() return hw:GetVisibility() end)
+                        if ok_v and type(v) == "number" then hud_orig_vis = v end
+                    end
+                    pcall(function() hw:SetVisibility(1) end)
+                else
+                    pcall(function() hw:SetVisibility(hud_orig_vis or 4) end)
+                end
+            end
         end
         local tags = hud.NameTagWidgets
         if tags then
             local function set_tag(w)
-                if w and (not w.IsValid or w:IsValid()) and w.SetRenderOpacity then
-                    w:SetRenderOpacity(tag_op)
+                if w and (not w.IsValid or w:IsValid()) then
+                    if w.SetRenderOpacity then w:SetRenderOpacity(tag_op) end
+                    if w.SetVisibility then
+                        pcall(function() w:SetVisibility(hide_tags and 1 or 4) end)
+                    end
                 end
             end
             if type(tags) == "table" then

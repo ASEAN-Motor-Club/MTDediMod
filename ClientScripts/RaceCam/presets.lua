@@ -18,7 +18,7 @@ P.presets = {
     duration = 0.0,
     easing = "linear",
     flags = { pin_view_target = true, smoothing_alpha = 0.12, heading_alpha = 0.10, use_route_tangent = false,
-              tau_pos = 0.12, tau_look = 0.10, tau_hdg = 0.18, tau_fov = 0.25 },
+              tau_pos = 0.28, tau_look = 0.22, tau_hdg = 0.38, tau_fov = 0.25 },
   },
   route_flyover = {
     id = "route_flyover",
@@ -78,7 +78,7 @@ P.presets = {
     duration = 0.0,
     easing = "linear",
     flags = { pin_view_target = true, smoothing_alpha = 0.10, use_route_tangent = false,
-              tau_pos = 0.18, tau_look = 0.14, tau_hdg = 0.20, tau_fov = 0.25 },
+              tau_pos = 0.34, tau_look = 0.26, tau_hdg = 0.42, tau_fov = 0.25 },
   },
   heli_follow = {
     id = "heli_follow",
@@ -90,7 +90,7 @@ P.presets = {
     duration = 0.0,
     easing = "linear",
     flags = { pin_view_target = true, smoothing_alpha = 0.05, use_route_tangent = false,
-              tau_pos = 0.35, tau_look = 0.22, tau_hdg = 1.10, tau_fov = 0.25 },
+              tau_pos = 0.42, tau_look = 0.28, tau_hdg = 1.10, tau_fov = 0.25 },
   },
   front_chase = {
     id = "front_chase",
@@ -102,7 +102,7 @@ P.presets = {
     duration = 0.0,
     easing = "linear",
     flags = { pin_view_target = true, smoothing_alpha = 0.14, use_route_tangent = false,
-              tau_pos = 0.14, tau_look = 0.12, tau_hdg = 0.20, tau_fov = 0.25 },
+              tau_pos = 0.30, tau_look = 0.22, tau_hdg = 0.38, tau_fov = 0.25 },
   },
   side_tracking = {
     id = "side_tracking",
@@ -114,7 +114,7 @@ P.presets = {
     duration = 0.0,
     easing = "linear",
     flags = { pin_view_target = true, smoothing_alpha = 0.14, use_route_tangent = false,
-              tau_pos = 0.14, tau_look = 0.12, tau_hdg = 0.18, tau_fov = 0.25 },
+              tau_pos = 0.30, tau_look = 0.24, tau_hdg = 0.40, tau_fov = 0.25 },
   },
   onboard_tcam = {
     id = "onboard_tcam",
@@ -150,7 +150,7 @@ P.presets = {
     duration = 0.0,
     easing = "linear",
     flags = { pin_view_target = true, smoothing_alpha = 0.20, use_route_tangent = false,
-              tau_pos = 0.18, tau_look = 0.14, tau_hdg = 0.24, tau_fov = 0.25 },
+              tau_pos = 0.32, tau_look = 0.24, tau_hdg = 0.40, tau_fov = 0.25 },
   },
   orbit_hero = {
     id = "orbit_hero",
@@ -162,7 +162,7 @@ P.presets = {
     duration = 0.0,
     easing = "linear",
     flags = { pin_view_target = true, smoothing_alpha = 1.0, use_route_tangent = false,
-              tau_pos = 0.20, tau_look = 0.12, tau_hdg = 0.20, tau_fov = 0.25 },
+              tau_pos = 0.32, tau_look = 0.22, tau_hdg = 0.35, tau_fov = 0.25 },
   },
 }
 
