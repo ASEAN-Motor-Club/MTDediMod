@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [Unreleased]
+
+#### Changed
+- Versioning now uses a stable `SERVER_VERSION` file. RC suffixes are reserved for explicitly pushed preview tags, not for routine releases.
+
 ### [server/v0.44.0-rc14] - 2026-11-27
 
 #### Fixed
@@ -583,6 +588,7 @@ Re-release for test container deployment (no server-side code changes since rc5)
 ### [Unreleased]
 
 #### Added
+- `SERVER_VERSION` is the server's source of truth for its stable version; `VERSION` is now the client's stable version without an RC suffix. `scripts/check_version.py` validates both files and release tags. RC tags remain valid only as explicit prereleases.
 - `VERSION` is the single source of truth for the client version. Generated `ClientScripts/BuildConfig.lua` supplies it to `Statics.lua` at package time; git tags only trigger the release and must match the file.
 - `nix run .#package-client-all` builds both distributable variants in one command: `MotorTownClientMod-<version>-admin.zip` and `MotorTownClientMod-<version>-player.zip`. `nix run .#build-overlay -- player` compiles the DLL without admin UI.
 - Static build guard: the player package physically excludes admin shortcuts, commands, bridge and vehicle/integrity modules, replaces them with player-only implementations, and fails the build if admin symbols leak. The Rust overlay uses a default-on `admin` cargo feature that the player DLL disables.

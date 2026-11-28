@@ -32,31 +32,52 @@ This repository produces **two independent artifacts**:
 
 ## Versioning
 
-Server and client mods are versioned **independently** using prefixed git tags:
+Client and server are versioned independently with **stable semantic versions**.
+The version files are the source of truth; git tags only publish them:
 
-```
-server/v0.34.0-rc5    # server mod releases
-client/v0.1.0         # client mod releases
+- `VERSION` — client version, plain `MAJOR.MINOR.PATCH` (e.g. `0.6.1`)
+- `SERVER_VERSION` — server version, plain `MAJOR.MINOR.PATCH` (e.g. `0.44.0`)
+
+No prerelease suffix belongs in either file. Merge the version bump together with
+its CHANGELOG entry: a merge to `master` that changes a version file builds once,
+tags the merge commit as `client/v<VERSION>` or `server/v<SERVER_VERSION>`, and
+publishes the GitHub release automatically. Do not hand-tag a normal release.
+
+**Patch numbers replace `-rcN`:** every bugfix, tweak, or staging-to-prod
+iteration bumps PATCH (`0.44.1`, `0.44.2`, …). Use MINOR for new features or
+Motor Town game-update compatibility, and MAJOR for breaking changes.
+
+Prerelease tags (`-exp.<name>.<N>` or `-rc.<N>` / `-rcN`, e.g.
+`server/v0.45.0-exp.junction-priority.1`) are manual branch previews only. They
+publish as GitHub prereleases (`make_latest: false`), may be pushed from any
+branch, and never belong in `VERSION` / `SERVER_VERSION`. Stable tags require
+`master` ancestry.
+
+Validate files and tags with:
+
+```bash
+python3 scripts/check_version.py
+python3 scripts/check_version.py --tag client/v$(cat VERSION)
+python3 scripts/check_version.py --tag server/v$(cat SERVER_VERSION)-exp.demo.1
 ```
 
 ### When to bump what
 
-| Change | Server tag | Client tag |
-|--------|-----------|------------|
-| Server Lua fix (`Scripts/`) | bump RC | no change |
-| Client Lua fix (`ClientScripts/`) | no change | bump RC or patch |
-| New C++ hook (`src/`) | bump minor | bump minor (if proxy DLL rebuilt) |
-| Shared Lua change (`shared/`) | bump both | bump both |
-| Config-only tweak | bump RC on affected side | — |
+- Server-only change (`Scripts/`, `src/`, `shared/`): bump `SERVER_VERSION`.
+- Client-only change (`ClientScripts/`, overlay, `shared/`): bump `VERSION`.
+- Change affecting both: bump both.
+- Patch for a fix, minor for a new feature, major for a breaking change.
+- Docs/CI-only change with no shipped artifact: no bump.
 
 ### Listing existing tags
 
 ```bash
-git tag -l 'server/*' --sort=-v:refname | head -5   # Server versions
-git tag -l 'client/*' --sort=-v:refname | head -5   # Client versions
+git tag -l 'client/v*' --sort=-v:refname | head -5
+git tag -l 'server/v*' --sort=-v:refname | head -5
 ```
 
-> **Note**: Legacy tags (`v0.20.x` through `v0.34.0-rc4`) predate the split and cover server-only releases.
+> **Note**: Legacy `rc-*` tags and the old `v0.20.x`–`v0.34.0-rc4` tags are
+> historical prereleases. Do not copy their naming into new releases.
 
 ---
 
@@ -116,7 +137,9 @@ The client package bundles `dwmapi.dll`, `UE4SS.dll`, client Lua scripts from `C
 
 ### GitHub Actions CI
 
-The `.github/workflows/nix-release.yml` workflow triggers on tag pushes matching `server/v*` and `client/v*`. It performs the Nix build on an Ubuntu runner.
+- `.github/workflows/nix-release.yml` builds and releases the **server mod** on `master` pushes, `server/v*` tags, and server-affecting PRs.
+- `.github/workflows/nix-client-release.yml` builds and releases the **client mod** (admin + player variants) on `master` pushes, `client/v*` tags, and client-affecting PRs.
+- Bumping `VERSION` or `SERVER_VERSION` on `master` tags and publishes that release automatically from the same build run.
 
 **Authentication Note:**
 Because `UEPseudo` is a private submodule of the `Re-UE4SS` organization, the Nix daemon requires authentication to fetch it. The CI uses a **Classic GitHub PAT** (with `repo` scope) passed to the Nix installer via `access-tokens = github.com=PAT`.
