@@ -268,6 +268,25 @@ For one-shot delays, use `ExecuteInGameThreadWithDelay(ms, callback)`.
 - PR #1201 "Increased stability for Lua mods" — thread safety and callback deferral, does NOT fix this GC bug directly
 - PR #1130 "Exposes AsyncCompute and JSON to Lua API" — unrelated
 
+### Delayed-action re-entrancy crash (process_delayed_actions)
+
+**Symptom**: `EXCEPTION_ACCESS_VIOLATION` in `UE4SS.dll` inside `std::vector::erase`
+/`std::erase_if` while a game-thread Lua callback is running.
+
+**Root cause**: at pinned RE-UE4SS, `process_delayed_actions` invoked the Lua callback
+from inside `std::erase_if(m_delayed_game_thread_actions, ...)`. Callbacks that call
+`LoopInGameThreadWithDelay` / `ExecuteInGameThreadWithDelay` (e.g. RPManager autopilot
+poll, VehicleManager part verification) `emplace_back` into the same vector,
+reallocating it while `erase_if` still holds iterators into the freed buffer. Erasing
+an action in that same pass then memmoves with stale iterators and reads unmapped heap.
+
+**Fix**: `patches-ue4ss/ue4ss-delayed-actions-reentrancy-fix.patch` — surgical
+backport of the relevant part of upstream PR #1201 (272ce2f8): pending queues for
+registrations made during hook iteration, snapshot-before-execute in
+`process_delayed_actions` / `process_simple_actions`, and cleanup `erase_if` with no
+Lua callback in flight. Applied by `patchedUE4SS` in `flake.nix` for both Nix and CI
+builds (CI overrides only the `ue4ss` input, not the patch list).
+
 ## Deployment
 
 For the full end-to-end deployment workflow (uploading, NixOS config, cache purging, server restart, client distribution), see the [mtdedimod-deploy skill](../.agents/skills/mtdedimod-deploy/SKILL.md) in the parent `amc-server` repository.

@@ -1,9 +1,5 @@
--- shot_engine.lua — state machine for RaceCam shots and triggers.
--- Resolve the RaceCam data directory without hardcoding a drive letter:
--- the RACECAM_DIR environment variable wins; otherwise candidate relative
--- paths are probed by attempting to create a marker file (io.open append).
-local function racecam_dir() return require("RaceCam/path").data_dir() end
-
+-- RaceCam/shot_engine.lua — state machine for RaceCam shots and triggers.
+local Paths = require("RaceCam/paths")
 local E = {}
 E.__index = E
 
@@ -80,7 +76,7 @@ function E.new(core, presets, plan, route)
     follow_pos = nil, follow_fwd = nil,
     queue_entries = {},
     last = { pos = { 0, 0, 0 }, look = { 0, 0, 0 }, fov = 70.0 },
-    log_path = racecam_dir() .. "shots.txt",
+    log_path = Paths.log_path("shots.txt"),
   }, E)
   return e
 end

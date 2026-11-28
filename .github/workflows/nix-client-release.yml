@@ -2,6 +2,8 @@ name: Nix Client Build and Release
 
 on:
   push:
+    branches:
+      - master
     tags:
       - 'client/v*'
   workflow_dispatch:
@@ -17,6 +19,10 @@ permissions:
 jobs:
   build-client-mod:
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      USE_SCCACHE: "1"
+      RUSTC_WRAPPER: sccache
     outputs:
       version: ${{ steps.version.outputs.version }}
 
@@ -42,6 +48,16 @@ jobs:
           submodules: recursive
           token: ${{ secrets.UEPSEUDO_PAT }}
 
+      - name: Normalize UE4SS source for Nix
+        shell: bash
+        run: |
+          # actions/checkout writes the token into .git/config and adds reflog
+          # entries. A Nix path: input copies that metadata into the store, so
+          # ue4ss-patched gets a new narHash every run and can never be
+          # substituted from cache. Nix git inputs contain no .git at all,
+          # so removing it restores the source shape Nix expects.
+          find .ue4ss-src -name .git -prune -exec rm -rf {} +
+
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
@@ -50,6 +66,11 @@ jobs:
 
       - name: Setup Nix Cache
         uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Enable sccache (GitHub Actions Cache v2)
+        uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: "v0.10.0"
 
       - name: Cache xwin
         uses: actions/cache@v4
@@ -64,10 +85,60 @@ jobs:
       - name: Build client
         run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-client
 
+      - name: Show sccache stats
+        if: always()
+        shell: bash
+        run: |
+          BIN="${SCCACHE_BIN:-${SCCACHE_PATH:-}}"
+          if [ -z "$BIN" ]; then BIN="$(command -v sccache 2>/dev/null || true)"; fi
+          if [ -n "$BIN" ] && [ -x "$BIN" ]; then
+            "$BIN" --show-stats
+          else
+            echo "sccache unavailable - no stats"
+          fi
+
       - name: Build egui overlay (admin and player)
         run: |
           nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-overlay -- admin
           nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#build-overlay -- player
+
+      - name: Show sccache stats
+        if: always()
+        shell: bash
+        run: |
+          BIN="${SCCACHE_BIN:-${SCCACHE_PATH:-}}"
+          if [ -z "$BIN" ]; then BIN="$(command -v sccache 2>/dev/null || true)"; fi
+          if [ -n "$BIN" ] && [ -x "$BIN" ]; then
+            "$BIN" --show-stats
+          else
+            echo "sccache unavailable - no stats"
+          fi
+
+      - name: Report sccache hit rate
+        if: always()
+        shell: bash
+        run: |
+          BIN="${SCCACHE_BIN:-${SCCACHE_PATH:-}}"
+          if [ -z "$BIN" ]; then BIN="$(command -v sccache 2>/dev/null || true)"; fi
+          if [ ! -x "$BIN" ]; then
+            echo "sccache unavailable - no cache-health data" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          STATS="$("$BIN" --show-stats)"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$STATS" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          HITS="$(echo "$STATS" | awk '$1 == "Cache" && $2 == "hits" && $3 ~ /^[0-9]+$/ { print $3; exit }')"
+          MISSES="$(echo "$STATS" | awk '$1 == "Cache" && $2 == "misses" && $3 ~ /^[0-9]+$/ { print $3; exit }')"
+          if [ -n "$HITS" ] && [ -n "$MISSES" ]; then
+            RATE="$(awk -v h="$HITS" -v m="$MISSES" 'BEGIN { t = h + m; printf "%.1f", (t > 0 ? 100 * h / t : 0) }')"
+            echo "sccache hit rate: ${RATE}% (${HITS} hits / ${MISSES} misses)" >> "$GITHUB_STEP_SUMMARY"
+            if awk -v r="$RATE" 'BEGIN { exit !(r < 80) }'; then
+              echo "::warning::sccache hit rate ${RATE}% is below 80% - this run is cache-cold or its cache scope changed"
+            fi
+          else
+            echo "sccache stats did not contain hit/miss counters" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Package both client variants
         run: nix run --no-update-lock-file --override-input ue4ss "path:$PWD/.ue4ss-src" .#package-client-all

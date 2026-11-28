@@ -83,8 +83,13 @@
 
           patches = [
             ./patches-ue4ss/ue4ss-cross-compile.patch
+            ./patches-ue4ss/ue4ss-z7-debug-info.patch
             ./patches-ue4ss/lua-lgc-weak-table-metatable-fix.patch
             ./patches-ue4ss/ue4ss-skip-delegate-properties-in-struct-conversion.patch
+            # Backport of upstream PR #1201 (272ce2f8): pending queues +
+            # snapshot-before-execute so Lua callbacks cannot invalidate the
+            # vector iterators in process_delayed_actions (access violation).
+            ./patches-ue4ss/ue4ss-delayed-actions-reentrancy-fix.patch
           ];
 
           installPhase = ''
@@ -98,11 +103,36 @@
           '';
         };
 
+        # Resolve the sccache binary from the environment. Do NOT add nixpkgs'
+        # sccache to runtimeInputs: it would shadow mozilla-actions/sccache-action's
+        # binary (which carries the Actions Cache v2 credentials). The action
+        # exports SCCACHE_PATH as an absolute path and SCCACHE_GHA_ENABLED is
+        # set in the workflow env. USE_SCCACHE=0 opts out.
+        sccacheEnv = ''
+          SCCACHE_BIN="''${SCCACHE_BIN:-}"
+          if [ -z "$SCCACHE_BIN" ] && [ "''${USE_SCCACHE:-1}" != "0" ]; then
+            SCCACHE_BIN="''${SCCACHE_PATH:-}"
+          fi
+          if [ -z "$SCCACHE_BIN" ] && [ "''${USE_SCCACHE:-1}" != "0" ]; then
+            SCCACHE_BIN="$(command -v sccache 2>/dev/null || true)"
+          fi
+          if [ -n "$SCCACHE_BIN" ] && [ "''${USE_SCCACHE:-1}" != "0" ]; then
+            export SCCACHE_BIN
+            # Corrosion's cargo build of patternsleuth and the egui overlay
+            # both go through rustc; sccache is a drop-in RUSTC_WRAPPER.
+            export RUSTC_WRAPPER="$SCCACHE_BIN"
+            echo "sccache enabled: $SCCACHE_BIN (GHA: ''${SCCACHE_GHA_ENABLED:-false})"
+          else
+            echo "sccache disabled (USE_SCCACHE=''${USE_SCCACHE:-auto})"
+          fi
+        '';
+
         # Environment variables for cross-compilation
         crossCompileEnv = ''
           export CLANG_UNWRAPPED_BIN="${pkgs.llvmPackages.clang-unwrapped}/bin/clang"
           export CLANG_CL_UNWRAPPED_BIN="${pkgs.llvmPackages.clang-unwrapped}/bin/clang-cl"
           export UE4SS_SOURCE_DIR="${patchedUE4SS}"
+          ${sccacheEnv}
         '';
 
         # === Mod-specific configuration ===
@@ -146,6 +176,9 @@
                           # Create CMakeLists.txt wrapper
                           cat > CMakeLists.txt <<EOF
             cmake_minimum_required(VERSION 3.22)
+            if(POLICY CMP0141)
+                cmake_policy(SET CMP0141 NEW)
+            endif()
             project(UE4SSWrapper)
             if(NOT UE4SS_SOURCE_DIR)
                 set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
@@ -388,6 +421,9 @@
                           # Create CMakeLists.txt wrapper (same as server — mod DLL will be built but not packaged)
                           cat > CMakeLists.txt <<EOF
             cmake_minimum_required(VERSION 3.22)
+            if(POLICY CMP0141)
+                cmake_policy(SET CMP0141 NEW)
+            endif()
             project(UE4SSWrapper)
             if(NOT UE4SS_SOURCE_DIR)
                 set(UE4SS_SOURCE_DIR "$UE4SS_SOURCE_DIR")
@@ -440,10 +476,11 @@
           runtimeInputs = crossCompileBuildInputs;
           text = ''
             set -e
+            ${sccacheEnv}
             VARIANT="''${1:-admin}"
             case "$VARIANT" in
-              admin)  FEATURES=""; TARGET_DIR="overlay/target" ;;
-              player) FEATURES="--no-default-features"; TARGET_DIR="overlay/target-player" ;;
+              admin)  FEATURES=""; TARGET_DIR="$PWD/overlay/target" ;;
+              player) FEATURES="--no-default-features"; TARGET_DIR="$PWD/overlay/target-player" ;;
               *) echo "Error: variant must be admin or player"; exit 1 ;;
             esac
             XWIN_CACHE="$(pwd)/.xwin-cache"
@@ -603,15 +640,39 @@
                           # admin shortcut/command/bridge sources; shared modules are
                           # replaced with player-only implementations.
                           SCRIPTS_OUT="$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts"
-                          ADMIN_ONLY="Shortcuts.lua Commands.lua OverlayBridge.lua VehicleManager.lua IntegrityChecker.lua"
-                          PLAYER_ABSENT="VehicleManager.lua IntegrityChecker.lua"
+                          ADMIN_ONLY="Shortcuts.lua Commands.lua OverlayBridge.lua VehicleManager.lua IntegrityChecker.lua RaceCam"
+                          PLAYER_ABSENT="VehicleManager.lua IntegrityChecker.lua RaceCam"
                           PLAYER_REPLACED="Shortcuts.lua Commands.lua OverlayBridge.lua"
                           PLAYER_VARIANT_DIR="${./ClientScripts/variants/player}"
                           if [ "$VARIANT" = "player" ]; then
-                            for f in $ADMIN_ONLY; do rm -f "$SCRIPTS_OUT/$f"; done
+                            for f in $ADMIN_ONLY; do rm -rf "''${SCRIPTS_OUT:?}/$f"; done
                             cp "${./ClientScripts/variants/player/Shortcuts.lua}" "$SCRIPTS_OUT/Shortcuts.lua"
                             cp "${./ClientScripts/variants/player/Commands.lua}" "$SCRIPTS_OUT/Commands.lua"
                             cp "${./ClientScripts/variants/player/OverlayBridge.lua}" "$SCRIPTS_OUT/OverlayBridge.lua"
+                          else
+                            mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam"
+                            printf '%s\n' \
+                              'AMC RaceCam runtime data folder (Admin build only).' \
+                              'Place racecam_token.txt, optional racecam_bind.txt, active_plan.txt, and' \
+                              'generated plan_<track>.lua / route_<track>.lua files here.' \
+                              'See docs/RACECAM_MANUAL.md for full installation and operator instructions.' \
+                              > "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam/README.txt"
+
+                            # Drop-zone for ad-hoc events: any event / route /
+                            # plan .json dropped here appears in the panel's
+                            # "Dropped Files" list (or save as drop_event.json).
+                            mkdir -p "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam/inbox"
+                            printf '%s\n' \
+                              'Drop any event / route / plan .json file here (or save it as racecam/drop_event.json)' \
+                              'to load it in 1 click from the RaceCam panel (Ctrl+Shift+F10 -> Open Panel).' \
+                              > "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/racecam/inbox/README.txt"
+                          fi
+                          # The 1-click installer is admin tooling: ship it in
+                          # the admin zip root only, never in the player zip.
+                          if [ "$VARIANT" = "admin" ]; then
+                            cp "${./tools/Install-AMCAdminMod.ps1}" "$PACKAGE_DIR/Install-AMCAdminMod.ps1"
+                            cp "${./tools/Install-AMCAdminMod.bat}" "$PACKAGE_DIR/Install-AMCAdminMod.bat"
+                            echo "✓ Bundled 1-click admin installer"
                           fi
                           # Player sources are build inputs, never shipped as a subtree.
                           rm -rf "$SCRIPTS_OUT/variants"
@@ -644,7 +705,7 @@
                                 echo "Error: player file $f is not the player variant"; exit 1
                               fi
                             done
-                            if grep -rEq 'ImpulseAimed|DespawnAimed|ServerApplyImpact|SetImpulseMode|adminpanel' "$SCRIPTS_OUT"; then
+                            if grep -rEq 'ImpulseAimed|DespawnAimed|ServerApplyImpact|SetImpulseMode|adminpanel|racecam_token' "$SCRIPTS_OUT"; then
                               echo "Error: admin symbols leaked into player package"; exit 1
                             fi
                           fi

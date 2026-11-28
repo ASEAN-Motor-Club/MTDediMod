@@ -266,6 +266,45 @@ fn admin_contents(ui: &mut egui::Ui, state: &GameState, connected: bool) {
             }
         }
     });
+    // RaceCam is admin-only and optional: no module in the Lua build (or an
+    // older Lua that never sends the field) means no section at all.
+    if let Some(rc) = &state.racecam {
+        ui.separator();
+        ui.label(RichText::new("RaceCam Broadcast").strong());
+        ui.horizontal(|ui| {
+            let (text, colour) = if rc.armed {
+                ("ARMED", Color32::from_rgb(80, 210, 120))
+            } else {
+                ("STANDBY", Color32::from_gray(150))
+            };
+            ui.label(RichText::new(text).color(colour).strong());
+            ui.weak(format!("plan {}", rc.plan_id));
+        });
+        if let Some(event) = &rc.current_event {
+            ui.weak(format!("event: {event}"));
+        }
+        // Highlight the load action when a live event is available, but keep
+        // it clickable otherwise: the panel has other track sources too.
+        let load = egui::Button::new("Load Current Event & Open Panel");
+        let load = if rc.current_event.is_some() {
+            load.fill(Color32::from_rgb(24, 92, 72))
+        } else {
+            load
+        };
+        if ui.add(load).clicked() {
+            apply(Command::Trigger("racecam_load_event".into()));
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Open Panel").clicked() {
+                apply(Command::Trigger("racecam_open".into()));
+            }
+            let stop = egui::Button::new("Panic Stop").fill(Color32::from_rgb(150, 45, 45));
+            if ui.add_enabled(rc.armed, stop).clicked() {
+                apply(Command::Trigger("racecam_stop".into()));
+            }
+        });
+        ui.weak(format!("panel 127.0.0.1:{}", rc.port));
+    }
     ui.separator();
     ui.weak("Ctrl+Shift+F10 or Esc to close");
 }

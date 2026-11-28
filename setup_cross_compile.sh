@@ -26,6 +26,24 @@ cat > toolchain.cmake <<EOF
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 
+# /Z7 embeds CodeView debug info in each .obj instead of writing one shared
+# PDB per translation unit. sccache cannot cache /Zi (shared PDB write);
+# lld-link /DEBUG:FULL below still merges the per-object info into the same
+# .pdb files, so crash-dump analysis is unchanged.
+# CMP0141 is CMake 3.25+; older CMake simply ignores both lines.
+if(POLICY CMP0141)
+    cmake_policy(SET CMP0141 NEW)
+endif()
+set(CMAKE_POLICY_DEFAULT_CMP0141 NEW CACHE STRING "" FORCE)
+set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "Embedded" CACHE STRING "" FORCE)
+
+# sccache launcher. SCCACHE_BIN is resolved by flake.nix's sccacheEnv from
+# $SCCACHE_BIN (explicit) / $SCCACHE_PATH (mozilla-actions/sccache-action) /
+# sccache on PATH. Empty means "no launcher". The compiler stays an absolute
+# /nix/store/.../clang-cl path; sccache hashes that path and the /Z7 objects.
+set(CMAKE_C_COMPILER_LAUNCHER "${SCCACHE_BIN}")
+set(CMAKE_CXX_COMPILER_LAUNCHER "${SCCACHE_BIN}")
+
 # Use absolute path to unwrapped compiler from Nix
 set(CMAKE_C_COMPILER "${CLANG_CL_UNWRAPPED_BIN}")
 set(CMAKE_CXX_COMPILER "${CLANG_CL_UNWRAPPED_BIN}")
@@ -67,10 +85,10 @@ string(REPLACE ";" " " XWIN_LIB_FLAGS_STR "\${XWIN_LIB_FLAGS}")
 
 # Force Release Runtime (DLL) globally to bypass missing Debug CRT
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
-set(CMAKE_C_FLAGS_DEBUG_INIT "/MD /Zi /Ob0 /Od /RTC1")
-set(CMAKE_CXX_FLAGS_DEBUG_INIT "/MD /Zi /Ob0 /Od /RTC1")
-set(CMAKE_C_FLAGS_RELEASE_INIT "/MD /Zi /O2 /Ob2 /DNDEBUG")
-set(CMAKE_CXX_FLAGS_RELEASE_INIT "/MD /Zi /O2 /Ob2 /DNDEBUG")
+set(CMAKE_C_FLAGS_DEBUG_INIT "/MD /Z7 /Ob0 /Od /RTC1")
+set(CMAKE_CXX_FLAGS_DEBUG_INIT "/MD /Z7 /Ob0 /Od /RTC1")
+set(CMAKE_C_FLAGS_RELEASE_INIT "/MD /Z7 /O2 /Ob2 /DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE_INIT "/MD /Z7 /O2 /Ob2 /DNDEBUG")
 
 set(CMAKE_C_FLAGS "\${CMAKE_C_FLAGS} \${XWIN_INCLUDE_FLAGS_STR} \${TRIPLE_FLAGS} -Wno-unused-command-line-argument -fuse-ld=lld /EHsc /DPLATFORM_WINDOWS /DPLATFORM_MICROSOFT /DUBT_COMPILED_PLATFORM=Win64 /DOVERRIDE_PLATFORM_HEADER_NAME=Windows /DUE_BUILD_SHIPPING=1")
 set(CMAKE_CXX_FLAGS "\${CMAKE_CXX_FLAGS} \${XWIN_INCLUDE_FLAGS_STR} \${TRIPLE_FLAGS} -Wno-unused-command-line-argument -fuse-ld=lld /EHsc /DPLATFORM_WINDOWS /DPLATFORM_MICROSOFT /DUBT_COMPILED_PLATFORM=Win64 /DOVERRIDE_PLATFORM_HEADER_NAME=Windows /DUE_BUILD_SHIPPING=1")
@@ -122,3 +140,8 @@ export XWIN_DIR
 cmake "${CMAKE_ARGS[@]}" .
 
 echo "Build configuration done. Run 'cmake --build $BUILD_DIR' to compile."
+if [ -n "${SCCACHE_BIN:-}" ]; then
+    echo "sccache compiler launcher: $SCCACHE_BIN"
+else
+    echo "sccache compiler launcher: disabled (set USE_SCCACHE=1 and put sccache on PATH)"
+fi

@@ -6,6 +6,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Server and clien
 
 ## Server
 
+### [server/v0.44.0-rc14] - 2026-11-27
+
+#### Fixed
+- `UpdateEventRaceSetup` wrote race waypoints, engine keys and vehicle keys at zero-based `TArray` indices, so the first entry of each list was dropped and the rest shifted by one; all three lists now use 1-based indexing (#93).
+- `CreateNewEvent` and `UpdateEventRaceSetup` now normalize `Location -> Translation` when writing `RaceSetup.Route.Waypoints`, so setups built from backend payloads that carry `Location` no longer land at the origin (#93).
+
+### [server/v0.44.0-rc13] - 2026-11-27
+
+#### Fixed
+- The event-create guid lookup compared a plain Lua GUID table (which `GuidToString` renders as `0000`) against the stored native FGuid, so every create returned HTTP 400 ("event not found in Net_Events after add"). It now matches against the original request `EventGuid` string (#91).
+
+### [server/v0.44.0-rc12] - 2026-11-27
+
+#### Fixed
+- Backported the UE4SS delayed-action re-entrancy fix (#88): a game-thread Lua callback that registered another delayed action could invalidate `std::erase_if` iterators in `process_delayed_actions`, causing an `EXCEPTION_ACCESS_VIOLATION` that wedged `UEngine::Tick` and made all Lua HTTP routes return 504.
+
+### [server/v0.44.0-rc11] - 2026-11-27
+
+#### Fixed
+- `/setup_event` event creation now resolves the created event by `EventGuid` instead of deriving the index from `#Net_Events` immediately after the add (#85). A deferred `ServerAddEvent` or a concurrent add/remove made that index stale or out of range (`TArray index out of range`, HTTP 500) and could silently write the setup onto a different event. Both create paths now return a clean 400 with a diagnostic log when the event cannot be found.
+
 ### [server/v0.44.0-rc10] - 2026-11-26
 
 #### Added

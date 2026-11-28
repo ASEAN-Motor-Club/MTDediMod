@@ -120,6 +120,30 @@ local RouteTable = {}
 ---@field RaceSetup { Route: RouteTable, NumLaps: number, VehicleKeys: string[], EngineKeys: string[] }
 local EventTable = {}
 
+---Find an event's index in Net_Events by guid.
+---Never derive the index from #Net_Events after an add: a deferred
+---ServerAddEvent or a concurrent add/remove can leave that index pointing at
+---a different event, or past the end (prod 2026-11-27: "TArray index out of
+---range" from CreateNewEvent at EventManager.lua:177).
+---@param eventSystem table
+---@param guidString string original EventGuid from the request payload
+---@return number? index
+local function FindEventIndexByGuid(eventSystem, guidString)
+  if not eventSystem or not eventSystem:IsValid() then return nil end
+  -- StringToGuid() returns a PLAIN Lua table, and GuidToString() deliberately
+  -- maps plain tables to "0000". The stored EventGuid, however, is converted
+  -- to a native FGuid when assigned into Net_Events, so GuidToString on it
+  -- yields the real 32-hex string. Compare against the original request
+  -- string, never against the plain table from StringToGuid.
+  local target = tostring(guidString or ""):upper()
+  for i = 1, #eventSystem.Net_Events do
+    if GuidToString(eventSystem.Net_Events[i].EventGuid) == target then
+      return i
+    end
+  end
+  return nil
+end
+
 ---Create a new event
 ---@param event EventTable
 ---@return boolean status
@@ -169,7 +193,14 @@ local function CreateNewEvent(event)
       })
     end
 
-    local last = #eventSystem.Net_Events
+    -- Resolve by guid, NOT by #Net_Events: ServerAddEvent may not have
+    -- appended yet and a concurrent request can resize the array, making the
+    -- last index wrong or out of range.
+    local last = FindEventIndexByGuid(eventSystem, event.EventGuid)
+    if not last then
+      LogOutput("ERROR", "CreateNewEvent: event %s not found in Net_Events after add (count=%d)", event.EventGuid, #eventSystem.Net_Events)
+      return false, nil
+    end
 
     if eventType == 1 then
       event.RaceSetup = event.RaceSetup or {}
@@ -177,7 +208,11 @@ local function CreateNewEvent(event)
 
       eventSystem.Net_Events[last].RaceSetup.Route.Waypoints:Empty()
       for index, value in ipairs(event.RaceSetup.Route and event.RaceSetup.Route.Waypoints or {}) do
-        eventSystem.Net_Events[last].RaceSetup.Route.Waypoints[index] = value
+        eventSystem.Net_Events[last].RaceSetup.Route.Waypoints[index] = {
+          Translation = value.Location or value.Translation,
+          Rotation = value.Rotation,
+          Scale3D = value.Scale3D,
+        }
       end
 
       eventSystem.Net_Events[last].RaceSetup.EngineKeys:Empty()
@@ -247,7 +282,11 @@ local function CreateEventWithoutOwner(event)
 
     eventSystem.Net_Events[#eventSystem.Net_Events + 1] = Event
 
-    local last = #eventSystem.Net_Events
+    local last = FindEventIndexByGuid(eventSystem, event.EventGuid)
+    if not last then
+      LogOutput("ERROR", "CreateEventWithoutOwner: event %s not found in Net_Events after add (count=%d)", event.EventGuid, #eventSystem.Net_Events)
+      return false, nil
+    end
 
     if eventType == 1 then
       event.RaceSetup = event.RaceSetup or {}
@@ -321,19 +360,23 @@ local function UpdateEventRaceSetup(eventGuid, raceSetup)
 
         eventSystem.Net_Events[i].RaceSetup.EngineKeys:Empty()
         for index, value in ipairs(raceSetup.EngineKeys) do
-          eventSystem.Net_Events[i].RaceSetup.EngineKeys[index - 1] = FName(value)
+          eventSystem.Net_Events[i].RaceSetup.EngineKeys[index] = FName(value)
         end
 
         eventSystem.Net_Events[i].RaceSetup.VehicleKeys:Empty()
         for index, value in ipairs(raceSetup.VehicleKeys) do
-          eventSystem.Net_Events[i].RaceSetup.VehicleKeys[index - 1] = FName(value)
+          eventSystem.Net_Events[i].RaceSetup.VehicleKeys[index] = FName(value)
         end
 
         eventSystem.Net_Events[i].RaceSetup.Route.RouteName = raceSetup.Route.RouteName
 
         eventSystem.Net_Events[i].RaceSetup.Route.Waypoints:Empty()
         for index, value in ipairs(raceSetup.Route.Waypoints) do
-          eventSystem.Net_Events[i].RaceSetup.Route.Waypoints[index - 1] = value
+          eventSystem.Net_Events[i].RaceSetup.Route.Waypoints[index] = {
+            Translation = value.Location or value.Translation,
+            Rotation = value.Rotation,
+            Scale3D = value.Scale3D,
+          }
         end
         return true
       end

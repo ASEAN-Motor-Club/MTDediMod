@@ -1,23 +1,77 @@
--- racecam_http.lua — local HTTP control panel for AMC RaceCam.
+-- RaceCam/http.lua — local HTTP control panel for AMC RaceCam.
 -- Non-blocking LuaSocket server: all request work happens on the game thread in short slices.
 -- Broadcast-grade features: heartbeat fail-safe, JSONL audit log, engine status passthrough,
 -- and an operator panel with OBS WebSocket v5 control, tally, cue queue and rehearsal mode.
+local Paths = require("RaceCam/paths")
+local LiveEvents = require("RaceCam/live_events")
 local H = {}
--- Resolve the RaceCam data directory without hardcoding a drive letter:
--- the RACECAM_DIR environment variable wins; otherwise candidate relative
--- paths are probed by attempting to create a marker file (io.open append).
-local function racecam_dir() return require("RaceCam/path").data_dir() end
+local D = Paths.data_dir()
 
-local D = racecam_dir()
+-- Names listed by the overlay's background directory watcher (or injected by
+-- the host Lua test harness). Nothing here enumerates the filesystem on the
+-- game thread — that would flash a cmd.exe window on Windows.
+local inbox_files = {}
 
--- LuaSocket DLLs are installed into ue4ss/Mods/shared/ under the game's
--- Binaries/Win64 root. UE4SS may run Lua with the cwd at either the Win64
--- directory or its parent, so both relative roots are registered.
-package.cpath = package.cpath ..
-  ";./ue4ss/Mods/shared/?.dll;./ue4ss/Mods/shared/?/?.dll" ..
-  ";../ue4ss/Mods/shared/?.dll;../ue4ss/Mods/shared/?/?.dll"
+local SAFE_JSON_NAME = "^[A-Za-z0-9._-]+%.json$"
+
+--- Strict allow-list: only a single flat basename ending in .json is legal.
+--- The regex already excludes path separators and NUL; the extra checks reject
+--- `..` sequences that the regex alone would accept (e.g. `..json`).
+---@param name any
+---@return boolean
+local function valid_json_name(name)
+  return type(name) == "string"
+    and name:match(SAFE_JSON_NAME) ~= nil
+    and not name:find("%.%.")
+    and not name:find("/")
+    and not name:find("\\")
+    and not name:find("%z")
+end
+
+--- Replace the advertised inbox listing. Invalid entries are dropped instead
+--- of rejected so a buggy producer can never smuggle a traversal name through.
+---@param list table?
+function H.set_inbox_files(list)
+  inbox_files = {}
+  if type(list) ~= "table" then return end
+  for _, name in ipairs(list) do
+    if valid_json_name(name) then
+      inbox_files[#inbox_files + 1] = name
+    end
+  end
+end
 
 local socket = require("socket")
+
+local okj, JsonLib = pcall(require, "JsonParser")
+local Json = (okj and type(JsonLib) == "table" and JsonLib) or nil
+
+-- init.lua requires http.lua at boot, so resolve it lazily (after init has
+-- finished loading) instead of at module scope: no circular require.
+local function get_init()
+  if type(_G.RACECAM_INIT) == "table" then return _G.RACECAM_INIT end
+  local ok, mod = pcall(require, "RaceCam/init")
+  if ok and type(mod) == "table" then return mod end
+  return nil
+end
+
+local function json_encode(v)
+  if Json and type(Json.stringify) == "function" then
+    local ok, s = pcall(Json.stringify, v)
+    if ok and s then return s end
+  end
+  return '{"error":"json unavailable"}'
+end
+
+local function parse_json(body)
+  if not Json or type(Json.parse) ~= "function" then return nil end
+  local ok, obj = pcall(Json.parse, body or "")
+  if ok and type(obj) == "table" then
+    if Json.null and obj == Json.null then return nil end
+    return obj
+  end
+  return nil
+end
 
 local function readfile(path)
   local f = io.open(path, "r"); if not f then return nil end
@@ -122,253 +176,10 @@ local function fail_safe_tick()
   end
 end
 
-local PANEL = [==[<!doctype html><html><head><meta charset="utf-8"><title>AMC RaceCam</title>
-<style>
-body{font:14px system-ui;background:#111;color:#eee;margin:0;padding:16px}
-h1{font-size:18px;margin:0 0 12px}.card{background:#1b1b1b;border:1px solid #333;border-radius:6px;padding:12px;margin-bottom:12px}
-button{background:#2b6cb0;border:0;color:#fff;padding:8px 12px;border-radius:4px;cursor:pointer;margin:2px}
-button:hover{background:#3182ce}input,select{background:#222;color:#eee;border:1px solid #444;padding:6px;border-radius:4px}
-pre{background:#0c0c0c;border:1px solid #333;padding:8px;max-height:220px;overflow:auto;white-space:pre-wrap}
-.badge{display:inline-block;padding:6px 14px;border-radius:4px;font-weight:bold;margin-right:8px}
-.tally-on-prog{background:#c53030}.tally-on-prev{background:#2f855a}.tally-off{background:#444;color:#aaa}
-#banner{display:none;padding:10px;border-radius:4px;margin-bottom:12px;font-weight:bold}
-#banner.degraded{display:block;background:#742a2a;color:#fff}
-#banner.rehearsal{display:block;background:#975a16;color:#fff}
-.kbd{color:#888;font-size:12px;margin-top:6px}
-</style></head><body>
-<h1>AMC RaceCam — local operator</h1>
-<div id="banner"></div>
-<div class="card">Token: <input id="tok" type="password" placeholder="optional"> <button onclick="save()">Set</button>
-&nbsp;REHEARSAL: <button id="rehb" onclick="toggleRehearsal()">OFF</button> <span class="kbd">(R)</span></div>
-<div class="card">
-<span class="badge tally-off" id="prog">PROGRAM —</span><span class="badge tally-off" id="prv">PREVIEW —</span>
-Active: <b id="shot">—</b> &nbsp; FOV: <b id="fov">—</b> &nbsp; Plan: <b id="plan">—</b>
-&nbsp; Countdown: <b id="cd">—</b> &nbsp; HB age: <b id="hb">—</b> &nbsp; Camera: <b id="run">—</b>
-</div>
-<div class="card">Cue queue: <span id="queue">—</span>
-<input id="qat" size="7" placeholder="t+ sec">
-<button onclick="enqueue()">Queue cue (Q)</button>
-<button onclick="cmd('next')">Next cue (N)</button> <button onclick="cmd('queue_clear')">Clear queue</button></div>
-<div class="card">
-<button onclick="cmd('arm')">Arm (A)</button><button onclick="cmd('start')">Start (S)</button>
-<button onclick="cmd('stop')">Stop / restore view (X)</button><button onclick="undo()">Last-shot undo (Z)</button><br>
-<select id="sid"></select><button onclick="trigger(sid.value)">Trigger shot (1-9)</button><br>
-Contestant: <select id="pname"></select><button onclick="cmd('select',pname.value)">Follow</button>
-</div>
-<div class="card">
-OBS WebSocket: <input id="obsurl" size="28" value="ws://127.0.0.1:4455">
-Password: <input id="obspw" type="password" size="12">
-<button onclick="obsConnect()">Connect</button> <button onclick="obsDisc()">Disconnect</button>
-<span id="obsst">disconnected</span><br>
-<button onclick="obsRec(true)">Start record</button><button onclick="obsRec(false)">Stop record</button>
-Scene: <select id="obsscene" onchange="obsSources()"></select>
-<button onclick="obsScenes()">Refresh scenes</button>
-<button onclick="obsSetScene()">Go to scene</button><br>
-Source: <select id="obssrc"></select> <button onclick="obsShot()">Preview</button>
-<img id="obsprev" style="max-width:320px;display:none;border:1px solid #444;margin-top:6px">
-</div>
-<div class="card"><pre id="out"></pre>
-<div class="kbd">A arm · S start · X stop · 1-9 trigger shot · N next cue · Z last-shot undo · R rehearsal toggle</div></div>
-<script>
-const $=id=>document.getElementById(id);
-let tok=sessionStorage.getItem('racecam_tok')||'';$('tok').value=tok;
-function save(){tok=$('tok').value;sessionStorage.setItem('racecam_tok',tok)}
-function hdr(){return tok?{'x-racecam-token':tok}:{}}
-let rehearsal=false,shotHist=[],windowDegraded=false,windowTargetLost=false;
-
-async function toggleRehearsal(){
-  const next=!rehearsal;
-  const j=await cmd('rehearsal',next?'on':'off');
-  if(j&&j.status&&j.status.indexOf('on')>=0)rehearsal=true;
-  else if(j&&j.status&&j.status.indexOf('off')>=0)rehearsal=false;
-  $('rehb').textContent=rehearsal?'ON':'OFF';banner();
-}
-function banner(){
-  const b=$('banner');b.className='';b.textContent='';
-  if(windowDegraded){b.className='degraded';b.textContent='DEGRADED — operator heartbeat lost, shots stopped. Press Arm (A), then Start (S) to resume.'}
-  else if(windowTargetLost){b.className='degraded';b.textContent='TARGET LOST — followed player not found; holding last camera pose.'}
-  else if(rehearsal){b.className='rehearsal';b.textContent='REHEARSAL — camera and OBS record commands are suppressed'}
-}
-async function cmd(c,a){
-  try{
-    let r=await fetch('/api/command',{method:'POST',headers:Object.assign({'content-type':'application/json'},hdr()),body:JSON.stringify({cmd:c,args:a||''})});
-    let j=await r.json();
-    $('out').textContent=JSON.stringify(j)+'\n'+$('out').textContent;
-    return j;
-  }catch(e){$('out').textContent='ERR '+e+'\n'+$('out').textContent}
-}
-let cueList=[];
-function trigger(id){if(!id)return;shotHist.push(id);if(shotHist.length>50)shotHist.shift();cmd('trigger',id)}
-function enqueue(){
-  const id=$('sid').value.trim(); if(!id)return;
-  const at=$('qat').value.trim();
-  const cue=at?{id:id,at_t:parseFloat(at)}:{id:id};
-  cueList.push(cue);
-  cmd('queue',JSON.stringify(cueList));
-  $('qat').value='';
-}
-function undo(){shotHist.pop();const p=shotHist[shotHist.length-1];if(p)cmd('trigger',p);else cmd('stop')}
-document.addEventListener('keydown',e=>{
-  const t=(e.target&&e.target.tagName)||'';
-  if(/INPUT|SELECT|TEXTAREA/.test(t))return;
-  const k=e.key.toLowerCase();
-  if(k==='a')cmd('arm');
-  else if(k==='s')cmd('start');
-  else if(k==='x')cmd('stop');
-  else if(k==='n')cmd('next');
-  else if(k==='q')enqueue();
-  else if(k==='z')undo();
-  else if(k==='r')toggleRehearsal();
-  else if(/^[1-9]$/.test(k)){const o=$('sid').options[+k-1];if(o)trigger(o.value)}
-});
-
-async function poll(){
-  try{
-    let s=await(await fetch('/api/state',{headers:hdr()})).json();
-    windowDegraded=!!s.degraded;
-    windowTargetLost=!!s.target_lost;
-    if(s.rehearsal!=null&&s.rehearsal!==rehearsal){rehearsal=!!s.rehearsal;$('rehb').textContent=rehearsal?'ON':'OFF'}
-    banner();
-    const cur=s.current||s.active_shot||'none';
-    $('shot').textContent=cur;
-    $('fov').textContent=(s.fov!=null)?s.fov:'—';
-    $('plan').textContent=s.plan||'—';
-    $('cd').textContent=(s.countdown!=null)?Number(s.countdown).toFixed(1)+'s':'—';
-    $('hb').textContent=(s.heartbeat_age!=null)?s.heartbeat_age+'s':'—';
-    $('run').textContent=(s.running===true)?'ARMED':(s.running===false?'STOPPED':'—');
-    $('prog').className='badge '+(cur&&cur!=='none'?'tally-on-prog':'tally-off');
-    $('prog').textContent='PROGRAM '+cur;
-    $('prv').className='badge '+(s.next&&s.next!=='none'?'tally-on-prev':'tally-off');
-    $('prv').textContent='PREVIEW '+(s.next||'—');
-    if(s.queue_spec){try{cueList=Array.isArray(s.queue_spec)?s.queue_spec:JSON.parse(s.queue_spec)}catch(e){}}
-    $('queue').textContent=(s.queue&&s.queue.length)?s.queue.join(' → '):'—';
-    if(s.shots&&s.shots.length){
-      const keep=$('sid').value;
-      $('sid').innerHTML='';
-      s.shots.forEach((shot,i)=>{let o=document.createElement('option');o.value=shot;o.textContent=(i<9?(i+1)+'. ':'· ')+shot;$('sid').appendChild(o)});
-      if([...$('sid').options].some(o=>o.value===keep))$('sid').value=keep;
-    }
-    if(s.targets&&s.targets.length){
-      const keep=$('pname').value;
-      $('pname').innerHTML='';
-      s.targets.forEach(n=>{let o=document.createElement('option');o.value=n;o.textContent=n;$('pname').appendChild(o)});
-      if([...$('pname').options].some(o=>o.value===keep))$('pname').value=keep;
-    }
-  }catch(e){}
-  setTimeout(poll,700);
-}
-poll();
-
-/* ---- OBS WebSocket v5 client (obs-websocket protocol) ---- */
-/* Password lives only in this page's memory; it is never persisted. */
-let obs=null,obsId=0;const obsPend={};
-const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
-function sha256(msg){
-  const u=unescape(encodeURIComponent(msg)),L=u.length,bl=L*8;
-  const pad=Math.ceil((L+9)/64)*64,b=new Uint8Array(pad),dv=new DataView(b.buffer);
-  for(let i=0;i<L;i++)b[i]=u.charCodeAt(i)&255;
-  b[L]=128;dv.setUint32(pad-8,Math.floor(bl/4294967296));dv.setUint32(pad-4,bl>>>0);
-  const h=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
-  const w=new Uint32Array(64);
-  for(let o=0;o<pad;o+=64){
-    for(let i=0;i<16;i++)w[i]=dv.getUint32(o+i*4);
-    for(let i=16;i<64;i++){
-      const x=w[i-15],y=w[i-2];
-      const s0=((x>>>7|x<<25)^(x>>>18|x<<14)^(x>>>3))>>>0;
-      const s1=((y>>>17|y<<15)^(y>>>19|y<<13)^(y>>>10))>>>0;
-      w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0;
-    }
-    let a=h[0],b2=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
-    for(let i=0;i<64;i++){
-      const S1=((e>>>6|e<<26)^(e>>>11|e<<21)^(e>>>25|e<<7))>>>0;
-      const ch=(e&f)^(~e&g);
-      const t1=(hh+S1+ch+K[i]+w[i])>>>0;
-      const S0=((a>>>2|a<<30)^(a>>>13|a<<19)^(a>>>22|a<<10))>>>0;
-      const mj=(a&b2)^(a&c)^(b2&c);
-      const t2=(S0+mj)>>>0;
-      hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b2;b2=a;a=(t1+t2)>>>0;
-    }
-    h[0]=(h[0]+a)>>>0;h[1]=(h[1]+b2)>>>0;h[2]=(h[2]+c)>>>0;h[3]=(h[3]+d)>>>0;
-    h[4]=(h[4]+e)>>>0;h[5]=(h[5]+f)>>>0;h[6]=(h[6]+g)>>>0;h[7]=(h[7]+hh)>>>0;
-  }
-  return h.map(x=>('00000000'+x.toString(16)).slice(-8)).join('');
-}
-function hexB64(h){let s='';for(let i=0;i<h.length;i+=2)s+=String.fromCharCode(parseInt(h.substr(i,2),16));return btoa(s)}
-function sha256b64(s){return hexB64(sha256(s))}
-function obsSet(t){$('obsst').textContent=t}
-function obsConnect(){
-  let u; try{u=new URL(($('obsurl').value||'ws://127.0.0.1:4455').trim())}catch(e){obsSet('bad url');return}
-  if(u.protocol!=='ws:'||!['127.0.0.1','localhost'].includes(u.hostname)){obsSet('OBS WS must be localhost');return}
-  const url=u.href;
-  if(obs){try{obs.close()}catch(e){}}
-  Object.keys(obsPend).forEach(k=>delete obsPend[k]);
-  try{obs=new WebSocket(url)}catch(e){obsSet('bad url');return}
-  const my=obs;
-  obsSet('connecting…');
-  obs.onmessage=ev=>{
-    if(obs!==my)return;
-    let m;try{m=JSON.parse(ev.data)}catch(e){return}
-    if(m.op===0&&m.d){
-      const d={rpcVersion:(m.d.rpcVersion!=null)?m.d.rpcVersion:1};
-      if(m.d.authentication){
-        const a=m.d.authentication;
-        d.authentication=sha256b64(sha256b64(($('obspw').value||'')+a.salt)+a.challenge);
-      }
-      obs.send(JSON.stringify({op:1,d}));
-    }else if(m.op===2&&m.d){
-      obsSet('connected');obsScenes();
-    }else if(m.op===7&&m.d){
-      const cb=obsPend[m.d.requestId];
-      if(cb){delete obsPend[m.d.requestId];cb(m.d)}
-    }
-  };
-  obs.onerror=()=>{if(obs===my)obsSet('error (auth refused or wrong URL)')};
-  obs.onclose=()=>{if(obs===my)obsSet('disconnected')};
-}
-function obsDisc(){if(obs){try{obs.close()}catch(e){}}obsSet('disconnected')}
-function obsReq(rt,rd,cb){
-  if(!obs||obs.readyState!==1){obsSet('not connected');return}
-  const id='r'+(++obsId);obsPend[id]=cb||function(){};
-  obs.send(JSON.stringify({op:6,d:{requestType:rt,requestData:rd||{},requestId:id}}));
-}
-function obsScenes(){obsReq('GetSceneList',{},d=>{
-  if(!(d.requestStatus&&d.requestStatus.result)){obsSet('scene list failed');return}
-  const s=$('obsscene');s.innerHTML='';
-  (d.responseData.scenes||[]).forEach(sc=>{let o=document.createElement('option');o.value=sc.sceneName;o.textContent=sc.sceneName;s.appendChild(o)});
-  if(d.responseData.currentProgramSceneName)s.value=d.responseData.currentProgramSceneName;
-  obsSources();
-})}
-function obsSources(){
-  const sc=$('obsscene').value;if(!sc)return;
-  obsReq('GetSceneItemList',{sceneName:sc},d=>{
-    const s=$('obssrc');s.innerHTML='';
-    if(d.responseData)(d.responseData.sceneItems||[]).forEach(it=>{let o=document.createElement('option');o.value=it.sourceName;o.textContent=it.sourceName;s.appendChild(o)});
-  });
-}
-function obsSetScene(){
-  const sc=$('obsscene').value;
-  obsReq('SetCurrentProgramScene',{sceneName:sc},d=>obsSet((d.requestStatus&&d.requestStatus.result)?'scene set: '+sc:'scene switch failed'));
-}
-function obsRec(start){
-  if(rehearsal&&start){obsSet('REHEARSAL: record start suppressed');return}
-  obsReq(start?'StartRecord':'StopRecord',{},d=>obsSet((d.requestStatus&&d.requestStatus.result)?(start?'recording':'record stopped'):'record command failed'));
-}
-function obsShot(){
-  const src=$('obssrc').value;
-  if(!src){obsSet('pick a source first');return}
-  obsReq('GetSourceScreenshot',{sourceName:src,imageFormat:'png'},d=>{
-    if(d.responseData&&d.responseData.imageData){const im=$('obsprev');im.src=d.responseData.imageData;im.style.display='block'}
-    else obsSet('screenshot failed');
-  });
-}
-</script></body></html>]==]
+-- Panel markup lives in its own module so the UI can be owned/edited
+-- independently of the HTTP plumbing. Fail closed with a tiny placeholder.
+local ok_ui, ui = pcall(require, "RaceCam/panel_ui")
+local PANEL = (ok_ui and ui and ui.HTML) or "<html><body>RaceCam Panel UI missing</body></html>"
 
 local function engine_status()
   local e = _G.RACECAM_SHOTS
@@ -402,6 +213,31 @@ local function speclist(t)
   return "[" .. table.concat(q, ",") .. "]"
 end
 
+--- Compact JSON for one active leaderboard (never includes waypoints[]).
+local function standings_json(s)
+  if not s then return "null" end
+  local parts = {}
+  parts[#parts + 1] = '"event_name":"' .. jstr(s.event_name) .. '"'
+  parts[#parts + 1] = '"event_guid":"' .. jstr(s.event_guid) .. '"'
+  parts[#parts + 1] = '"state":' .. tostring(tonumber(s.state) or 0)
+  parts[#parts + 1] = '"in_countdown":' .. tostring(s.in_countdown and true or false)
+  parts[#parts + 1] = '"num_laps":' .. tostring(tonumber(s.num_laps) or 0)
+  parts[#parts + 1] = '"waypoint_count":' .. tostring(tonumber(s.waypoint_count) or 0)
+  local rows = {}
+  for _, r in ipairs(s.standings or {}) do
+    rows[#rows + 1] = '{"rank":' .. tostring(tonumber(r.rank) or 0) ..
+      ',"name":"' .. jstr(r.name) .. '"' ..
+      ',"laps":' .. tostring(tonumber(r.laps) or 0) ..
+      ',"section":' .. tostring(tonumber(r.section) or 0) ..
+      ',"best_lap_s":' .. tostring(tonumber(r.best_lap_s) or 0) ..
+      ',"last_sec_s":' .. tostring(tonumber(r.last_sec_s) or 0) ..
+      ',"finished":' .. tostring(r.finished and true or false) ..
+      ',"disqualified":' .. tostring(r.disqualified and true or false) .. '}'
+  end
+  parts[#parts + 1] = '"standings":[' .. table.concat(rows, ",") .. ']'
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
 local function state_json()
   local e = _G.RACECAM_SHOTS
   local st = engine_status()
@@ -414,6 +250,12 @@ local function state_json()
   parts[#parts + 1] = '"fov":' .. tostring(tonumber(fov) or 0)
   local plan_id = (e and e.plan and e.plan.source and e.plan.source.plan_id) or (e and e.plan and e.plan.name) or "unknown"
   parts[#parts + 1] = '"plan":"' .. jstr(tostring(plan_id)) .. '"'
+  local tname = (e and e.target_name) or (st and st.target_name) or nil
+  if tname and tname ~= "" then
+    parts[#parts + 1] = '"target_name":"' .. jstr(tostring(tname)) .. '"'
+  else
+    parts[#parts + 1] = '"target_name":null'
+  end
   if st and st.target_lost ~= nil then parts[#parts + 1] = '"target_lost":' .. tostring(st.target_lost) end
   if st and st.target_lost_for then parts[#parts + 1] = '"target_lost_for":' .. string.format("%.1f", st.target_lost_for) end
   parts[#parts + 1] = '"result":"' .. jstr(last_result) .. '"'
@@ -426,6 +268,15 @@ local function state_json()
     parts[#parts + 1] = '"heartbeat_age":null'
   end
   parts[#parts + 1] = '"rehearsal":' .. tostring(_G.RACECAM_CORE and _G.RACECAM_CORE.rehearsal and true or false)
+  local init = get_init()
+  parts[#parts + 1] = '"auto_start":' .. tostring(init and init.auto_start and true or false)
+  parts[#parts + 1] = '"follow_leader":' .. tostring(init and init.follow_leader and true or false)
+  local ok_ev, ev = pcall(function() return LiveEvents.current_event() end)
+  parts[#parts + 1] = '"active_event":' ..
+    ((ok_ev and ev and ev.name and ev.name ~= "") and ('"' .. jstr(ev.name) .. '"') or "null")
+  -- Live leaderboard: cached 500 ms in live_events.lua, no waypoints copied.
+  local ok_s, active_standings = pcall(function() return LiveEvents.active_standings() end)
+  parts[#parts + 1] = '"standings":' .. (ok_s and standings_json(active_standings) or "null")
   local targets = {}
   if e and type(e.list_targets) == "function" then
     local ok, found = pcall(function() return e:list_targets() end)
@@ -547,8 +398,84 @@ local function dispatch(item)
   return "unknown " .. jstr(cmd)
 end
 
+--- Decode application/x-www-form-urlencoded query values, including `%00`.
+local function url_decode(s)
+  s = tostring(s or "")
+  s = s:gsub("+", " ")
+  s = s:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
+  return s
+end
+
+local function query_value(path, key)
+  local q = path:match("%?(.*)$")
+  if not q then return nil end
+  for part in q:gmatch("[^&]+") do
+    local k, v = part:match("^([^=]+)=(.*)$")
+    if k == key then return url_decode(v) end
+  end
+  return nil
+end
+
+local function vec_xyz(v)
+  if type(v) ~= "table" then return nil end
+  local x, y, z = tonumber(v.X or v.x), tonumber(v.Y or v.y), tonumber(v.Z or v.z)
+  if not x or not y or not z then return nil end
+  return x, y, z
+end
+
+local function pose_from(loc, rot)
+  if not loc or not rot then return nil end
+  local x, y, z = vec_xyz(loc)
+  if not x then return nil end
+  local yaw = tonumber(rot.Yaw or rot.yaw)
+  if not yaw then return nil end
+  return { x = x, y = y, z = z, yaw = yaw }
+end
+
+--- Best-effort local pawn/camera pose. Every UE4SS call is pcall-guarded so a
+--- missing global or invalid UObject can never break the HTTP tick. `M._pos_provider`
+--- is a test seam for the Lua 5.4 host harness (and harmless in production).
+local function local_pose()
+  local ok, res = pcall(function()
+    local pc = type(GetMyPlayerController) == "function" and GetMyPlayerController() or nil
+    if not pc then return nil end
+    if type(pc.IsValid) == "function" and pc:IsValid() == false then return nil end
+    local pawn = pc.Pawn
+    if not pawn and type(pc.GetPawn) == "function" then pawn = pc:GetPawn() end
+    if not pawn then return nil end
+    if type(pawn.IsValid) == "function" and pawn:IsValid() == false then return nil end
+    local loc = type(pawn.K2_GetActorLocation) == "function" and pawn:K2_GetActorLocation() or nil
+    local rot = type(pawn.K2_GetActorRotation) == "function" and pawn:K2_GetActorRotation() or nil
+    return pose_from(loc, rot)
+  end)
+  if ok and type(res) == "table" then return res end
+
+  local okc, cres = pcall(function()
+    local mgr = nil
+    if type(_G.PlayerCameraManager) == "function" then
+      mgr = _G.PlayerCameraManager()
+    elseif type(_G.PlayerCameraManager) == "table" then
+      mgr = _G.PlayerCameraManager
+    elseif type(_G.GetPlayerCameraManager) == "function" then
+      mgr = _G.GetPlayerCameraManager()
+    end
+    if not mgr then return nil end
+    if type(mgr.IsValid) == "function" and mgr:IsValid() == false then return nil end
+    local loc = type(mgr.GetCameraLocation) == "function" and mgr:GetCameraLocation() or nil
+    local rot = type(mgr.GetCameraRotation) == "function" and mgr:GetCameraRotation() or nil
+    return pose_from(loc, rot)
+  end)
+  if okc and type(cres) == "table" then return cres end
+  return nil
+end
+
 local function make_response(req)
-  local token = readfile(D .. "racecam_token.txt")
+  if req.too_large then
+    local b = '{"error":"body too large"}'
+    return "HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\nContent-Length: " ..
+      #b .. "\r\nConnection: close\r\n\r\n" .. b
+  end
+  local token = Paths.read_token()
   local code, body, ctype = 400, '{"error":"not found"}', "application/json"
   local authed = false
   if req.method == "GET" and (req.path == "/" or req.path == "/index.html") then
@@ -559,6 +486,123 @@ local function make_response(req)
     authed = true
     touch()
     code, body = 200, state_json()
+  elseif req.method == "GET" and req.path == "/api/live_events" then
+    authed = true
+    touch()
+    local ok, events = pcall(function() return LiveEvents.list() end)
+    code, body = 200, json_encode({ events = (ok and type(events) == "table") and events or {} })
+  elseif req.method == "GET" and req.path == "/api/inbox" then
+    authed = true
+    touch()
+    local has_drop = false
+    local ok, f = pcall(io.open, Paths.drop_file(), "rb")
+    if ok and f then
+      has_drop = true
+      pcall(function() f:close() end)
+    end
+    code, body = 200, json_encode({ files = inbox_files, has_drop_file = has_drop })
+  elseif req.method == "GET" and (req.path == "/api/inbox_file" or req.path:match("^/api/inbox_file%?")) then
+    authed = true
+    touch()
+    local name = query_value(req.path, "name")
+    local target = nil
+    if name == "drop_event.json" then
+      target = Paths.drop_file()
+    elseif valid_json_name(name) then
+      target = Paths.inbox_dir() .. name
+    else
+      code, body = 400, '{"error":"invalid filename"}'
+    end
+    if target then
+      local ok, f = pcall(io.open, target, "rb")
+      if not ok or not f then
+        code, body = 404, '{"error":"not found"}'
+      else
+        local okr, content = pcall(f.read, f, 512 * 1024 + 1)
+        pcall(function() f:close() end)
+        if not okr or type(content) ~= "string" then
+          code, body = 404, '{"error":"not found"}'
+        elseif #content > 512 * 1024 then
+          code, body = 413, '{"error":"file too large"}'
+        else
+          code, body, ctype = 200, content, "application/json"
+        end
+      end
+    end
+  elseif req.method == "GET" and req.path == "/api/my_pos" then
+    authed = true
+    touch()
+    local pose = nil
+    local hook_ok, hook_pose = pcall(function()
+      return type(H._pos_provider) == "function" and H._pos_provider() or nil
+    end)
+    if hook_ok and type(hook_pose) == "table" then
+      pose = {
+        x = tonumber(hook_pose.x), y = tonumber(hook_pose.y),
+        z = tonumber(hook_pose.z), yaw = tonumber(hook_pose.yaw),
+      }
+    end
+    if not (pose and pose.x and pose.y and pose.z and pose.yaw) then
+      pose = local_pose()
+    end
+    if pose and pose.x and pose.y and pose.z and pose.yaw then
+      code, body = 200, json_encode({
+        ok = true, x = pose.x, y = pose.y, z = pose.z, yaw = pose.yaw,
+      })
+    else
+      code, body = 503, '{"ok":false,"error":"no local pawn or camera"}'
+    end
+  elseif req.method == "GET" and req.path == "/api/plans" then
+    authed = true
+    touch()
+    local init = get_init()
+    local ok, result = pcall(function() return init.list_plans() end)
+    if ok and type(result) == "table" then
+      code, body = 200, json_encode(result)
+    else
+      code, body = 500, '{"error":"plans unavailable"}'
+    end
+  elseif req.method == "POST" and req.path == "/api/plan" then
+    authed = true
+    touch()
+    local payload = parse_json(req.body)
+    local pid = payload and payload.plan_id
+    if type(pid) ~= "string" or not pid:match("^[A-Za-z0-9_%-]+$") or type(payload.plan) ~= "table" then
+      code, body = 400, '{"error":"invalid plan"}'
+    else
+      local route = payload.route
+      if Json and route == Json.null then route = nil end
+      local init = get_init()
+      local ok, saved = pcall(function() return init.reload_plan(pid, payload.plan, route) end)
+      if ok and saved then
+        code, body = 200, '{"ok":true,"plan_id":"' .. jstr(pid) .. '"}'
+        audit("plan", pid, "hot-reloaded")
+      else
+        code, body = 400, '{"error":"' .. jstr(tostring(saved)) .. '"}'
+      end
+    end
+  elseif req.method == "POST" and req.path == "/api/auto_flags" then
+    authed = true
+    touch()
+    local payload = parse_json(req.body)
+    if not payload then
+      code, body = 400, '{"error":"invalid json"}'
+    else
+      local init = get_init()
+      local ok, flags = pcall(function()
+        return init.set_auto_flags({ auto_start = payload.auto_start, follow_leader = payload.follow_leader })
+      end)
+      if ok and type(flags) == "table" then
+        code, body = 200, json_encode({
+          ok = true,
+          auto_start = flags.auto_start and true or false,
+          follow_leader = flags.follow_leader and true or false,
+        })
+        audit("auto_flags", "", tostring(flags.auto_start) .. "/" .. tostring(flags.follow_leader))
+      else
+        code, body = 400, '{"error":"' .. jstr(tostring(flags)) .. '"}'
+      end
+    end
   elseif req.method == "POST" and req.path == "/api/command" then
     authed = true
     touch()
@@ -569,8 +613,40 @@ local function make_response(req)
     log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
     audit("command", cmd, last_result)
     code, body = 200, '{"status":"' .. jstr(last_result) .. '"}'
+  elseif req.method == "POST" and req.path == "/api/target" then
+    authed = true
+    touch()
+    -- Manual "follow this driver" click. json_field keeps this working even
+    -- when JsonParser is unavailable on the client.
+    local name = json_field(req.body, "name") or json_field(req.body, "target")
+    if type(name) ~= "string" or name == "" then
+      code, body = 400, '{"error":"invalid target"}'
+    else
+      local e = _G.RACECAM_SHOTS
+      local ok, selok, msg = false, nil, nil
+      if e and type(e.set_target_by_name) == "function" then
+        ok, selok, msg = pcall(function() return e:set_target_by_name(name) end)
+      end
+      if ok and selok then
+        code, body = 200, '{"ok":true,"target":"' .. jstr(name) .. '"}'
+        -- The producer chose a driver explicitly; automation must not yank
+        -- the camera back to the leader on the next tick.
+        local init = get_init()
+        if init and type(init.disengage_follow_leader) == "function" then
+          pcall(function() init.disengage_follow_leader() end)
+        end
+        audit("target", name, "manual target; follow_leader disengaged")
+      else
+        code, body = 400, '{"error":"' .. jstr(tostring(ok and msg or selok)) .. '"}'
+      end
+    end
   end
-  local reason = code == 200 and "OK" or "Bad Request"
+  local reasons = {
+    [200] = "OK", [400] = "Bad Request", [404] = "Not Found",
+    [413] = "Payload Too Large", [500] = "Internal Server Error",
+    [503] = "Service Unavailable",
+  }
+  local reason = reasons[code] or "Bad Request"
   return "HTTP/1.1 " .. code .. " " .. reason .. "\r\nContent-Type: " .. ctype ..
     "\r\nContent-Length: " .. #body .. "\r\nConnection: close\r\n\r\n" .. body
 end
@@ -585,6 +661,9 @@ local function parse_request(buf)
   end
   local method, path = head:match("^(%u+)%s+(%S+)")
   local len = tonumber(headers["content-length"] or "0") or 0
+  if len > 524288 then
+    return { method = method, path = path, headers = headers, body = "", too_large = true }, headers
+  end
   if #body < len then return nil, headers end
   return { method = method, path = path, headers = headers, body = body:sub(1, len) }, headers
 end
@@ -594,9 +673,17 @@ local function pump(conn)
   skt:settimeout(0)
 
   if not conn.response then
-    local data, err, last = skt:receive(4096)
-    if data and data ~= "" then conn.buf = conn.buf .. data
-    elseif last and last ~= "" then conn.buf = conn.buf .. last end
+    -- Drain up to 64 KB per tick so large route POSTs finish in < 0.4 s
+    -- without monopolising the game thread. Buffered body capped at 512 KB.
+    local drained = 0
+    while drained < 65536 and #conn.buf < 524288 do
+      local want = math.min(16384, 65536 - drained, 524288 - #conn.buf)
+      local data, err, last = skt:receive(want)
+      local chunk = data or last
+      if not chunk or chunk == "" then break end
+      conn.buf = conn.buf .. chunk
+      drained = drained + #chunk
+    end
     -- Honour Expect: 100-continue on the first tick that has the headers,
     -- before parse_request runs, so the client sends its body immediately.
     if not conn.expect_done and conn.buf:find("\r\n\r\n", 1, true) then
@@ -666,9 +753,13 @@ function H.start()
   server = s
   _G.RACECAM_HTTP = H
   LoopInGameThreadWithDelay(100, H.tick)
-  log("HTTP local panel on " .. host .. ":8767 token=" .. tostring(readfile(D .. "racecam_token.txt") ~= nil) ..
+  log("HTTP local panel on " .. host .. ":8767 token=" .. tostring(Paths.read_token() ~= nil) ..
     " failsafe_timeout=" .. tostring(hb_timeout()) .. "s")
   return "listening " .. host .. ":8767"
 end
+
+-- Test seam for the Lua 5.4 host harness: exercise make_response without
+-- binding a socket. Production callers never touch this field.
+H._make_response = make_response
 
 return H

@@ -1,17 +1,13 @@
--- racecam_core.lua — canonical verified CameraActor seam.
+-- RaceCam/core.lua — canonical verified CameraActor seam.
 -- Mode modules provide init(core), apply(core), optional log(core).
+local Paths = require("RaceCam/paths")
 local Core = { rehearsal = false }
 Core.VERSION = "0.7.20-mod-v14"
 _G.RACECAM_CORE = Core
 
--- Resolve the RaceCam data directory without hardcoding a drive letter:
--- the RACECAM_DIR environment variable wins; otherwise candidate relative
--- paths are probed by attempting to create a marker file (io.open append).
-local function racecam_dir() return require("RaceCam/path").data_dir() end
-
 local function log(s)
   if _G.RACECAM_LOG == 1 then
-    local f = io.open(racecam_dir() .. "core.txt", "a")
+    local f = io.open(Paths.log_path("core.txt"), "a")
     if f then f:write(tostring(s) .. "\n") f:close() end
   end
 end
@@ -95,11 +91,6 @@ function Core.start(mode, resume)
     return true
   end)
   return mode.name or "ok"
-end
-
-function Core.register(mode)
-  Core.mode, Core.last_mode = mode, mode
-  return mode.name or "registered"
 end
 
 function Core.restart()
