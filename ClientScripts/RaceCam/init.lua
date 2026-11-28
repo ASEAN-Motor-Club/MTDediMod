@@ -38,6 +38,9 @@ local M = {
     director_override_s = 0,
     director = nil,          -- created lazily via Director.new()
     armed = false,           -- M.tick() also observes Core.running
+    -- Broadcast HUD visibility: "full" (default), "tags_only" (hides HUDWidget,
+    -- keeps sibling NameTagWidgets visible), or "clean" (hides both).
+    hud_mode = "full",
 }
 _G.RACECAM_INIT = M
 
@@ -566,6 +569,61 @@ function M.step_director()
     return res
 end
 
+local HUD_MODES = { full = true, tags_only = true, clean = true }
+
+local function apply_hud_mode(mode)
+    pcall(function()
+        if not FindFirstOf then return end
+        local pc = FindFirstOf("MotorTownPlayerController")
+        if not pc or (pc.IsValid and not pc:IsValid()) or not pc.GetHUD then return end
+        local hud = pc:GetHUD()
+        if not hud or (hud.IsValid and not hud:IsValid()) then return end
+        local hud_op = (mode == "full") and 1.0 or 0.0
+        local tag_op = (mode == "clean") and 0.0 or 1.0
+        local hw = hud.HUDWidget
+        if hw and (not hw.IsValid or hw:IsValid()) and hw.SetRenderOpacity then
+            hw:SetRenderOpacity(hud_op)
+        end
+        local tags = hud.NameTagWidgets
+        if tags then
+            local function set_tag(w)
+                if w and (not w.IsValid or w:IsValid()) and w.SetRenderOpacity then
+                    w:SetRenderOpacity(tag_op)
+                end
+            end
+            if type(tags) == "table" then
+                for i = 1, #tags do set_tag(tags[i]) end
+            else
+                local ok_fe = pcall(function()
+                    tags:ForEach(function(_, elem)
+                        local w = elem and elem.get and elem:get() or elem
+                        set_tag(w)
+                    end)
+                end)
+                if not ok_fe then
+                    pcall(function()
+                        for i = 1, #tags do set_tag(tags[i]) end
+                    end)
+                end
+            end
+        end
+    end)
+end
+
+--- Toggle in-game HUD visibility independently of player name tags.
+--- Must be called on the UE game thread (dispatched via http.lua queue).
+---@param mode string "full" | "tags_only" | "clean"
+---@return string? mode
+---@return string? error
+function M.set_hud_mode(mode)
+    if type(mode) ~= "string" then return nil, "invalid mode" end
+    local normalized = string.lower(mode)
+    if not HUD_MODES[normalized] then return nil, "invalid mode" end
+    M.hud_mode = normalized
+    apply_hud_mode(normalized)
+    return normalized
+end
+
 local director_tick = { last = -math.huge }
 
 --- Per-frame entry point. Engine-only director decisions are throttled to
@@ -573,10 +631,15 @@ local director_tick = { last = -math.huge }
 function M.tick()
     automation_tick()
     local armed = (M.armed == true) or (Core and Core.running == true)
-    if not armed or not M.engine or M.director_mode == "off" then return nil end
     local now = clock_s()
     if now - director_tick.last < 0.5 then return nil end
     director_tick.last = now
+    -- Re-apply NameTagWidgets opacity periodically in clean mode so newly
+    -- streamed-in players' name tags also stay hidden.
+    if M.hud_mode == "clean" or M.hud_mode == "tags_only" then
+        apply_hud_mode(M.hud_mode)
+    end
+    if not armed or not M.engine or M.director_mode == "off" then return nil end
     return M.step_director()
 end
 

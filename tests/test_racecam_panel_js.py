@@ -42,6 +42,7 @@ VALID_IDS = {
     "queue", "qat", "sid", "tgt_name", "standings_hdr", "contestants",
     "sm_tight", "sm_normal", "sm_cinematic",
     "dir_off", "dir_shots", "dir_full", "dir_badge",
+    "hud_full", "hud_tags", "hud_clean",
     "live_current", "live_load_btn", "live_refresh", "live_events", "auto_start",
     "follow_leader", "track_file", "drop_zone", "saved_plans", "plans_refresh",
     "plan_load", "track_info", "track_canvas",

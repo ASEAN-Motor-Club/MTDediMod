@@ -275,6 +275,7 @@ local function state_json()
   parts[#parts + 1] = '"director_reason":"' .. jstr((init and init.director_reason) or "") .. '"'
   parts[#parts + 1] = '"director_override_s":' ..
     tostring(tonumber((init and init.director_override_s) or 0) or 0)
+  parts[#parts + 1] = '"hud_mode":"' .. jstr((init and init.hud_mode) or "full") .. '"'
   local smoothing = (e and e.smoothing_mode) or (init and init.smoothing_mode) or "normal"
   if type(smoothing) ~= "string" or smoothing == "" then smoothing = "normal" end
   parts[#parts + 1] = '"smoothing":"' .. jstr(smoothing) .. '"'
@@ -354,7 +355,20 @@ local function dispatch(item)
   if not e or not core then return "NOENGINE" end
   local cmd, args = item.cmd, item.args or ""
   if cmd == "start" then e:signal("start"); return "started"
-  elseif cmd == "stop" then core.stop(); return "stopped"
+  elseif cmd == "stop" then
+    core.stop()
+    local init = get_init()
+    if init and type(init.set_hud_mode) == "function" and init.hud_mode ~= "full" then
+      pcall(function() init.set_hud_mode("full") end)
+    end
+    return "stopped"
+  elseif cmd == "hud" then
+    local init = get_init()
+    if init and type(init.set_hud_mode) == "function" then
+      local ok, applied = pcall(function() return init.set_hud_mode(args) end)
+      if ok and applied then return "hud:" .. applied end
+    end
+    return "ERR invalid hud mode"
   elseif cmd == "arm" then
     if core.running then return "already armed" end
     local ok, r = pcall(function() return core.restart() end)
@@ -643,6 +657,22 @@ local function make_response(req)
             '","smoothing":"' .. jstr(args) .. '"}'
         end
         log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
+        audit("command", cmd, last_result)
+      end
+    elseif cmd == "hud" then
+      local mode = string.lower(tostring(args or ""))
+      if mode ~= "full" and mode ~= "tags_only" and mode ~= "clean" then
+        code, body = 400, '{"ok":false,"error":"invalid mode"}'
+        last_result = "ERR invalid mode"
+        audit("command", cmd, last_result)
+      else
+        local init = get_init()
+        if init then init.hud_mode = mode end
+        enqueue("hud", mode)
+        last_result = "hud:" .. mode
+        code, body = 200, '{"ok":true,"status":"hud:' .. jstr(mode) ..
+          '","hud_mode":"' .. jstr(mode) .. '"}'
+        log("CMD hud " .. mode .. " -> queued")
         audit("command", cmd, last_result)
       end
     elseif cmd == "director" then

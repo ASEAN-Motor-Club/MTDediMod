@@ -144,6 +144,12 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
   <span class="onair-wrap">ON AIR <input id="tgt_name" size="12" placeholder="driver name"><button class="mini" onclick="lockTyped()">Lock</button></span>
   <span class="cd-wrap">COUNTDOWN <b id="cd">—</b></span>
   <span id="keys_pill" class="pill keys-on">KEYS ACTIVE</span>
+  <span class="dir-ctl" title="In-game HUD visibility: Full, Tags Only (hides HUD, keeps player name tags), or Clean (hides both)">
+    <span class="muted">HUD:</span>
+    <button id="hud_full" class="sm-btn on" onclick="setHudMode('full')">Full</button>
+    <button id="hud_tags" class="sm-btn" onclick="setHudMode('tags_only')">Tags Only</button>
+    <button id="hud_clean" class="sm-btn" onclick="setHudMode('clean')">Clean</button>
+  </span>
   <button id="auth_pill" class="pill" onclick="toggleConnDrawer()">Auth</button>
   <button id="obs_pill" class="pill" onclick="toggleConnDrawer()">OBS OFF</button>
   <button id="reh_btn" class="pill" onclick="toggleRehearsal()">REHEARSAL (R)</button>
@@ -380,6 +386,19 @@ async function setDirector(mode){
   if(DIRECTOR_MODES.indexOf(mode)<0)return null;
   directorMode=mode;highlightDirector(mode);renderDirBadge();
   return cmd('director',mode);
+}
+
+/* ---- Broadcast HUD visibility: Full / Tags Only / Clean ---- */
+const HUD_MODES=['full','tags_only','clean'];
+const HUD_BTN_IDS={full:'hud_full',tags_only:'hud_tags',clean:'hud_clean'};
+let hudMode='full';
+function highlightHud(mode){
+  HUD_MODES.forEach(m=>{const el=$(HUD_BTN_IDS[m]);if(el)el.className='sm-btn'+(m===mode?' on':'')});
+}
+async function setHudMode(mode){
+  if(HUD_MODES.indexOf(mode)<0)return null;
+  hudMode=mode;highlightHud(mode);
+  return cmd('hud',mode);
 }
 
 /* ---- Broadcast Desk v2: tally, camera pads, preview→take, focus keys ----
@@ -718,6 +737,8 @@ async function poll(){
     directorReason=String(s.director_reason||'');
     directorOverrideS=Number(s.director_override_s)||0;
     highlightDirector(directorMode);renderDirBadge();
+    const hMode=HUD_MODES.indexOf(s.hud_mode)>=0?s.hud_mode:'full';
+    hudMode=hMode;highlightHud(hMode);
     if(s.rehearsal!=null&&s.rehearsal!==rehearsal){rehearsal=!!s.rehearsal;$('rehb').textContent=rehearsal?'ON':'OFF'}
     banner();
     const cur=s.current||s.active_shot||'none';
