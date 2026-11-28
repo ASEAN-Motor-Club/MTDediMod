@@ -254,6 +254,22 @@ jobs:
           name: MotorTownClientMod v${{ needs.build-client-mod.outputs.version }}
           tag_name: ${{ needs.build-client-mod.outputs.tag }}
           target_commitish: ${{ github.sha }}
+          body: |
+            ## Installation
+
+            **Choose your variant:**
+            - **Players:** `MotorTownClientMod-${{ needs.build-client-mod.outputs.version }}-player.zip`
+            - **Admins / RaceCam:** `MotorTownClientMod-${{ needs.build-client-mod.outputs.version }}-admin.zip`
+
+            **Steps:**
+            1. Close Motor Town if it is running.
+            2. Open your game's `Win64` folder: in Steam, right-click **Motor Town: Behind The Wheel** → **Manage** → **Browse local files**, then open `MotorTown\Binaries\Win64\`.
+            3. Extract the zip directly into `MotorTown\Binaries\Win64\` so `dwmapi.dll` and the `ue4ss\` folder sit next to `MotorTown-Win64-Shipping.exe` (overwrite existing files when updating).
+            4. Launch Motor Town.
+
+            *(UE4SS, the egui overlay, and Lua dependencies are bundled — no separate UE4SS install is needed. To uninstall, delete `dwmapi.dll` and the `ue4ss\` folder from `MotorTown\Binaries\Win64\`.)*
+
+            ---
           files: |
             MotorTownClientMod-*-admin.zip
             MotorTownClientMod-*-player.zip
