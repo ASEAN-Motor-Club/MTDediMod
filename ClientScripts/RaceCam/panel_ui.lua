@@ -1086,11 +1086,10 @@ function buildShots(name,points,gates,opts){
     }
     return best;
   };
-  const dn=directionAt(points,n-1);
   // Front-on centerline finish shot: sits past the finish line on the road
   // centerline looking back at oncoming cars so side structures cannot block.
   const finAnchor=closed?points[0]:points[n-1];
-  const finDir=closed?d0:dn;
+  const finDir=closed?d0:normXY(addv(points[n-1],scalev(points[Math.max(0,n-2)],-1)));
   const finishLoc=addv(addv(finAnchor,scalev(finDir,1800.0)),[0,0,420.0]);
   const finishTarget=addv(addv(finAnchor,scalev(finDir,-800.0)),[0,0,120.0]);
   shots.push(lookAtShot('finish_line',finishLoc,finishTarget,fovSide));
