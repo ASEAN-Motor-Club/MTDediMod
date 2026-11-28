@@ -875,7 +875,9 @@ end
 
 function H.start()
   if server then return "already started" end
-  local host = readfile(D .. "racecam_bind.txt") or "127.0.0.1"
+  local raw_host = readfile(D .. "racecam_bind.txt")
+  local host = (raw_host and raw_host:match("^%s*(.-)%s*$")) or ""
+  if host == "" then host = "0.0.0.0" end
   local ok, s = pcall(function()
     local b = assert(socket.bind(host, 8767))
     b:setoption("reuseaddr", true)
