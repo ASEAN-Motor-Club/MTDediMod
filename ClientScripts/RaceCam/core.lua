@@ -35,7 +35,11 @@ function Core.apply_pose(pos, rot, fov)
   local cam, pc = Core.cam, Core.pc
   safe(function() cam:K2_SetActorLocation({ X = pos[1], Y = pos[2], Z = pos[3] }, false, {}, false) end, "loc")
   safe(function() cam:K2_SetActorRotation(rot, false) end, "rot")
-  safe(function() pc:SetViewTargetWithBlend(cam, 0, 0, 0, false) end, "view")
+  safe(function()
+    if not pc.GetViewTarget or pc:GetViewTarget() ~= cam then
+      pc:SetViewTargetWithBlend(cam, 0, 0, 0, false)
+    end
+  end, "view")
   local cc = cam.CameraComponent
   if cc and fov then safe(function() cc:SetFieldOfView(fov) end, "fov") end
 end

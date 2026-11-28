@@ -570,11 +570,16 @@ function M.step_director()
 end
 
 local HUD_MODES = { full = true, tags_only = true, clean = true }
+local hud_pc_cache = nil
 
 local function apply_hud_mode(mode)
     pcall(function()
-        if not FindFirstOf then return end
-        local pc = FindFirstOf("MotorTownPlayerController")
+        local pc = (Core and Core.pc) or hud_pc_cache
+        if pc and pc.IsValid and not pc:IsValid() then pc = nil; hud_pc_cache = nil end
+        if not pc and FindFirstOf then
+            pc = FindFirstOf("MotorTownPlayerController")
+            if pc and (not pc.IsValid or pc:IsValid()) then hud_pc_cache = pc end
+        end
         if not pc or (pc.IsValid and not pc:IsValid()) or not pc.GetHUD then return end
         local hud = pc:GetHUD()
         if not hud or (hud.IsValid and not hud:IsValid()) then return end
@@ -636,7 +641,7 @@ function M.tick()
     director_tick.last = now
     -- Re-apply NameTagWidgets opacity periodically in clean mode so newly
     -- streamed-in players' name tags also stay hidden.
-    if M.hud_mode == "clean" or M.hud_mode == "tags_only" then
+    if M.hud_mode == "clean" then
         apply_hud_mode(M.hud_mode)
     end
     if not armed or not M.engine or M.director_mode == "off" then return nil end

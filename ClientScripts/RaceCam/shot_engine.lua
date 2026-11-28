@@ -879,10 +879,17 @@ function E.pawn_name(self, pawn)
   return nil
 end
 
-function E.pawns(self)
+function E.pawns(self, force)
+  local now = self.now or (os and os.clock and os.clock()) or 0
+  if not force and self._pawns_cache and self._pawns_cache_t
+      and (now - self._pawns_cache_t) < 0.5 then
+    return self._pawns_cache
+  end
   local ok, found = pcall(function() return FindAllOf("MTPlayerCharacter_C") end)
-  if not ok or type(found) ~= "table" then return {} end
-  return found
+  local res = (ok and type(found) == "table") and found or {}
+  self._pawns_cache = res
+  self._pawns_cache_t = now
+  return res
 end
 
 function E.ps_name(self, ps)
@@ -899,18 +906,34 @@ function E.ps_name(self, ps)
   return nil
 end
 
-function E.player_states(self)
+function E.player_states(self, force)
+  local now = self.now or (os and os.clock and os.clock()) or 0
+  if not force and self._ps_cache and self._ps_cache_t
+      and (now - self._ps_cache_t) < 0.5 then
+    return self._ps_cache
+  end
   local out = {}
-  local ok_gs, gs = pcall(function()
-    if FindFirstOf then
-      local g = FindFirstOf("MotorTownGameState")
-      if g and (not g.IsValid or g:IsValid()) then return g end
-      g = FindFirstOf("GameStateBase")
-      if g and (not g.IsValid or g:IsValid()) then return g end
+  local gs = self._gs_cache
+  if gs then
+    local ok_v, valid = pcall(function() return (not gs.IsValid) or gs:IsValid() end)
+    if not ok_v or not valid then gs = nil; self._gs_cache = nil end
+  end
+  if not gs then
+    local ok_gs, found_gs = pcall(function()
+      if FindFirstOf then
+        local g = FindFirstOf("MotorTownGameState")
+        if g and (not g.IsValid or g:IsValid()) then return g end
+        g = FindFirstOf("GameStateBase")
+        if g and (not g.IsValid or g:IsValid()) then return g end
+      end
+      return nil
+    end)
+    if ok_gs and found_gs then
+      gs = found_gs
+      self._gs_cache = gs
     end
-    return nil
-  end)
-  if ok_gs and gs then
+  end
+  if gs then
     local ok_arr, arr = pcall(function() return gs.PlayerArray end)
     if ok_arr and arr then
       if type(arr) == "table" then
@@ -943,6 +966,8 @@ function E.player_states(self)
       end
     end
   end
+  self._ps_cache = out
+  self._ps_cache_t = now
   return out
 end
 
@@ -974,7 +999,7 @@ end
 -- Returns (ok, message): true,"target <name>" on success.
 function E.set_target_by_name(self, name)
   if not name or name == "" then return false, "no name given" end
-  local found = self:pawns()
+  local found = self:pawns(true)
   for i, p in ipairs(found) do
     if self:pawn_name(p) == name then
       if self.target_name ~= name then self:reset_smoothing() end
@@ -991,7 +1016,7 @@ function E.set_target_by_name(self, name)
   -- Fallback: driver is on the server (GameState.PlayerArray) but currently
   -- outside UE5's network relevancy bubble. Track PlayerState.Location until
   -- their MTPlayerCharacter_C streams in.
-  for _, ps in ipairs(self:player_states()) do
+  for _, ps in ipairs(self:player_states(true)) do
     if self:ps_name(ps) == name then
       if self.target_name ~= name then self:reset_smoothing() end
       self.target = nil
@@ -1205,9 +1230,9 @@ function E.update(self)
   if not pose then return end
   self.last = pose
   self.core.apply_pose(pose.pos, aim(pose.pos, pose.look), pose.fov)
-  if (self.frames % 5) == 0 then
-    self:log(string.format("D f=%d p=%.1f,%.1f,%.1f fov=%.1f shot=%s", self.frames,
-      pose.pos[1], pose.pos[2], pose.pos[3], pose.fov, tostring(self.active.id)))
+  if (self.debug_log or _G.RACECAM_LOG == 1) and (self.frames % 5) == 0 then
+    self:log(string.format("D f=%d p=%.1f,%.1f,%.1f fov=%.1f shot=%s",
+      self.frames, pose.pos[1], pose.pos[2], pose.pos[3], pose.fov or 0, self.current and self.current.id or "?"))
   end
 end
 
