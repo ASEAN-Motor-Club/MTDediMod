@@ -648,6 +648,17 @@ function E.pose_of(self, s)
       local dx, dy = st.pos[1] - pos[1], st.pos[2] - pos[2]
       local dz = st.pos[3] + TRACKSIDE_LOOK_UP - pos[3]
       local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+      local max_track_cm = s.max_track_cm or 30000.0
+      -- If the target is beyond visual range (e.g. elsewhere on the map or
+      -- behind a hill on a huge circuit), hold the authored static track
+      -- frame instead of aiming a 13-deg telephoto lens into terrain/sky.
+      if dist > max_track_cm and s.look_at then
+        self.follow_look = nil
+        self.smooth_fov = nil
+        return { pos = pos,
+                 look = { s.look_at[1], s.look_at[2], s.look_at[3] },
+                 fov = s.fov or 65.0 }
+      end
       local spd = math.sqrt(st.vel[1] * st.vel[1] + st.vel[2] * st.vel[2])
       local lead = math.min(350.0, spd * 0.15)
         * clamp_num((dist - 1500.0) / 2500.0, 0.0, 1.0)
@@ -730,10 +741,11 @@ function E.pose_of(self, s)
         return self:pose_of(chosen)
       end
     end
-    local best, best_score = nil, math.huge
+    local best, best_score, best_dist = nil, math.huge, math.huge
     for _, c in ipairs(cands) do
       local dx, dy = c.location[1] - tx, c.location[2] - ty
-      local score = math.sqrt(dx * dx + dy * dy)
+      local raw_dist = math.sqrt(dx * dx + dy * dy)
+      local score = raw_dist
       local along = fwd_x and (dx * fwd_x + dy * fwd_y) or 0.0
       if fwd_x and along > 0.0 and along < 14000.0 then
         -- Strong approach bias: open on the car charging toward the lens.
@@ -744,9 +756,20 @@ function E.pose_of(self, s)
         score = score + 4000.0
       end
       if c.id == self.auto_cam_id then score = score - 800.0 end
-      if score < best_score then best, best_score = c, score end
+      if score < best_score then best, best_score, best_dist = c, score, raw_dist end
     end
-    if not best then return nil end
+    -- If the target car is nowhere near any trackside camera (e.g. >250 m off
+    -- track or on a different part of the island), fall back to a follow shot
+    -- instead of parking at an empty corner staring across hills.
+    local max_auto_cm = s.max_range_cm or 25000.0
+    if not best or (st and best_dist > max_auto_cm) then
+      self.auto_cam_id = nil
+      local fallback = {}
+      for k, v in pairs(s) do fallback[k] = v end
+      fallback.kind = "follow"
+      fallback.preset = fallback.preset or "chase_close"
+      return self:pose_of(fallback)
+    end
     if best.id ~= self.auto_cam_id then
       -- Cut: snap the new camera straight onto the car at its own telephoto
       -- FOV instead of panning across the sky from the old look vector.
