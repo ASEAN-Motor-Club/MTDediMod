@@ -471,31 +471,62 @@ local function target_state(self, s, preset)
     scale = err > 2500.0 and 0.12 or (1200.0 / err)
   end
   ex, ey, ez = ex * scale, ey * scale, ez * scale
+  local is_ps_only = (p == nil)
   local tau_pos = shot_tau(self, s, preset, "tau_pos")
-  -- Detect stale/frozen network frames: on high-latency multiplayer links,
-  -- remote vehicle positions freeze between packets (50-200 ms) then jump.
-  -- Pulling the filter back toward a frozen packet causes synthetic braking
-  -- followed by a forward surge when the next packet arrives (springing!).
-  -- Coast smoothly at f.vel while raw is unchanged for < 0.20 s (packet gap),
-  -- then resume normal correction once raw updates or the car truly stops.
+  -- Detect stale/frozen network frames:
+  --  * Streamed-in remote vehicles (p ~= nil) freeze 50-200 ms between packets.
+  --  * Out-of-relevancy PlayerState.Location (p == nil) updates at ~1-1.5 Hz
+  --    (every 0.6-1.0 s in ~10 m jumps).
+  -- Pulling the filter backward toward a frozen packet causes synthetic braking
+  -- followed by a giant forward surge on the next packet (springing!).
+  -- Coast smoothly at f.vel during packet gaps (0.20 s for pawns, 1.5 s for
+  -- PlayerState-only), and on PlayerState packet arrival update velocity from
+  -- the actual inter-packet displacement / pkt_dt.
   local rdx = f.last_raw and (raw[1] - f.last_raw[1]) or 999.0
   local rdy = f.last_raw and (raw[2] - f.last_raw[2]) or 999.0
   local rdz = f.last_raw and (raw[3] - f.last_raw[3]) or 999.0
   local raw_moved = (rdx * rdx + rdy * rdy + rdz * rdz) > 0.25
   local fspeed_sq = f.vel[1] * f.vel[1] + f.vel[2] * f.vel[2] + f.vel[3] * f.vel[3]
+  local pkt_dt = nil
   if raw_moved then
+    if f.last_raw and f.last_raw_t then
+      pkt_dt = now - f.last_raw_t
+    end
+    f.prev_raw = f.last_raw
     f.last_raw = { raw[1], raw[2], raw[3] }
+    f.last_raw_t = now
     f.stale_t = 0.0
   else
     f.stale_t = (f.stale_t or 0.0) + dt
   end
+  local max_coast_t = is_ps_only and 1.50 or 0.20
+  local max_coast_err = is_ps_only and 2500.0 or 600.0
   local coasting = (not raw_moved) and (self.use_vel_predict ~= false)
-                   and (f.stale_t < 0.20) and (fspeed_sq > 2500.0)
-                   and (err < 600.0)
+                   and (f.stale_t < max_coast_t) and (fspeed_sq > 2500.0)
+                   and (err < max_coast_err)
 
-  if coasting then
+  if is_ps_only and raw_moved and pkt_dt and pkt_dt >= 0.15 and pkt_dt <= 2.5 and f.prev_raw then
+    -- Measure true inter-packet velocity from consecutive PlayerState.Location updates
+    -- and blend smoothly so 1-1.5 Hz updates glide without springing.
+    local mvx = clamp_num((raw[1] - f.prev_raw[1]) / pkt_dt, -12000.0, 12000.0)
+    local mvy = clamp_num((raw[2] - f.prev_raw[2]) / pkt_dt, -12000.0, 12000.0)
+    local mvz = clamp_num((raw[3] - f.prev_raw[3]) / pkt_dt, -12000.0, 12000.0)
+    f.vel[1] = lerp(f.vel[1], mvx, 0.65)
+    f.vel[2] = lerp(f.vel[2], mvy, 0.65)
+    f.vel[3] = lerp(f.vel[3], mvz, 0.65)
+    local ka = exp_alpha(dt, tau_pos)
+    f.pos[1], f.pos[2], f.pos[3] = px + ex * ka, py + ey * ka, pz + ez * ka
+  elseif coasting then
     -- Pure smooth coast between delayed network packets (zero brake-pull!).
-    f.pos[1], f.pos[2], f.pos[3] = px, py, pz
+    if is_ps_only then
+      -- Gently close residual toward latest packet without killing velocity.
+      local kc = exp_alpha(dt, math.max(tau_pos * 1.5, 0.6))
+      f.pos[1] = px + (raw[1] + f.vel[1] * f.stale_t - px) * kc
+      f.pos[2] = py + (raw[2] + f.vel[2] * f.stale_t - py) * kc
+      f.pos[3] = pz + (raw[3] + f.vel[3] * f.stale_t - pz) * kc
+    else
+      f.pos[1], f.pos[2], f.pos[3] = px, py, pz
+    end
   elseif self.use_vel_predict == false then
     -- Pure 1st-order EMA damping (zero velocity prediction, zero overshoot).
     local k = exp_alpha(dt, tau_pos)
