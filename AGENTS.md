@@ -32,31 +32,46 @@ This repository produces **two independent artifacts**:
 
 ## Versioning
 
-Server and client mods are versioned **independently** using prefixed git tags:
+Client and server are versioned independently with **stable semantic versions**.
+The version files are the source of truth; git tags only publish them:
 
-```
-server/v0.34.0-rc5    # server mod releases
-client/v0.1.0         # client mod releases
+- `VERSION` — client version, plain `MAJOR.MINOR.PATCH` (e.g. `0.6.1`)
+- `SERVER_VERSION` — server version, plain `MAJOR.MINOR.PATCH` (e.g. `0.44.0`)
+
+No `rc` suffix belongs in either file. Merge the version bump together with its
+CHANGELOG entry: a merge to `master` that changes a version file publishes that
+version by tagging the merge commit as `client/v<VERSION>` or
+`server/v<SERVER_VERSION>`. Do not hand-tag a normal release.
+
+An RC suffix is an explicit, manual preview only, e.g. `client/v1.2.3-rc1`. It is
+a prerelease GitHub release and is never marked `latest`. RCs are not a
+substitute for a version bump — a change that ships must get a stable version.
+
+Validate files and tags with:
+
+```bash
+python3 scripts/check_version.py
+python3 scripts/check_version.py --tag client/v$(cat VERSION)
+python3 scripts/check_version.py --tag server/v$(cat SERVER_VERSION)-rc1
 ```
 
 ### When to bump what
 
-| Change | Server tag | Client tag |
-|--------|-----------|------------|
-| Server Lua fix (`Scripts/`) | bump RC | no change |
-| Client Lua fix (`ClientScripts/`) | no change | bump RC or patch |
-| New C++ hook (`src/`) | bump minor | bump minor (if proxy DLL rebuilt) |
-| Shared Lua change (`shared/`) | bump both | bump both |
-| Config-only tweak | bump RC on affected side | — |
+- Server-only change (`Scripts/`, `src/`, `shared/`): bump `SERVER_VERSION`.
+- Client-only change (`ClientScripts/`, overlay, `shared/`): bump `VERSION`.
+- Change affecting both: bump both.
+- Patch for a fix, minor for a new feature, major for a breaking change.
+- Docs/CI-only change with no shipped artifact: no bump.
 
 ### Listing existing tags
 
 ```bash
-git tag -l 'server/*' --sort=-v:refname | head -5   # Server versions
-git tag -l 'client/*' --sort=-v:refname | head -5   # Client versions
+git tag -l 'client/v*' --sort=-v:refname | head -5
+git tag -l 'server/v*' --sort=-v:refname | head -5
 ```
 
-> **Note**: Legacy tags (`v0.20.x` through `v0.34.0-rc4`) predate the split and cover server-only releases.
+> **Note**: Legacy `rc-*` tags and the old `v0.20.x`–`v0.34.0-rc4` tags are
+> historical prereleases. Do not copy their naming into new releases.
 
 ---
 
