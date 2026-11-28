@@ -45,8 +45,12 @@ local function norm_xy(x, y, fb_x, fb_y)
 end
 
 local DEFAULT_TAU = {
-  tau_pos = 0.14, tau_look = 0.12, tau_hdg = 0.20, tau_fov = 0.25,
+  tau_pos = 0.14, tau_look = 0.12, tau_hdg = 0.20, tau_fov = 0.22,
 }
+
+-- Trackside broadcast tripods aim a little above the car's root so the car
+-- sits in the vertical centre of the frame rather than hanging off the bottom.
+local TRACKSIDE_LOOK_UP = 110.0
 
 -- Legacy 60 Hz alpha -> time constant, so old plans using `damping` /
 -- `smoothing_alpha` keep their previous feel without any explicit tau.
@@ -126,6 +130,7 @@ function E.new(core, presets, plan, route)
     target_lost = false, target_lost_since = nil, target_retry_at = 0.0,
     follow_pos = nil, follow_look = nil, follow_fwd = nil,
     smooth_fov = nil, tgt_filter = nil,
+    auto_cam_id = nil, auto_cam_since = nil,
     smoothing_mode = "normal", smoothing_scale = 1.0,
     queue_entries = {},
     last = { pos = { 0, 0, 0 }, look = { 0, 0, 0 }, fov = 70.0 },
@@ -169,6 +174,9 @@ local function reset_rig(self)
   self.follow_look = nil
   self.follow_fwd = nil
   self.smooth_fov = nil
+  -- A shot cut (activate -> reset_smoothing) restarts the director's hold
+  -- timer, so the first trackside frame picks the camera freshly.
+  self.auto_cam_since = nil
 end
 
 -- Wipe every smoothed state so a shot cut / target switch is a crisp cut, never
@@ -254,6 +262,52 @@ local function ps_location(ps)
   return nil
 end
 
+-- Vehicle-root sampling ------------------------------------------------------
+-- A MTPlayerCharacter_C is seated when GetVehicle() / LastVehicle /
+-- AttachParent resolves to a live actor exposing the UE actor pose API. Every
+-- probe is pcall-guarded: missing methods or pending-kill UE objects must
+-- never abort a camera tick.
+local function is_live(o)
+  if not o then return false end
+  local ok, live = pcall(function()
+    if type(o.IsValid) == "function" then return o:IsValid() ~= false end
+    if o.IsValid ~= nil then return o.IsValid ~= false end
+    return true
+  end)
+  return ok and live ~= false
+end
+
+local function has_actor_pose(o)
+  if not is_live(o) then return false end
+  local ok, get_loc, get_rot = pcall(function() return o.K2_GetActorLocation, o.K2_GetActorRotation end)
+  return ok and type(get_loc) == "function" and type(get_rot) == "function"
+end
+
+local function seated_vehicle(p)
+  if not p then return nil end
+  local ok, candidates = pcall(function()
+    local out = {}
+    if p.GetVehicle then out[#out + 1] = p:GetVehicle() end
+    local parent = nil
+    if p.GetAttachParentActor then parent = p:GetAttachParentActor() end
+    if not is_live(parent) and p.AttachParent then parent = p.AttachParent end
+    if parent then out[#out + 1] = parent end
+    return out
+  end)
+  if not ok or type(candidates) ~= "table" then return nil end
+  for _, v in ipairs(candidates) do
+    if has_actor_pose(v) then return v end
+  end
+  return nil
+end
+E.seated_vehicle = seated_vehicle
+
+-- The actor whose world transform represents the contestant: the vehicle root
+-- when seated, otherwise the MTPlayerCharacter_C pawn itself.
+local function pose_actor(p)
+  return (p and seated_vehicle(p)) or p
+end
+
 local function target_loc(self)
   if not self.target then
     -- Periodically check whether the live pawn has streamed in (or re-resolve
@@ -262,7 +316,8 @@ local function target_loc(self)
   end
   local p = self.target
   if p then
-    local ok, loc = pcall(function() return p:K2_GetActorLocation() end)
+    local actor = pose_actor(p)
+    local ok, loc = pcall(function() return actor:K2_GetActorLocation() end)
     if ok and loc then
       self.target_lost = false
       self.target_lost_since = nil
@@ -274,7 +329,8 @@ local function target_loc(self)
     self.target_retry_at = 0.0
     resolve_target(self)
     if self.target then
-      local ok2, loc2 = pcall(function() return self.target:K2_GetActorLocation() end)
+      local a2 = pose_actor(self.target)
+      local ok2, loc2 = pcall(function() return a2:K2_GetActorLocation() end)
       if ok2 and loc2 then
         self.target_lost = false
         self.target_lost_since = nil
@@ -307,7 +363,10 @@ local function target_state(self, s, preset)
   local raw = { loc.X or loc[1] or 0.0, loc.Y or loc[2] or 0.0, loc.Z or loc[3] or 0.0 }
   local fx, fy = 1.0, 0.0
   if p then
-    local okr, rot = pcall(function() return p:K2_GetActorRotation() end)
+    -- When seated, sample the vehicle root's yaw, not the driver pawn's: long
+    -- / tall vehicles otherwise put the camera off by metres on hairpins.
+    local pose_a = pose_actor(p)
+    local okr, rot = pcall(function() return pose_a:K2_GetActorRotation() end)
     if okr and rot then
       local yaw = math.rad(rot.Yaw or 0.0)
       fx, fy = math.cos(yaw), math.sin(yaw)
@@ -393,6 +452,55 @@ local function target_state(self, s, preset)
   return f
 end
 
+-- Pack-battle rival search ---------------------------------------------------
+-- Nearby streamed-in pawns first, then the map-wide PlayerArray so a rival
+-- outside UE5's relevancy bubble still frames correctly. Identity and name
+-- checks prevent the focus car itself from being picked as its own rival.
+local function contestant_pos(entry)
+  if not entry then return nil end
+  local ok, loc = pcall(function()
+    if entry.K2_GetActorLocation then
+      local l = entry:K2_GetActorLocation()
+      if l and (l.X ~= nil or l[1] ~= nil) then return l end
+    end
+    if entry.Location then
+      local l = entry.Location
+      if l and (l.X ~= nil or l[1] ~= nil) then return l end
+    end
+    return nil
+  end)
+  if not ok or not loc then return nil end
+  return { loc.X or loc[1] or 0.0, loc.Y or loc[2] or 0.0, loc.Z or loc[3] or 0.0 }
+end
+
+local function is_focus(self, entry, is_ps)
+  if entry == self.target or entry == self.target_ps then return true end
+  local name = is_ps and self:ps_name(entry) or self:pawn_name(entry)
+  return name ~= nil and self.target_name ~= nil and name == self.target_name
+end
+
+local function nearest_rival(self, focus, max_rival_cm)
+  local limit = max_rival_cm or 3500.0
+  local best, best_d, seen = nil, math.huge, {}
+  local function consider(entry, is_ps)
+    if not entry or is_focus(self, entry, is_ps) then return end
+    local pos = contestant_pos(entry)
+    if not pos then return end
+    local d = math.sqrt((pos[1] - focus[1])^2 + (pos[2] - focus[2])^2)
+    if d <= limit and d < best_d then
+      local key = string.format("%s:%.0f_%.0f", is_ps and "ps" or "p", pos[1], pos[2])
+      if not seen[key] then
+        seen[key] = true
+        best, best_d = { pos = pos, entry = entry }, d
+      end
+    end
+  end
+  for _, p in ipairs(self:pawns()) do consider(p, false) end
+  for _, ps in ipairs(self:player_states()) do consider(ps, true) end
+  return best, best_d
+end
+E._nearest_rival = nearest_rival
+
 function E.pose_of(self, s)
   if not s then return nil end
   local kind = s.kind or "look_at"
@@ -453,6 +561,66 @@ function E.pose_of(self, s)
     self.follow_look = look
     return { pos = pos, look = look, fov = s.fov or (preset and preset.fov) or 70.0 }
   end
+  if kind == "pack_battle" then
+    local st = target_state(self, s, preset)
+    if not st then return nil end
+    local rival = nearest_rival(self, st.pos, s.max_rival_cm)
+    if not rival then
+      -- Solo: clean fallback to an ordinary follow rig (preset offset / fov).
+      local fallback = {}
+      for k, v in pairs(s) do fallback[k] = v end
+      fallback.kind = "follow"
+      return self:pose_of(fallback)
+    end
+    local fx, fy = st.fwd[1], st.fwd[2]
+    local rx, ry = -fy, fx
+    local mid_z = 0.6 * st.pos[3] + 0.4 * rival.pos[3]
+    local mid = { 0.6 * st.pos[1] + 0.4 * rival.pos[1],
+                  0.6 * st.pos[2] + 0.4 * rival.pos[2],
+                  mid_z + TRACKSIDE_LOOK_UP }
+    local o = preset and preset.offset or {}
+    local f_off = o.fwd or -(o.back or 1200.0)
+    local r_off = o.right or 0.0
+    local u_off = o.up or 420.0
+    local dt = st.dt or (1.0 / 60.0)
+    local want_pos = { mid[1] + fx * f_off + rx * r_off,
+                       mid[2] + fy * f_off + ry * r_off,
+                       mid_z + u_off }
+    local pos = want_pos
+    if self.follow_pos then
+      local kxy = exp_alpha(dt, shot_tau(self, s, preset, "tau_pos"))
+      local kz = exp_alpha(dt, shot_tau(self, s, preset, "tau_pos") * 1.5)
+      pos = {
+        lerp(self.follow_pos[1], want_pos[1], kxy),
+        lerp(self.follow_pos[2], want_pos[2], kxy),
+        lerp(self.follow_pos[3], want_pos[3], kz),
+      }
+    end
+    self.follow_pos = pos
+    self.follow_fwd = { fx, fy }
+    local want_look = mid
+    local look = want_look
+    if self.follow_look then
+      look = vlerp(self.follow_look, want_look, exp_alpha(dt, shot_tau(self, s, preset, "tau_look")))
+    end
+    self.follow_look = look
+    -- True 3D angular separation between focus and rival as seen from the
+    -- camera, plus framing margin, so nose-to-tail battles stay crisp while
+    -- side-by-side battles widen smoothly to keep both cars in view.
+    local v1x, v1y, v1z = st.pos[1] - pos[1], st.pos[2] - pos[2], (st.pos[3] + TRACKSIDE_LOOK_UP) - pos[3]
+    local v2x, v2y, v2z = rival.pos[1] - pos[1], rival.pos[2] - pos[2], (rival.pos[3] + TRACKSIDE_LOOK_UP) - pos[3]
+    local m1 = math.max(math.sqrt(v1x*v1x + v1y*v1y + v1z*v1z), 1.0)
+    local m2 = math.max(math.sqrt(v2x*v2x + v2y*v2y + v2z*v2z), 1.0)
+    local cos_a = clamp_num((v1x*v2x + v1y*v2y + v1z*v2z) / (m1 * m2), -1.0, 1.0)
+    local span_deg = math.deg(math.acos(cos_a))
+    local want_fov = clamp_num(span_deg * 1.35 + 28.0, 56.0, 84.0)
+    local fov = want_fov
+    if self.smooth_fov then
+      fov = lerp(self.smooth_fov, want_fov, exp_alpha(dt, shot_tau(self, s, preset, "tau_fov")))
+    end
+    self.smooth_fov = fov
+    return { pos = pos, look = look, fov = fov }
+  end
   if kind == "flyover" and self.route then
     local started = self.shot_started_at or self:clock()
     local d = (s.arc or 0.0) + (self:clock() - started) * (s.speed_cm_s or 3000.0)
@@ -467,8 +635,17 @@ function E.pose_of(self, s)
     local pos = { s.location[1], s.location[2], s.location[3] }
     local st = target_state(self, s, preset)
     if st then
-      -- Broadcast tripod head: aim at the filtered target, glide the zoom.
-      local want_look = { st.pos[1], st.pos[2], st.pos[3] + 120.0 }
+      -- Broadcast tripod head: aim at the filtered target with a subtle
+      -- velocity lead, and glide the physically-derived optical zoom.
+      local dx, dy = st.pos[1] - pos[1], st.pos[2] - pos[2]
+      local dz = st.pos[3] + TRACKSIDE_LOOK_UP - pos[3]
+      local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+      local spd = math.sqrt(st.vel[1] * st.vel[1] + st.vel[2] * st.vel[2])
+      local lead = math.min(350.0, spd * 0.15)
+        * clamp_num((dist - 1500.0) / 2500.0, 0.0, 1.0)
+      local lx, ly = norm_xy(st.vel[1], st.vel[2], st.fwd[1], st.fwd[2])
+      local want_look = { st.pos[1] + lx * lead, st.pos[2] + ly * lead,
+                          st.pos[3] + TRACKSIDE_LOOK_UP }
       local look = want_look
       if self.follow_look then
         look = vlerp(self.follow_look, want_look,
@@ -477,10 +654,15 @@ function E.pose_of(self, s)
       self.follow_look = look
       local fov = s.fov or 65.0
       if s.auto_zoom ~= false then
-        local dx, dy, dz = st.pos[1] - pos[1], st.pos[2] - pos[2], st.pos[3] + 120.0 - pos[3]
-        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-        local want_fov = math.max(s.fov_min or 28.0,
-          math.min(s.fov_max or 65.0, 220000.0 / math.max(dist, 1500.0)))
+        -- Physical-size auto-zoom: a car of `car_span_cm` should fill
+        -- `target_fill` of the horizontal frame at this camera distance.
+        local car_span_cm = s.car_span_cm or 550.0
+        local target_fill = s.target_fill or 0.28
+        local fov_min = s.fov_min or 13.0
+        local fov_max = s.fov_max or 58.0
+        local want_fov = clamp_num(
+          math.deg(2.0 * math.atan((car_span_cm / target_fill) / (2.0 * math.max(dist, 600.0)))),
+          fov_min, fov_max)
         fov = want_fov
         if self.smooth_fov then
           fov = lerp(self.smooth_fov, want_fov,
@@ -495,8 +677,8 @@ function E.pose_of(self, s)
     return { pos = pos, look = look, fov = s.fov or 65.0 }
   end
   if kind == "auto_trackside" then
-    -- Pick the trackside camera nearest the live target; stick with the
-    -- current pick until a challenger is meaningfully closer (hysteresis).
+    -- TV director: choose a trackside camera with approach-first scoring,
+    -- hold the pick for a minimum time, then hand off cleanly after pass-by.
     local cands = {}
     for _, c in ipairs(self.plan.shots or {}) do
       if c ~= s and c.location
@@ -518,18 +700,52 @@ function E.pose_of(self, s)
       tx, ty = st.pos[1], st.pos[2]
       fwd_x, fwd_y = st.fwd[1], st.fwd[2]
     end
+    local now = self:clock()
+    local min_hold_s = s.min_hold_s or 2.8
+    local held = now - (self.auto_cam_since or now)
+    local current = nil
+    if self.auto_cam_id and held >= 0.0 and held < min_hold_s then
+      for _, c in ipairs(cands) do
+        if c.id == self.auto_cam_id then current = c break end
+      end
+      if current and st then
+        local cx, cy = current.location[1] - tx, current.location[2] - ty
+        local along = fwd_x and (cx * fwd_x + cy * fwd_y) or 0.0
+        local dist = math.sqrt(cx * cx + cy * cy)
+        -- Early release only when the car is already well past this lens or
+        -- the camera is simply too far away to be useful.
+        if along < -3500.0 or dist > 18000.0 then current = nil end
+      end
+      if current then
+        local chosen = {}
+        for k, v in pairs(current) do chosen[k] = v end
+        return self:pose_of(chosen)
+      end
+    end
     local best, best_score = nil, math.huge
     for _, c in ipairs(cands) do
       local dx, dy = c.location[1] - tx, c.location[2] - ty
       local score = math.sqrt(dx * dx + dy * dy)
-      if fwd_x and (dx * fwd_x + dy * fwd_y > 0.0) then
-        -- Small preference for cameras ahead of the target's heading.
-        score = score - 500.0
+      local along = fwd_x and (dx * fwd_x + dy * fwd_y) or 0.0
+      if fwd_x and along > 0.0 and along < 14000.0 then
+        -- Strong approach bias: open on the car charging toward the lens.
+        score = score - 3000.0
+      end
+      if fwd_x and along < -2000.0 then
+        -- Car has passed this camera; hand off to the next approaching one.
+        score = score + 4000.0
       end
       if c.id == self.auto_cam_id then score = score - 800.0 end
       if score < best_score then best, best_score = c, score end
     end
     if not best then return nil end
+    if best.id ~= self.auto_cam_id then
+      -- Cut: snap the new camera straight onto the car at its own telephoto
+      -- FOV instead of panning across the sky from the old look vector.
+      self.follow_look = nil
+      self.smooth_fov = nil
+      self.auto_cam_since = now
+    end
     self.auto_cam_id = best.id
     local chosen = {}
     for k, v in pairs(best) do chosen[k] = v end

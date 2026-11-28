@@ -201,6 +201,9 @@ local function default_plan()
             { id = "front_chase", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "front_chase", fov = 65.0 },
             { id = "side_tracking", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "side_tracking", fov = 68.0 },
             { id = "orbit_hero", kind = "orbit", trigger = { type = "manual" }, target = "focus", preset = "orbit_hero", fov = 60.0 },
+            { id = "onboard_tcam", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "onboard_tcam", fov = 78.0 },
+            { id = "rear_battle", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "rear_battle", fov = 68.0 },
+            { id = "pack_battle", kind = "pack_battle", trigger = { type = "manual" }, target = "focus", preset = "pack_battle", fov = 68.0 },
         },
     }
 end

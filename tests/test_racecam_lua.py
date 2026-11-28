@@ -770,7 +770,8 @@ local looks = {}
 for _ = 1, 60 do T = T + DT60; looks[#looks + 1] = eo:pose_of(orbit).look[1] end
 assert(looks[1] < 100.0 and looks[60] > 250.0,
   string.format("orbit aim not smooth: first=%.2f last=%.2f", looks[1], looks[60]))
--- Trackside pan: fov glides toward the auto-zoom target, never steps.
+-- Trackside pan: physical auto-zoom fov glides toward the new target (never
+-- steps). The physical curve replaces the old 220000/dist heuristic.
 local pan = { id = "p1", kind = "trackside_pan", location = { 0, 0, 0 }, preset = "trackside_low" }
 T = 0.0
 local ep = new_engine(pan)
@@ -779,8 +780,8 @@ local f0 = ep:pose_of(pan).fov
 move(2000, 0, 0)
 local fovs = {}
 for _ = 1, 60 do T = T + DT60; fovs[#fovs + 1] = ep:pose_of(pan).fov end
-assert(f0 > 50.0 and f0 < 60.0, "initial pan fov wrong: " .. tostring(f0))
-assert(fovs[1] > f0 and fovs[10] < fovs[60] and fovs[60] > 60.0,
+assert(f0 > 25.0 and f0 < 30.0, "initial pan fov wrong: " .. tostring(f0))
+assert(fovs[1] > f0 and fovs[10] < fovs[60] and fovs[60] > 45.0 and fovs[60] < 58.0,
   string.format("pan fov not smoothed: f0=%.2f f1=%.2f f10=%.2f f60=%.2f",
     f0, fovs[1], fovs[10], fovs[60]))
 -- Modes: case-insensitive validation + multiplier applied to effective taus.
@@ -797,7 +798,8 @@ assert(at > bn and bn > cc, "tight/normal/cinematic taus not ordered")
 ep:reset_smoothing()
 assert(ep.follow_pos == nil and ep.follow_look == nil and ep.smooth_fov == nil and ep.tgt_filter == nil)
 local cut = ep:pose_of(pan)
-assert(math.abs(cut.look[1] - 2000.0) < 0.001 and math.abs(cut.fov - 65.0) < 0.01,
+-- Post-reset first frame snaps to the physical fov at 20 m (~52 deg).
+assert(math.abs(cut.look[1] - 2000.0) < 0.001 and cut.fov > 50.0 and cut.fov < 55.0,
   string.format("cut did not snap: look=%.2f fov=%.2f", cut.look[1], cut.fov))
 -- activate() performs the same cut even when the new target is far away.
 move(12000, 0, 0)
@@ -813,6 +815,249 @@ move(0, 0, 0)
 for _ = 1, 30 do T = T + DT60; el:pose_of(legacy) end
 assert(el.tgt_filter ~= nil, "legacy damping shot did not initialize the estimator")
 print(string.format("SMOOTH_MODES_OK orbit=%.2f fov=%.2f cut=%.2f", looks[60], fovs[60], cut.look[1]))
+'''
+
+# Phase 1 (a): 16:9 viewport framing of the retuned follow presets.
+FRAMING_HARNESS = r'''
+-- Pinhole projection helper: nx/ny in [-1,+1], +/-1 == frame edge. UE's
+-- FieldOfView is horizontal; vertical half-angle is derived from 16:9.
+local function project(preset_id)
+  local shot = { id = "p", kind = "follow", preset = preset_id }
+  T = 0.0
+  local e = new_engine(shot)
+  move(0, 0, 0); pawn._yaw = 0
+  local p = e:pose_of(shot)
+  local fx, fy, fz = p.look[1] - p.pos[1], p.look[2] - p.pos[2], p.look[3] - p.pos[3]
+  local fl = math.sqrt(fx * fx + fy * fy + fz * fz)
+  fx, fy, fz = fx / fl, fy / fl, fz / fl
+  local rx, ry = -fy, fx                       -- right = world_up x forward
+  local rl = math.sqrt(rx * rx + ry * ry); rx, ry = rx / rl, ry / rl
+  local ux, uy, uz = -fz * ry, fz * rx, fx * ry - fy * rx
+  local dx, dy, dz = -p.pos[1], -p.pos[2], 110.0 - p.pos[3]  -- car body centre
+  local depth = dx * fx + dy * fy + dz * fz
+  local sx = dx * rx + dy * ry
+  local sy = dx * ux + dy * uy + dz * uz
+  local tan_h = math.tan(math.rad(p.fov * 0.5))
+  local tan_v = tan_h / (16.0 / 9.0)
+  return sx / (depth * tan_h), sy / (depth * tan_v), p.fov, p
+end
+
+local side_nx, side_ny = project("side_tracking")
+-- 24% of the half-width == ~12% of the full frame width from centre. The
+-- mandated right=620 / look_ahead=90 geometry cannot reach 12% of half-width
+-- under a pinhole camera; this is the regression guard for the retune.
+assert(math.abs(side_nx) < 0.28 and math.abs(side_ny) < 0.15,
+  string.format("side_tracking off hero zone: nx=%.4f ny=%.4f", side_nx, side_ny))
+local chase_ny = 0.0
+for _, id in ipairs({ "chase_close", "chase_wide", "front_chase" }) do
+  local nx, ny = project(id)
+  chase_ny = ny
+  assert(math.abs(nx) < 0.20 and ny > -0.35 and ny < 0.20,
+    string.format("%s bad framing: nx=%.4f ny=%.4f", id, nx, ny))
+end
+local hx, hy, hfov, hp = project("heli_follow")
+local hdist = math.sqrt(hp.pos[1]^2 + hp.pos[2]^2 + hp.pos[3]^2)
+assert(hdist < 3200.0 and hfov <= 48.0 and math.abs(hx) < 0.20,
+  string.format("heli not closer/centred: dist=%.1f fov=%.1f nx=%.4f", hdist, hfov, hx))
+assert(Presets.get("heli_follow").flags.tau_hdg >= 1.0, "heli tau_hdg must glide hairpins")
+
+-- New rig presets exist with complete, valid flags (validate() in prelude).
+assert(Presets.types.pack_battle == true, "pack_battle type must be registered")
+for _, id in ipairs({ "onboard_tcam", "rear_battle", "pack_battle" }) do
+  local q = Presets.get(id)
+  assert(q and q.id == id and q.flags.pin_view_target == true
+         and type(q.flags.smoothing_alpha) == "number"
+         and type(q.flags.use_route_tangent) == "boolean"
+         and q.flags.tau_pos and q.flags.tau_look and q.flags.tau_hdg and q.flags.tau_fov,
+    "missing/incomplete preset " .. id)
+end
+print(string.format("FRAMING_OK side_nx=%.4f chase_ny=%.4f heli_dist=%.0f", side_nx, chase_ny, hdist))
+'''
+
+# Phase 2 (b): physical-size telephoto auto-zoom curve + tau_fov glide.
+ZOOM_HARNESS = r'''
+local pan = { id = "z1", kind = "trackside_pan", location = { 0, 0, 0 } }
+local function snap_fov(d)
+  T = 0.0
+  local e = new_engine(pan)
+  move(d, 0, 0); pawn._yaw = 0
+  return e:pose_of(pan).fov
+end
+local far_fov = snap_fov(12000.0)   -- 120 m: telephoto floor
+local apex_fov = snap_fov(1200.0)   -- 12 m: wide apex pass
+assert(far_fov >= 13.0 and far_fov <= 18.0,
+  "120 m zoom not telephoto: " .. tostring(far_fov))
+assert(apex_fov >= 45.0 and apex_fov <= 58.0,
+  "12 m zoom not wide: " .. tostring(apex_fov))
+local function trace(explicit_tau)
+  T = 0.0
+  local shot = { id = "z2", kind = "trackside_pan", location = { 0, 0, 0 } }
+  if explicit_tau then shot.tau_fov = 0.22 end
+  local e = new_engine(shot)
+  move(12000, 0, 0); pawn._yaw = 0
+  local prev = e:pose_of(shot).fov
+  local max_step = 0.0
+  for i = 1, 120 do
+    T = T + DT60
+    move(12000 - 10800.0 * (i / 120), 0, 0)
+    local f = e:pose_of(shot).fov
+    max_step = math.max(max_step, math.abs(f - prev)); prev = f
+  end
+  return prev, max_step
+end
+local final_fov, max_step = trace(false)
+local explicit_fov, explicit_step = trace(true)
+local alpha = Engine.exp_alpha(DT60, 0.22)
+assert(max_step < (apex_fov - far_fov) * alpha + 1.0,
+  string.format("zoom stepped: max_step=%.3f bound=%.3f", max_step, (apex_fov - far_fov) * alpha + 1.0))
+-- Default tau_fov is 0.22: omitting it must be identical to setting it.
+assert(math.abs(final_fov - explicit_fov) < 1.0e-6
+       and math.abs(max_step - explicit_step) < 1.0e-6,
+  "default tau_fov is not 0.22")
+assert(final_fov > 40.0 and final_fov <= 58.0,
+  "zoom did not widen toward the apex: " .. tostring(final_fov))
+print(string.format("ZOOM_OK far=%.2f apex=%.2f final=%.2f maxstep=%.3f",
+  far_fov, apex_fov, final_fov, max_step))
+'''
+
+# Phase 2 (c): approach-first director with minimum hold + cut snap.
+DIRECTOR_HARNESS = r'''
+local auto = { id = "auto", kind = "auto_trackside", preset = "trackside_low" }
+local function cam(id, x)
+  return { id = id, kind = "trackside_pan", location = { x, -800, 240 },
+           role = "trackside", preset = "trackside_low" }
+end
+local plan = { shots = { auto, cam("camA", 0), cam("camB", 5000), cam("camC", 10000) } }
+local e = Engine.new(Core, Presets, plan, nil)
+e.clock = function() return T end
+e.target = pawn
+T = 0.0; move(-2000, 0, 0); pawn._yaw = 0
+e:pose_of(auto)
+assert(e.auto_cam_id == "camA" and e.auto_cam_since == 0.0,
+  "director must open on the approaching camera: " .. tostring(e.auto_cam_id))
+-- Still on camera A after passing it by 20 m: minimum hold not yet expired.
+while pawn._x < 2000 do
+  T = T + DT60; move(pawn._x + 2000.0 * DT60, 0, 0); e:pose_of(auto)
+end
+assert(e.auto_cam_id == "camA" and T < 2.8,
+  string.format("min hold violated: id=%s T=%.3f", tostring(e.auto_cam_id), T))
+-- Seed stale smoothing right before the early-release cut; the new lens must
+-- snap straight onto the car at its own telephoto FOV.
+local prev_id, cut_pose = e.auto_cam_id, nil
+for _ = 1, 600 do
+  T = T + DT60; move(pawn._x + 2000.0 * DT60, 0, 0)
+  if e.auto_cam_id == "camA" and pawn._x > 3500.0 then
+    e.smooth_fov = 1234.0
+    e.follow_look = { 99999.0, 99999.0, 99999.0 }
+  end
+  local p = e:pose_of(auto)
+  if e.auto_cam_id ~= prev_id then cut_pose = p; break end
+end
+assert(e.auto_cam_id == "camB", "did not hand off to camera B: " .. tostring(e.auto_cam_id))
+local f = e.tgt_filter.pos
+local dx, dy, dz = f[1] - 5000.0, f[2] + 800.0, f[3] + 110.0 - 240.0
+local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+local raw_fov = math.max(13.0, math.min(58.0,
+  math.deg(2.0 * math.atan((550.0 / 0.28) / (2.0 * math.max(dist, 600.0))))))
+assert(cut_pose and math.abs(cut_pose.fov - raw_fov) < 0.01,
+  string.format("cut did not snap fov: got=%s want=%.4f",
+    cut_pose and cut_pose.fov or "nil", raw_fov))
+assert(math.abs(cut_pose.look[1] - f[1]) < 400.0, "cut did not snap aim onto the car")
+assert(math.abs(e.auto_cam_since - T) < 1.0e-9, "cut did not restart the hold timer")
+-- Hand off again once the car is >35 m past camera B.
+for _ = 1, 600 do
+  T = T + DT60; move(pawn._x + 2000.0 * DT60, 0, 0); e:pose_of(auto)
+  if e.auto_cam_id == "camC" then break end
+end
+assert(e.auto_cam_id == "camC", "no handoff to camera C: " .. tostring(e.auto_cam_id))
+-- Approach-first scoring: with the hold expired, prefer the camera ahead
+-- (camB, along=+3000) over the nearer-but-behind current camera (camA).
+T = 10.0; move(2000, 0, 0); pawn._yaw = 0
+local e2 = Engine.new(Core, Presets, plan, nil)
+e2.clock = function() return T end
+e2.target = pawn
+e2:pose_of(auto)
+e2.auto_cam_id = "camA"; e2.auto_cam_since = 0.0
+T = 11.0
+e2:pose_of(auto)
+assert(e2.auto_cam_id == "camB",
+  "approach-first bias failed: " .. tostring(e2.auto_cam_id))
+print(string.format("DIRECTOR_OK cut=%s at_x=%.0f handoff=%s", "camB", pawn._x, e.auto_cam_id))
+'''
+
+# Phase 1 (d): pack_battle two-car midpoint framing + solo fallback.
+PACK_HARNESS = r'''
+local rival = { _x = 2000.0, _y = 0.0, _z = 0.0 }
+function rival:K2_GetActorLocation() return { X = self._x, Y = self._y, Z = self._z } end
+function rival:K2_GetActorRotation() return { Yaw = 0 } end
+local pawns = { pawn, rival }
+_G.FindAllOf = function(cls)
+  if cls == "MTPlayerCharacter_C" then return pawns end
+  return {}
+end
+local shot = { id = "pb", kind = "pack_battle", preset = "pack_battle" }
+T = 0.0
+local e = new_engine(shot)
+move(0, 0, 0); pawn._yaw = 0
+local p = e:pose_of(shot)
+-- Midpoint = 0.6*focus + 0.4*rival = (800, 0, 110); camera sits behind it.
+assert(math.abs(p.look[1] - 800.0) < 5.0 and math.abs(p.look[3] - 110.0) < 5.0,
+  string.format("pack midpoint wrong: %.1f,%.1f,%.1f", p.look[1], p.look[2], p.look[3]))
+assert(math.abs(p.pos[1] + 400.0) < 5.0 and math.abs(p.pos[2] - 180.0) < 5.0
+       and math.abs(p.pos[3] - 420.0) < 5.0,
+  string.format("pack camera wrong: %.1f,%.1f,%.1f", p.pos[1], p.pos[2], p.pos[3]))
+assert(p.fov >= 56.0 and p.fov <= 84.0,
+  "pack fov out of broadcast range: " .. tostring(p.fov))
+-- Side-by-side rival 12 m right widens FOV more than nose-to-tail.
+rival._x = 0.0; rival._y = 1200.0
+local e_side = new_engine(shot)
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local p_side = e_side:pose_of(shot)
+assert(p_side.fov > p.fov and p_side.fov <= 84.0,
+  string.format("side-by-side must widen more than nose-to-tail: side=%.1f n2t=%.1f", p_side.fov, p.fov))
+-- Rival beyond max_rival_cm: clean fallback to the follow rig (preset fov).
+rival._x = 8000.0
+local e2 = new_engine(shot)
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local solo = e2:pose_of(shot)
+assert(math.abs(solo.pos[1] + 1200.0) < 5.0 and math.abs(solo.fov - 68.0) < 0.01,
+  string.format("solo fallback wrong: pos=%.1f fov=%.2f", solo.pos[1], solo.fov))
+print(string.format("PACK_OK look=%.0f fov=%.1f solo_fov=%.1f", p.look[1], p.fov, solo.fov))
+'''
+
+# Phase 1: vehicle-root tracking with safe fallback.
+VEHICLE_HARNESS = r'''
+local veh = { _x = 500.0, _y = 0.0, _z = 0.0, _yaw = 90.0 }
+function veh:IsValid() return true end
+function veh:K2_GetActorLocation() return { X = self._x, Y = self._y, Z = self._z } end
+function veh:K2_GetActorRotation() return { Yaw = self._yaw } end
+function pawn:GetVehicle() return veh end
+local shot = { id = "v1", kind = "follow", preset = "chase_close" }
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local e = new_engine(shot)
+local p = e:pose_of(shot)
+assert(e.seated_vehicle and e.seated_vehicle(pawn) == veh, "seated vehicle not detected")
+-- Vehicle root at (500,0,0), yaw 90 deg -> camera at (500,-750,260).
+assert(math.abs(p.pos[1] - 500.0) < 1.0 and math.abs(p.pos[2] + 750.0) < 1.0,
+  string.format("vehicle-root position wrong: %.1f,%.1f,%.1f", p.pos[1], p.pos[2], p.pos[3]))
+assert(math.abs(p.look[1] - 500.0) < 1.0 and math.abs(p.look[2] - 220.0) < 1.0,
+  string.format("vehicle-root yaw wrong: %.1f,%.1f", p.look[1], p.look[2]))
+-- Invalid vehicle / throwing GetVehicle must fall back to the pawn cleanly.
+local bad = { IsValid = function() return false end,
+              K2_GetActorLocation = veh.K2_GetActorLocation,
+              K2_GetActorRotation = veh.K2_GetActorRotation }
+function pawn:GetVehicle() return bad end
+local e2 = new_engine(shot)
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local p2 = e2:pose_of(shot)
+assert(e2.seated_vehicle(pawn) == nil and math.abs(p2.pos[1] + 750.0) < 1.0,
+  "invalid vehicle did not fall back to the pawn")
+function pawn:GetVehicle() error("vehicle probe exploded") end
+local e3 = new_engine(shot)
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local p3 = e3:pose_of(shot)
+assert(p3 and math.abs(p3.pos[1] + 750.0) < 1.0, "throwing GetVehicle broke the tick")
+print(string.format("VEHICLE_OK seated=%.0f,%.0f fallback=%.0f", p.pos[1], p.pos[2], p3.pos[1]))
 '''
 
 class RaceCamLuaTests(unittest.TestCase):
@@ -1117,6 +1362,26 @@ class RaceCamLuaTests(unittest.TestCase):
     def test_lua_smoothing_orbit_pan_modes_and_reset(self) -> None:
         """Orbit/pan aim+fov smoothing, clean cut resets, smoothing modes."""
         self._run_smoothing_harness(SMOOTH_MODES_HARNESS, "SMOOTH_MODES_OK", "smoothmodes")
+
+    def test_lua_preset_framing_projection(self) -> None:
+        """Follow presets frame the car inside the 16:9 hero zone."""
+        self._run_smoothing_harness(FRAMING_HARNESS, "FRAMING_OK", "framing")
+
+    def test_lua_trackside_physical_auto_zoom(self) -> None:
+        """Physical telephoto curve (13-58 deg) glides with the 0.22 s tau."""
+        self._run_smoothing_harness(ZOOM_HARNESS, "ZOOM_OK", "zoom")
+
+    def test_lua_auto_trackside_approach_director(self) -> None:
+        """Approach-first camera picks, min hold, handoff and cut snapping."""
+        self._run_smoothing_harness(DIRECTOR_HARNESS, "DIRECTOR_OK", "director")
+
+    def test_lua_pack_battle_framing(self) -> None:
+        """Two-car midpoint framing widens FOV; solo falls back to follow."""
+        self._run_smoothing_harness(PACK_HARNESS, "PACK_OK", "packbattle")
+
+    def test_lua_vehicle_root_tracking(self) -> None:
+        """Seated drivers are tracked from the vehicle root with safe fallback."""
+        self._run_smoothing_harness(VEHICLE_HARNESS, "VEHICLE_OK", "vehicle")
 
     def test_lua_player_array_full_server_roster_and_remote_fallback(self) -> None:
         """list_targets merges GameState.PlayerArray; far drivers track PlayerState.Location and upgrade when streamed in."""

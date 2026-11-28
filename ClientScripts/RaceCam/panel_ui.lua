@@ -308,7 +308,7 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
 <li><code>orbit_hero</code> — smooth 360° orbit around the target; great for grids and podiums.</li>
 <li><code>route_flyover</code> — continuous course flyover for pre-race track previews.</li>
 </ol>
-<div class="kbd">Dropdown-only <code>·</code> shots: <code>finish_line</code> (frames the line), <code>overview</code> (high static course view), and up to six <code>corner_XX_pan</code> cameras that pan and auto-zoom to the followed contestant. Shots past <code>9</code> have no number key — click their pad in the extra row. The <code>#sid</code> dropdown stays available as a compact fallback.</div>
+<div class="kbd">Dropdown-only <code>·</code> shots: <code>finish_line</code> (frames the line), <code>overview</code> (high static course view), broadcast rigs <code>onboard_tcam</code>, <code>rear_battle</code> and <code>pack_battle</code>, auto-placed <code>straight_telephoto</code>, <code>curb_apex</code> and <code>start_crane</code> cameras, and up to six <code>corner_XX_pan</code> cameras that pan and auto-zoom to the followed contestant. Shots past <code>9</code> have no number key — click their pad in the extra row. The <code>#sid</code> dropdown stays available as a compact fallback.</div>
 
 <h3>4. Keyboard Hotkeys <span class="kbd">(when focus is outside text inputs)</span></h3>
 <div class="kbd">
@@ -353,7 +353,9 @@ async function setSmoothing(mode){
 const SHOT_LABELS={start_line:'Start Line',fly_up:'Fly Up',auto_trackside:'Auto Trackside',
   heli_follow:'Heli Follow',follow_focus:'Follow Focus',front_chase:'Front Chase',
   side_tracking:'Side Track',orbit_hero:'Orbit Hero',route_flyover:'Flyover',
-  finish_line:'Finish Line',overview:'Overview'};
+  finish_line:'Finish Line',overview:'Overview',
+  onboard_tcam:'Onboard T-Cam',rear_battle:'Rear Battle',pack_battle:'Pack Battle',
+  straight_telephoto:'Straight Tele',curb_apex:'Curb Apex',start_crane:'Start Crane'};
 let takeMode=false,stagedShot='',lastDeckSig='',lastCueSig='',lastDeckState=null;
 let recording=false,recStart=0;
 function toast(msg){const t=$('toast');if(t)t.textContent=String(msg===undefined||msg===null?'':msg).slice(0,140)}
@@ -369,7 +371,9 @@ function shotLabel(id){return SHOT_LABELS[id]||String(id||'').replace(/_/g,' ')
   .replace(/\b\w/g,c=>c.toUpperCase())}
 function shotKind(id){
   if(/^corner_/.test(id))return 'trackside';
+  if(id==='straight_telephoto'||id==='curb_apex'||id==='start_crane')return 'trackside';
   if(id==='finish_line'||id==='overview'||id==='orbit_hero')return 'hero';
+  if(id==='onboard_tcam'||id==='rear_battle'||id==='pack_battle')return 'follow';
   if(/follow|chase|focus/.test(id))return 'follow';
   if(/heli|fly|drone/.test(id))return 'drone';
   return 'track';
@@ -736,7 +740,18 @@ const addv=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
 const scalev=(a,k)=>[a[0]*k,a[1]*k,a[2]*k];
 function normXY(a){const m=Math.hypot(a[0],a[1]);if(m<=EPS)throw new Error('degenerate XY vector');return [a[0]/m,a[1]/m,0.0]}
 const leftNormal=d=>[-d[1],d[0],0.0];
+const rightNormal=d=>[d[1],-d[0],0.0];
 const prevIdx=(i,n)=>((i-1)%n+n)%n;
+/* A corner's outside is the side away from its turn centre. With
+   crossZ = d_in x d_out > 0 the centre sits on leftNormal(d_in), so the
+   camera must go on rightNormal(d_in); for crossZ < 0 the reverse holds. */
+function outsideNormal(points,i){
+  const n=points.length;
+  const dIn=normXY(sub(points[i],points[prevIdx(i,n)]));
+  const dOut=normXY(sub(points[(i+1)%n],points[i]));
+  const crossZ=dIn[0]*dOut[1]-dIn[1]*dOut[0];
+  return crossZ>0?rightNormal(dIn):leftNormal(dIn);
+}
 function directionAt(points,i){
   const n=points.length;if(n<2)throw new Error('need at least 2 waypoints');
   let out=sub(points[(i+1)%n],points[i]);
@@ -877,22 +892,73 @@ function followShot(sid,preset,fov){
   if(fov!=null)s.fov=fov;
   return s;
 }
-function cornerShot(points,gates,i,opts){
-  opts=opts||{};
-  let d=directionAt(points,i);
+function makeCornerCam(points,gates,i,sample){
+  const dOut=normXY(sub(points[(i+1)%points.length],points[i]));
   let half=(gates[i]*100.0)/2.0;
-  const sample=opts.sample||null;
+  sample=sample||null;
   if(sample&&sample.kind!=='gap'&&sample.lane_width){
-    const h=Number(sample.heading||0.0);
-    d=[Math.cos(h),Math.sin(h),0.0];
     half=Number(sample.lane_width)/2.0;
   }
-  const nn=leftNormal(d);
-  const loc=addv(addv(points[i],scalev(nn,half+500.0)),[0,0,250.0]);
-  const at=addv(points[i],scalev(d,800.0));
+  /* Outside of the corner, not the inside exit: see outsideNormal(). */
+  const outer=outsideNormal(points,i);
+  const loc=addv(addv(addv(points[i],scalev(outer,half+500.0)),scalev(dOut,400.0)),[0,0,240.0]);
+  const at=addv(points[i],scalev(dOut,800.0));
   return {id:'corner_'+(i<10?'0'+i:i)+'_pan',kind:'trackside_pan',role:'trackside',
     trigger:{type:'manual'},location:loc.map(round3),look_at:at.map(round3),
-    fov:70.0,auto_zoom:true,fov_min:28.0,fov_max:65.0};
+    fov:45.0,auto_zoom:true,fov_min:13.0,fov_max:58.0};
+}
+/* Legacy export name kept so any saved plan/tooling calling cornerShot still works. */
+const cornerShot=makeCornerCam;
+function longestStraightIndex(points){
+  const n=points.length;if(n<2)return 0;
+  const limit=isClosedLoop(points)?n:n-1;
+  let bestK=0,bestD=-1;
+  for(let k=0;k<limit;k++){
+    const d=distXY(points[k],points[(k+1)%n]);
+    if(d>bestD){bestD=d;bestK=k}
+  }
+  return bestK;
+}
+function sharpestCornerIndex(points){
+  const n=points.length;
+  if(n<3)return 0;                    // no interior corners on an open 2-point leg
+  let bestI=1,bestA=-1;
+  for(let i=1;i<n-1;i++){             // skip the closure duplicate at index 0 / n-1
+    const a=turnAngle(points,i);
+    if(a>bestA){bestA=a;bestI=i}
+  }
+  return bestI;
+}
+/* Three 100% track-general broadcast cameras: telephoto down the longest
+   straight, low curb-level view of the sharpest apex, and a start/finish jib. */
+function buildSpecialtyShots(points,gates,opts){
+  opts=opts||{};
+  const n=points.length;if(n<2)return [];
+  const sideMarginCm=opts.sideMarginCm!==undefined?opts.sideMarginCm:350.0;
+  const k=longestStraightIndex(points),a=points[k],b=points[(k+1)%n];
+  let dSeg;
+  try{dSeg=normXY(sub(b,a))}catch(e){dSeg=directionAt(points,k)}
+  const at90=addv(a,scalev(sub(b,a),0.9));
+  const straightLoc=addv(addv(at90,scalev(leftNormal(dSeg),450.0)),[0,0,220.0]);
+  const straight={id:'straight_telephoto',kind:'trackside_pan',role:'trackside',
+    trigger:{type:'manual'},location:straightLoc.map(round3),look_at:a.map(round3),
+    fov:35.0,auto_zoom:true,fov_min:12.0,fov_max:46.0};
+  const ci=sharpestCornerIndex(points);
+  const dOut=normXY(sub(points[(ci+1)%n],points[ci]));
+  const outer=outsideNormal(points,ci);
+  const curbLoc=addv(addv(points[ci],scalev(outer,320.0)),[0,0,55.0]);
+  const curbAt=addv(points[ci],scalev(dOut,600.0));
+  const curb={id:'curb_apex',kind:'trackside_pan',role:'trackside',
+    trigger:{type:'manual'},location:curbLoc.map(round3),look_at:curbAt.map(round3),
+    fov:62.0,auto_zoom:true,fov_min:24.0,fov_max:72.0};
+  const d0=directionAt(points,0),nn0=leftNormal(d0),halfGate=(gates[0]*100.0)/2.0;
+  const craneLoc=addv(addv(addv(points[0],scalev(d0,-800.0)),
+    scalev(nn0,halfGate+sideMarginCm+400.0)),[0,0,1400.0]);
+  const craneAt=addv(points[0],scalev(d0,600.0));
+  const crane={id:'start_crane',kind:'trackside_pan',role:'trackside',
+    trigger:{type:'manual'},location:craneLoc.map(round3),look_at:craneAt.map(round3),
+    fov:48.0,auto_zoom:true,fov_min:18.0,fov_max:56.0};
+  return [straight,curb,crane];
 }
 function rankCorners(points,maxTrackside){
   if(maxTrackside===undefined)maxTrackside=6;
@@ -967,8 +1033,13 @@ function buildShots(name,points,gates,opts){
   shots.push({id:'overview',kind:'look_at',trigger:{type:'manual'},
     location:[round3(cx),round3(cy),round3(cz+overheadCm)],
     look_at:[round3(cx),round3(cy),round3(cz)],fov:fovAir});
+  shots.push(
+    {id:'onboard_tcam',kind:'follow',trigger:{type:'manual'},target:'focus',preset:'onboard_tcam',fov:78.0},
+    {id:'rear_battle',kind:'follow',trigger:{type:'manual'},target:'focus',preset:'rear_battle',fov:68.0},
+    {id:'pack_battle',kind:'pack_battle',trigger:{type:'manual'},target:'focus',preset:'pack_battle',fov:68.0});
+  for(const s of buildSpecialtyShots(points,gates,{sideMarginCm:sideMarginCm}))shots.push(s);
   for(const i of rankCorners(points,maxTrackside)){
-    shots.push(cornerShot(points,gates,i,{routeExport:routeExport,sample:splineSample(i)}));
+    shots.push(makeCornerCam(points,gates,i,splineSample(i)));
   }
   return {schema:1,name:name,source:{route:name,waypoints:n,closed_loop:closed},units:'cm',shots:shots};
 }
@@ -995,9 +1066,12 @@ function fallbackRouteExport(points,stepCm){
 }
 window.routePlanner={parseRoute:parseRoute,parseAnyInput:parseAnyInput,sanitizeId:sanitizeId,
   isClosedLoop:isClosedLoop,directionAt:directionAt,
-  leftNormal:leftNormal,turnAngle:turnAngle,rankCorners:rankCorners,buildShots:buildShots,
+  leftNormal:leftNormal,rightNormal:rightNormal,outsideNormal:outsideNormal,
+  turnAngle:turnAngle,rankCorners:rankCorners,buildShots:buildShots,
   fallbackRouteExport:fallbackRouteExport,normXY:normXY,distXY:distXY,round3:round3,pyRound:pyRound,
-  sub:sub,add:addv,scale:scalev,cornerShot:cornerShot,lookAtShot:lookAtShot,followShot:followShot};
+  sub:sub,add:addv,scale:scalev,cornerShot:cornerShot,makeCornerCam:makeCornerCam,
+  buildSpecialtyShots:buildSpecialtyShots,longestStraightIndex:longestStraightIndex,
+  sharpestCornerIndex:sharpestCornerIndex,lookAtShot:lookAtShot,followShot:followShot};
 
 /* ---- Live events / track loader / 2D preview ---- */
 let liveEvents=[],currentParsed=null,currentPoints=null,currentGates=null,currentRoute=null;

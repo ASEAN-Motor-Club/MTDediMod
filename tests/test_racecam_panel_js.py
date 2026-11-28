@@ -12,6 +12,7 @@ Run: python3 -m unittest tests.test_racecam_panel_js -v
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -400,6 +401,24 @@ class RoutePlannerTests(unittest.TestCase):
         else:
             self.assertEqual(a, b, "value at %s" % path)
 
+    @staticmethod
+    def core_projection(plan):
+        """Fields still byte-identical to the unchanged Python reference:
+        metadata plus the original 11 shots (slots 1-9, finish_line, overview).
+        The v2 planner deliberately adds broadcast rigs, specialty cameras and
+        outside-apex corners; those are covered by dedicated tests below. The
+        Python reference in amc-racecam is intentionally left untouched here
+        (out of this worktree's file ownership).
+        """
+        return {"schema": plan["schema"], "name": plan["name"],
+                "source": plan["source"], "units": plan["units"],
+                "shots": plan["shots"][:11]}
+
+    @staticmethod
+    def corner_ids(plan):
+        return [s["id"] for s in plan["shots"]
+                if re.match(r"^corner_\d+_pan$", s.get("id", ""))]
+
     def test_build_shots_parity_three_shapes(self):
         node = self._node_scripts()
         self.assertEqual(len(node), len(SHAPES))
@@ -407,21 +426,26 @@ class RoutePlannerTests(unittest.TestCase):
             with self.subTest(shape=name):
                 want = rp_py.build_shots(name, pts, gates, trackside_stride="auto")
                 self.assertEqual([s["id"] for s in got["script"]["shots"]][:9], UNIVERSAL)
-                self.assert_json_close(want, got["script"], tol=1e-3)
+                self.assert_json_close(self.core_projection(want),
+                                       self.core_projection(got["script"]), tol=1e-3)
+                self.assertEqual(self.corner_ids(want), self.corner_ids(got["script"]),
+                                 "corner selection must stay in parity with the Python planner")
                 want_route = rp_py.fallback_route_export(pts)
                 self.assert_json_close(want_route, got["route"], tol=1e-3)
 
     def test_corner_cameras_and_closed_loop_flags(self):
         node = self._node_scripts()
         for got in node:
-            corners = [s for s in got["script"]["shots"] if s.get("role") == "trackside"]
+            corners = [s for s in got["script"]["shots"]
+                       if re.match(r"^corner_\d+_pan$", s.get("id", ""))]
             self.assertTrue(corners, "no corner cameras for " + got["parsed"]["name"])
             for s in corners:
                 self.assertEqual(s["kind"], "trackside_pan")
+                self.assertEqual(s["role"], "trackside")
                 self.assertTrue(s["auto_zoom"])
-                self.assertEqual(s["fov_min"], 28.0)
-                self.assertEqual(s["fov_max"], 65.0)
-                self.assertRegex(s["id"], r"^corner_\d+_pan$")
+                self.assertEqual(s["fov"], 45.0)
+                self.assertEqual(s["fov_min"], 13.0)
+                self.assertEqual(s["fov_max"], 58.0)
             self.assertEqual(got["script"]["source"]["closed_loop"], got["route"]["closed_loop"])
 
     def test_build_shots_parity_real_fixtures(self):
@@ -439,8 +463,12 @@ class RoutePlannerTests(unittest.TestCase):
             with self.subTest(fixture=fixture):
                 name, pts, gates = rp_py.parse_route(json.loads(
                     (REFPY / "fixtures" / fixture).read_text(encoding="utf-8")))
-                self.assert_json_close(rp_py.build_shots(name, pts, gates, trackside_stride="auto"),
-                                       actual["script"], tol=1e-9)
+                self.assert_json_close(self.core_projection(rp_py.build_shots(
+                                           name, pts, gates, trackside_stride="auto")),
+                                       self.core_projection(actual["script"]), tol=1e-9)
+                self.assertEqual(self.corner_ids(rp_py.build_shots(
+                                     name, pts, gates, trackside_stride="auto")),
+                                 self.corner_ids(actual["script"]))
                 self.assert_json_close(rp_py.fallback_route_export(pts), actual["route"], tol=1e-9)
 
     def test_parse_route_input_shapes(self):
@@ -1278,6 +1306,195 @@ class BroadcastDeskTests(unittest.TestCase):
                 self.assertIn(snippet, self.js)
         self.assertIsNone(re.search(r"\b[A-Z]:[\\/]", self.lua),
                           "no hardcoded Windows drive paths allowed")
+
+
+class BroadcastFramingV2Tests(unittest.TestCase):
+    """Phase 3: outside-apex corners, auto broadcast cameras, pad labels, standalone."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S).group(1)
+        cls.init_lua = (ROOT / "ClientScripts/RaceCam/init.lua").read_text(encoding="utf-8")
+
+    def node(self, body, extra=""):
+        return parse_result(run_node(self.js, body,
+                                     extra=extra + "\n(new Function(PANEL_JS))();\n"))
+
+    @staticmethod
+    def unit2(v):
+        m = math.hypot(v[0], v[1])
+        return [v[0] / m, v[1] / m]
+
+    def test_corner_cams_outside_left_and_right_turns(self):
+        # crossZ > 0: d_in=+X, d_out=+Y -> centre on leftNormal(+X)=+Y,
+        # so the camera must go on -Y (rightNormal), 400 cm along +Y.
+        left = [[-1000.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+                [0.0, 1000.0, 0.0], [1000.0, 1000.0, 0.0]]
+        # crossZ < 0: d_in=+X, d_out=-Y -> camera on +Y (leftNormal).
+        right = [[-1000.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+                 [0.0, -1000.0, 0.0], [1000.0, -1000.0, 0.0]]
+        got = self.node(r"""
+          const rp=globalThis.routePlanner, gates=[18,18,18,18];
+          console.log(JSON.stringify(TRACKS.map(pts=>{
+            const direct=rp.makeCornerCam(pts,gates,1,null);
+            const plan=rp.buildShots('bend',pts,gates,{tracksideStride:'auto'});
+            const fromPlan=plan.shots.find(s=>s.id==='corner_01_pan');
+            const outN=rp.outsideNormal(pts,1), c=pts[1];
+            return {direct:direct, fromPlan:fromPlan, outward:outN,
+              dot:outN[0]*(direct.location[0]-c[0])+outN[1]*(direct.location[1]-c[1])};
+          })));
+        """, extra="const TRACKS=" + json.dumps([left, right]) + ";\n")
+        self.assertEqual(len(got), 2)
+        for label, bend, expected_y, expected_at_y in [
+                ("left (crossZ>0)", got[0], -1000.0, 800.0),
+                ("right (crossZ<0)", got[1], 1000.0, -800.0)]:
+            with self.subTest(turn=label):
+                cam = bend["direct"]
+                self.assertEqual(cam["id"], "corner_01_pan")
+                self.assertEqual(cam["kind"], "trackside_pan")
+                self.assertEqual(cam["role"], "trackside")
+                self.assertEqual(cam["fov"], 45.0)
+                self.assertEqual(cam["fov_min"], 13.0)
+                self.assertEqual(cam["fov_max"], 58.0)
+                self.assertTrue(cam["auto_zoom"])
+                self.assertAlmostEqual(cam["location"][0], 0.0, places=2)
+                self.assertAlmostEqual(cam["location"][1], expected_y, places=2)
+                self.assertAlmostEqual(cam["location"][2], 240.0, places=2)
+                self.assertAlmostEqual(cam["look_at"][1], expected_at_y, places=2)
+                self.assertGreater(bend["dot"], 500.0,
+                                   "camera must sit on the OUTSIDE of the bend")
+                self.assertEqual(bend["fromPlan"]["location"], cam["location"],
+                                 "buildShots must use the same outside-apex camera")
+
+    def test_broadcast_specialty_and_rig_shots(self):
+        pts = [[0.0, 0.0, 0.0], [20000.0, 0.0, 0.0], [20000.0, 1000.0, 0.0],
+               [10000.0, 1000.0, 0.0], [10000.0, 15000.0, 0.0], [0.0, 15000.0, 0.0]]
+        gates = [18.0] * len(pts)
+        got = self.node(r"""
+          const rp=globalThis.routePlanner;
+          const plan=rp.buildShots('broadcast',PTS,GATES,{tracksideStride:'auto'});
+          const pick=id=>plan.shots.find(s=>s.id===id);
+          const k=rp.longestStraightIndex(PTS), ci=rp.sharpestCornerIndex(PTS);
+          console.log(JSON.stringify({
+            ids:plan.shots.map(s=>s.id), first9:plan.shots.slice(0,9).map(s=>s.id),
+            straight:pick('straight_telephoto'), curb:pick('curb_apex'),
+            crane:pick('start_crane'),
+            rigs:[pick('onboard_tcam'),pick('rear_battle'),pick('pack_battle')],
+            k:k, segA:PTS[k], segB:PTS[(k+1)%PTS.length],
+            ci:ci, cornerPt:PTS[ci], startPt:PTS[0], curbNormal:rp.outsideNormal(PTS,ci)
+          }));
+        """, extra="const PTS=" + json.dumps(pts) + ";\nconst GATES=" + json.dumps(gates) + ";\n")
+        self.assertEqual(got["first9"], UNIVERSAL, "hotkeys 1-9 must stay untouched")
+        for sid in ["onboard_tcam", "rear_battle", "pack_battle",
+                    "straight_telephoto", "curb_apex", "start_crane"]:
+            self.assertIn(sid, got["ids"], sid)
+        by_id = dict(zip(got["ids"], [None] * len(got["ids"])))
+        self.assertIn("finish_line", by_id)
+        self.assertIn("overview", by_id)
+        self.assertTrue(any(i.startswith("corner_") for i in got["ids"]))
+
+        s = got["straight"]
+        self.assertEqual(s["kind"], "trackside_pan")
+        self.assertEqual(s["role"], "trackside")
+        self.assertEqual(s["fov"], 35.0)
+        self.assertTrue(s["auto_zoom"])
+        self.assertEqual(s["fov_min"], 12.0)
+        self.assertEqual(s["fov_max"], 46.0)
+        a, b, d = got["segA"], got["segB"], self.unit2([got["segB"][0] - got["segA"][0],
+                                                        got["segB"][1] - got["segA"][1]])
+        expected = [a[0] + 0.9 * (b[0] - a[0]) - d[1] * 450.0,
+                    a[1] + 0.9 * (b[1] - a[1]) + d[0] * 450.0, a[2] + 220.0]
+        for x, y in zip(expected, s["location"]):
+            self.assertAlmostEqual(x, y, delta=1e-2)
+        self.assertEqual(s["look_at"], [a[0], a[1], a[2]], "must look back down the straight")
+
+        curb = got["curb"]
+        self.assertEqual(curb["kind"], "trackside_pan")
+        self.assertEqual(curb["role"], "trackside")
+        self.assertEqual(curb["fov"], 62.0)
+        self.assertTrue(curb["auto_zoom"])
+        self.assertEqual(curb["fov_min"], 24.0)
+        self.assertEqual(curb["fov_max"], 72.0)
+        c = got["cornerPt"]
+        self.assertAlmostEqual(curb["location"][2] - c[2], 55.0, places=2)
+        outward = curb["location"][0] - c[0], curb["location"][1] - c[1]
+        self.assertAlmostEqual(math.hypot(*outward), 320.0, places=2)
+        dot = outward[0] * got["curbNormal"][0] + outward[1] * got["curbNormal"][1]
+        self.assertGreater(dot, 300.0, "curb camera must be on the outside apex")
+
+        crane = got["crane"]
+        self.assertEqual(crane["kind"], "trackside_pan")
+        self.assertEqual(crane["role"], "trackside")
+        self.assertEqual(crane["fov"], 48.0)
+        self.assertTrue(crane["auto_zoom"])
+        self.assertEqual(crane["fov_min"], 18.0)
+        self.assertEqual(crane["fov_max"], 56.0)
+        d0 = self.unit2([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]])
+        n0 = [-d0[1], d0[0]]
+        offset = 900.0 + 350.0 + 400.0
+        expected = [pts[0][0] - 800.0 * d0[0] + offset * n0[0],
+                    pts[0][1] - 800.0 * d0[1] + offset * n0[1], pts[0][2] + 1400.0]
+        for x, y in zip(expected, crane["location"]):
+            self.assertAlmostEqual(x, y, delta=1e-2)
+        self.assertEqual(crane["look_at"], [600.0, 0.0, 0.0])
+
+        want_rigs = [("onboard_tcam", "follow", 78.0), ("rear_battle", "follow", 68.0),
+                     ("pack_battle", "pack_battle", 68.0)]
+        for rig, (sid, kind, fov) in zip(got["rigs"], want_rigs):
+            with self.subTest(rig=sid):
+                self.assertEqual(rig["id"], sid)
+                self.assertEqual(rig["kind"], kind)
+                self.assertEqual(rig["preset"], sid)
+                self.assertEqual(rig["fov"], fov)
+                self.assertEqual(rig["target"], "focus")
+                self.assertEqual(rig["trigger"], {"type": "manual"})
+
+    def test_new_shot_labels_and_pad_grid(self):
+        shots = UNIVERSAL + ["finish_line", "overview", "onboard_tcam", "rear_battle",
+                             "pack_battle", "straight_telephoto", "curb_apex",
+                             "start_crane", "corner_01_pan"]
+        state = {"shots": shots, "current": "start_line", "next": "", "targets": ["Driver"],
+                 "target_name": "Driver", "rehearsal": False, "degraded": False,
+                 "target_lost": False, "running": False}
+        got = self.node(r"""
+          const p=globalThis.racecamPanel;
+          p.renderShotDeck(S);
+          console.log(JSON.stringify({
+            primary:document.getElementById('shot_pads').innerHTML,
+            extra:document.getElementById('shot_pads_extra').innerHTML}));
+        """, extra="const S=" + json.dumps(state) + ";\n")
+        self.assertEqual(got["primary"].count("<button"), 9)
+        for n in range(1, 10):
+            self.assertIn('<span class="keycap">%d</span>' % n, got["primary"])
+        self.assertEqual(got["extra"].count("<button"), len(shots) - 9)
+        for label in ["Onboard T-Cam", "Rear Battle", "Pack Battle",
+                      "Straight Tele", "Curb Apex", "Start Crane"]:
+            with self.subTest(label=label):
+                self.assertIn(label, got["extra"])
+        for sid, kind in [("onboard_tcam", "follow"), ("rear_battle", "follow"),
+                          ("pack_battle", "follow"), ("straight_telephoto", "trackside"),
+                          ("curb_apex", "trackside"), ("start_crane", "trackside")]:
+            with self.subTest(shot=sid):
+                self.assertIn('data-rc-shot="%s"' % sid, got["extra"])
+                m = re.search(r'<button[^>]*data-rc-shot="%s"[^>]*>(.*?)</button>'
+                              % re.escape(sid), got["extra"], re.S)
+                self.assertIsNotNone(m, sid)
+                self.assertIn("pad-kind %s" % kind, m.group(1))
+
+    def test_standalone_default_plan_has_new_rigs(self):
+        block = self.init_lua[self.init_lua.index("local function default_plan()"):
+                              self.init_lua.index("--- Load .json first")]
+        for line in [
+                '{ id = "onboard_tcam", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "onboard_tcam", fov = 78.0 }',
+                '{ id = "rear_battle", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "rear_battle", fov = 68.0 }',
+                '{ id = "pack_battle", kind = "pack_battle", trigger = { type = "manual" }, target = "focus", preset = "pack_battle", fov = 68.0 }']:
+            with self.subTest(shot=line):
+                self.assertIn(line, block)
+
+    def test_zero_drive_paths_and_no_external_assets(self):
+        self.assertIsNone(re.search(r"\bD:[\\/]", self.lua))
+        self.assertIsNone(re.search(r"<(?:script|link)[^>]+(?:src|href)=", self.lua))
 
 
 if __name__ == "__main__":
