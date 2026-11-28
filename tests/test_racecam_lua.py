@@ -395,6 +395,322 @@ print("INBOX_OK")
 '''
 
 
+# Event lifecycle harness: exercises the token-gated /api/event/* routes and
+# the real event_control.lua RPC wrapper (FGuid marshalling, state mapping,
+# confirm rail) against a fake replicated event list on the Lua 5.4 host.
+LUA_EVENT_CONTROL_HARNESS = r'''
+local DATA_DIR = "__DATA_DIR__"
+local ROOT = "__REPO_ROOT__/ClientScripts"
+package.path = ROOT .. "/?.lua;" .. ROOT .. "/?/init.lua;" .. package.path
+
+local real_getenv = os.getenv
+os.getenv = function(k)
+  if k == "RACECAM_DIR" then return DATA_DIR end
+  return real_getenv(k)
+end
+
+RequireSafe = function() return nil end
+CreateInvalidObject = function() return { IsValid = function() return false end } end
+FindAllOf = function() return {} end
+FindFirstOf = function() return nil end  -- force the GetMyPlayerController path
+StaticFindObject = function() return nil end
+GetCachedWorld = function() return CreateInvalidObject() end
+LogOutput = function() end
+LoopInGameThreadWithDelay = function() return true end
+LoopInGameThreadAfterFrames = function() return true end
+IsValid = function(o) return o ~= nil end
+package.preload["socket"] = function()
+  return { bind = function() error("socket.bind must not be called in this test") end }
+end
+
+package.loaded["JsonParser"] = (function()
+  local function encode(v)
+    if type(v) == "table" then
+      if #v > 0 then
+        local parts = {}
+        for _, x in ipairs(v) do parts[#parts + 1] = encode(x) end
+        return "[" .. table.concat(parts, ",") .. "]"
+      end
+      local keys = {}
+      for k in pairs(v) do keys[#keys + 1] = k end
+      table.sort(keys)
+      local parts = {}
+      for _, k in ipairs(keys) do
+        parts[#parts + 1] = '"' .. tostring(k) .. '":' .. encode(v[k])
+      end
+      return "{" .. table.concat(parts, ",") .. "}"
+    elseif type(v) == "string" then
+      return '"' .. v:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+    elseif type(v) == "boolean" then
+      return tostring(v)
+    end
+    return tostring(v)
+  end
+  return { stringify = encode, parse = function() return nil end, null = {} }
+end)()
+
+local function fname(s) return { ToString = function() return s end } end
+local function guidstr(a, b, c, d) return string.format("%08X%08X%08X%08X", a, b, c, d) end
+local function parts_of(g) return { A = g.A, B = g.B, C = g.C, D = g.D } end
+local function cid(g) return { CharacterGuid = parts_of(g) } end
+local function player(name, rank, guid)
+  local p = { PlayerName = fname(name), Rank = rank, bDisqualified = false }
+  if guid then p.CharacterId = cid(guid) end
+  return p
+end
+local function wp(x, y, z)
+  return { Translation = { X = x, Y = y, Z = z }, Scale3D = { Y = 1.2 } }
+end
+
+local ALICE = { A = 11, B = 12, C = 13, D = 14 }
+local LOCAL = { A = 21, B = 22, C = 23, D = 24 }
+local GUID1 = guidstr(1, 2, 3, 4)     -- hosted by Alice, local player is a member
+local GUID2 = guidstr(9, 8, 7, 6)     -- hosted by the local player
+local GUID3 = guidstr(5, 6, 7, 8)     -- ownerless and empty (Start must be rejected)
+local GUID_UNKNOWN = guidstr(99, 98, 97, 96)
+
+local EVENTS = {
+  {
+    EventGuid = parts_of({ A = 1, B = 2, C = 3, D = 4 }),
+    EventName = fname("Hosted Race"), State = 0,
+    OwnerCharacterId = cid(ALICE),
+    Players = { player("Alice", 1, ALICE), player("LocalDriver", 2, LOCAL) },
+    RaceSetup = { Route = { RouteName = fname("Course A"),
+      Waypoints = { wp(1, 2, 3), wp(4, 5, 6) } } },
+  },
+  {
+    EventGuid = parts_of({ A = 9, B = 8, C = 7, D = 6 }),
+    EventName = fname("My Race"), State = 1,
+    OwnerCharacterId = cid(LOCAL),
+    Players = { player("LocalDriver", 1, LOCAL) },
+    RaceSetup = { Route = { RouteName = fname("Course B"),
+      Waypoints = { wp(7, 8, 9) } } },
+  },
+  {
+    EventGuid = parts_of({ A = 5, B = 6, C = 7, D = 8 }),
+    EventName = fname("Ownerless"), State = 0,
+    Players = {},
+    RaceSetup = { Route = { RouteName = fname("Course C"), Waypoints = {} } },
+  },
+}
+
+GetMotorTownGameState = function()
+  return {
+    IsValid = function() return true end,
+    Net_EventSystem = { IsValid = function() return true end, Net_Events = EVENTS },
+  }
+end
+
+local rpc_calls = {}
+local pc = {
+  IsValid = function() return true end,
+  PlayerState = {
+    IsValid = function() return true end,
+    PlayerName = fname("LocalDriver"),
+    CharacterGuid = parts_of(LOCAL),
+  },
+  ServerChangeEventState = function(_, guid, state)
+    rpc_calls[#rpc_calls + 1] = { kind = "state", guid = guid, state = state }
+  end,
+  ServerRemoveEvent = function(_, guid)
+    rpc_calls[#rpc_calls + 1] = { kind = "remove", guid = guid }
+  end,
+  ServerJoinEvent = function(_, guid)
+    rpc_calls[#rpc_calls + 1] = { kind = "join", guid = guid }
+  end,
+  ServerLeaveEvent = function(_, guid)
+    rpc_calls[#rpc_calls + 1] = { kind = "leave", guid = guid }
+  end,
+}
+GetMyPlayerController = function() return pc end
+
+local Paths = require("RaceCam/paths")
+local Http = require("RaceCam/http")
+local Live = require("RaceCam/live_events")
+local EC = require("RaceCam/event_control")
+Http._event_control = EC
+local tok = Paths.ensure_token()
+assert(type(tok) == "string" and #tok == 64, "token setup failed")
+
+local function req(method, path, body, token_value)
+  return Http._make_response({
+    method = method or "GET", path = path,
+    headers = token_value and { ["x-racecam-token"] = token_value } or {},
+    body = body or "",
+  })
+end
+local function status(resp) return tonumber(resp:match("^HTTP/1.1 (%d+)")) end
+local function body(resp) return resp:match("\r\n\r\n(.*)$") or "" end
+local function has(hay, needle) return hay:find(needle, 1, true) ~= nil end
+local function jbody(guid, extra)
+  return '{"event_guid":"' .. guid .. '"' .. (extra or "") .. "}"
+end
+local function event_posts()
+  local n = 0
+  for _, c in ipairs(rpc_calls) do n = n + 1 end
+  return n
+end
+
+-- 1. Fail-closed token gate on all four lifecycle routes --------------------
+for _, path in ipairs({
+  "/api/event/state", "/api/event/close", "/api/event/join", "/api/event/leave",
+}) do
+  local b = jbody(GUID1, ',"state":"ready","confirm":true')
+  local r = req("POST", path, b, nil)
+  assert(status(r) == 400 and has(body(r), "bad token"),
+         "no token must fail closed: " .. path .. " -> " .. tostring(status(r)) .. " " .. body(r))
+  r = req("POST", path, b, "wrong-token")
+  assert(status(r) == 400 and has(body(r), "bad token"),
+         "bad token must fail closed: " .. path .. " -> " .. tostring(status(r)) .. " " .. body(r))
+end
+assert(event_posts() == 0, "unauthenticated requests must never reach an RPC")
+
+-- 2. Unknown / malformed GUID -> 400 ----------------------------------------
+local r = req("POST", "/api/event/state", jbody(GUID_UNKNOWN, ',"state":"ready"'), tok)
+assert(status(r) == 400 and has(body(r), "unknown event guid"),
+       "unknown guid must be 400: " .. tostring(status(r)) .. " " .. body(r))
+r = req("POST", "/api/event/state", jbody("not-a-guid", ',"state":"ready"'), tok)
+assert(status(r) == 400 and has(body(r), "invalid event guid"),
+       "malformed guid must be 400: " .. body(r))
+
+-- 3. State string -> 0..3 mapping and FGuid {A,B,C,D} marshalling -----------
+local state_cases = {
+  { "none", 0 }, { "lobby", 0 }, { "ready", 1 }, { "start", 2 },
+  { "in_progress", 2 }, { "racing", 2 }, { "finish", 3 }, { "finished", 3 },
+}
+for _, case in ipairs(state_cases) do
+  local before = event_posts()
+  r = req("POST", "/api/event/state", jbody(GUID1, ',"state":"' .. case[1] .. '"'), tok)
+  assert(status(r) == 200 and has(body(r), '"ok":true') and
+         has(body(r), '"state":' .. case[2]),
+         "state " .. case[1] .. " -> " .. case[2] .. " failed: " ..
+         tostring(status(r)) .. " " .. body(r))
+  assert(event_posts() == before + 1, "each state change must issue exactly one RPC")
+  local call = rpc_calls[#rpc_calls]
+  assert(call.kind == "state" and call.state == case[2], "wrong RPC recorded for " .. case[1])
+  assert(type(call.guid) == "table", "FGuid must be a plain Lua table, not userdata")
+  assert(call.guid.A == 1 and call.guid.B == 2 and call.guid.C == 3 and call.guid.D == 4,
+         "FGuid parts must be plain numbers {A,B,C,D}")
+end
+
+-- 4. Fresh lookup per call + empty-event Start guard ------------------------
+local real_find = Live.find_event_guid_parts
+local find_count = 0
+Live.find_event_guid_parts = function(g)
+  find_count = find_count + 1
+  return real_find(g)
+end
+local ok1 = EC.set_state(GUID1, "ready")
+local ok2 = EC.set_state(GUID1, "ready")
+assert(ok1 and ok2 and find_count == 2, "every RPC must re-resolve Net_Events (no caching)")
+assert(rpc_calls[#rpc_calls - 1].guid ~= rpc_calls[#rpc_calls].guid,
+       "each call must build a NEW plain FGuid table")
+Live.find_event_guid_parts = real_find
+r = req("POST", "/api/event/state", jbody(GUID3, ',"state":"start"'), tok)
+assert(status(r) == 400 and has(body(r), "at least one player and one waypoint"),
+       "empty event must not start: " .. body(r))
+
+-- 5. Close requires confirm:true -------------------------------------------
+for _, extra in ipairs({ "", ',"confirm":false' }) do
+  local before = event_posts()
+  r = req("POST", "/api/event/close", jbody(GUID1, extra), tok)
+  assert(status(r) == 400 and has(body(r), "confirm required"),
+         "close without confirm must be 400: " .. body(r))
+  assert(event_posts() == before, "unconfirmed close must not issue an RPC")
+end
+-- A quoted note containing `"confirm":true` is not a real confirm flag.
+r = req("POST", "/api/event/close",
+        '{"event_guid":"' .. GUID1 .. '","note":"\\"confirm\\":true"}', tok)
+assert(status(r) == 400 and has(body(r), "confirm required"),
+       "confirm inside a JSON string must not pass: " .. body(r))
+local before = event_posts()
+r = req("POST", "/api/event/close", jbody(GUID1, ',"confirm":true'), tok)
+assert(status(r) == 200 and has(body(r), '"ok":true'),
+       "confirmed close must be 200: " .. body(r))
+assert(event_posts() == before + 1 and rpc_calls[#rpc_calls].kind == "remove",
+       "confirmed close must call ServerRemoveEvent")
+assert(type(rpc_calls[#rpc_calls].guid) == "table" and rpc_calls[#rpc_calls].guid.A == 1,
+       "ServerRemoveEvent must receive a plain FGuid table")
+
+-- 6. Join / leave -----------------------------------------------------------
+for _, path in ipairs({ "/api/event/join", "/api/event/leave" }) do
+  before = event_posts()
+  r = req("POST", path, jbody(GUID1), tok)
+  local want = (path == "/api/event/join") and "join" or "leave"
+  assert(status(r) == 200 and has(body(r), '"ok":true'),
+         path .. " must be 200: " .. body(r))
+  assert(event_posts() == before + 1 and rpc_calls[#rpc_calls].kind == want,
+         path .. " must call Server" .. want .. "Event")
+  assert(type(rpc_calls[#rpc_calls].guid) == "table" and
+         rpc_calls[#rpc_calls].guid.D == 4, path .. " FGuid marshalling")
+end
+
+-- 7. Ownership / membership extraction --------------------------------------
+local list = Live.list("LocalDriver")
+assert(#list == 3, "expected 3 events, got " .. tostring(#list))
+local e1, e2, e3 = list[1], list[2], list[3]
+assert(e1.guid == GUID1 and e1.owner_guid == guidstr(11, 12, 13, 14) and
+       e1.owner_name == "Alice" and e1.is_owner == false and
+       e1.is_joined == true and e1.player_count == 2,
+       "owner/membership extraction for hosted event failed: " ..
+       tostring(e1.owner_guid) .. "/" .. tostring(e1.owner_name))
+assert(e2.guid == GUID2 and e2.is_owner == true and e2.owner_name == "LocalDriver" and
+       e2.player_count == 1, "local owner must be detected")
+assert(e3.guid == GUID3 and e3.owner_guid == "" and e3.owner_name == "" and
+       e3.is_owner == false and e3.player_count == 0, "ownerless event metadata")
+assert(Live.local_character_guid() == guidstr(21, 22, 23, 24),
+       "local_character_guid must return a plain 32-hex string")
+local parts = Live.find_event_guid_parts(GUID1)
+assert(parts and parts.A == 1 and parts.B == 2 and parts.C == 3 and parts.D == 4 and
+       parts.state == 0 and parts.player_count == 2 and parts.waypoint_count == 2,
+       "find_event_guid_parts must return plain numbers only")
+assert(Live.find_event_guid_parts(GUID_UNKNOWN) == nil, "unknown guid must resolve to nil")
+
+-- 8. /api/state and /api/live_events echo ownership -------------------------
+local sb = body(req("GET", "/api/state", "", tok))
+assert(has(sb, '"event_guid":"' .. GUID1 .. '"') and
+       has(sb, '"event_owner_name":"Alice"') and
+       has(sb, '"event_is_owner":false') and has(sb, '"event_is_joined":true') and
+       has(sb, '"event_player_count":2'),
+       "/api/state must echo ownership/membership: " .. sb)
+local lb = body(req("GET", "/api/live_events", "", tok))
+assert(has(lb, '"owner_guid":"' .. guidstr(11, 12, 13, 14) .. '"') and
+       has(lb, '"owner_name":"Alice"') and has(lb, '"is_owner":false') and
+       has(lb, '"is_joined":true') and has(lb, '"player_count":2'),
+       "/api/live_events must echo ownership/membership: " .. lb)
+assert(has(sb, '"last_remove_response":null') and has(lb, '"last_remove_response"'),
+       "remove response must be reported on both reads")
+
+-- The hook is registered only in-game; inject a plain acknowledgement to
+-- verify the HTTP echo that drives the panel's post-RPC rejection toast.
+Http._event_control = {
+  last_remove_response = function()
+    return { guid = GUID1, succeeded = false, ts = 123 }
+  end,
+}
+sb = body(req("GET", "/api/state", "", tok))
+assert(has(sb, '"last_remove_response":{"guid":"' .. GUID1 ..
+       '","succeeded":false,"ts":123}'),
+       "ClientRemoveEventResponse must be echoed as plain values: " .. sb)
+Http._event_control = EC
+
+-- 9. Mutations invalidate the 250 ms serialized standings cache -------------
+EVENTS[1].State = 0
+local primed = body(req("GET", "/api/standings?event=" .. GUID1, "", tok))
+assert(has(primed, '"state":0'), "primed standings must report state 0: " .. primed)
+EVENTS[1].State = 1
+local cached = body(req("GET", "/api/standings?event=" .. GUID1, "", tok))
+assert(has(cached, '"state":0'), "standings cache should still hold briefly")
+r = req("POST", "/api/event/state", jbody(GUID1, ',"state":"ready"'), tok)
+assert(status(r) == 200, "cache invalidation setup failed: " .. body(r))
+local fresh = body(req("GET", "/api/standings?event=" .. GUID1, "", tok))
+assert(has(fresh, '"state":1'),
+       "event mutation must invalidate standings_payload_cache: " .. fresh)
+
+print("EVENT_CONTROL_OK")
+'''
+
+
 # Third host harness: live standings sorting/compact snapshot, the new
 # /api/state `standings` field, and auto-disengage on manual /api/target.
 LUA_STANDINGS_HARNESS = r'''
@@ -575,6 +891,180 @@ assert(status(r3) == 200 and has(body(r3), '"follow_leader":false'),
        "manual /api/target must disengage follow_leader: " .. body(r3))
 
 print("STANDINGS_OK")
+'''
+
+
+# Fourth host harness: the read-only OBS endpoints and the token-gated overlay
+# command. Exercises visibility in /api/standings and /api/state, the 250 ms
+# serialized-string cache, and ?event= pinning against real Lua modules.
+LUA_OVERLAY_HARNESS = r'''
+local DATA_DIR = "__DATA_DIR__"
+local ROOT = "__REPO_ROOT__/ClientScripts"
+package.path = ROOT .. "/?.lua;" .. ROOT .. "/?/init.lua;" .. package.path
+
+local real_getenv = os.getenv
+os.getenv = function(k)
+  if k == "RACECAM_DIR" then return DATA_DIR end
+  return real_getenv(k)
+end
+
+RequireSafe = function() return nil end
+CreateInvalidObject = function() return { IsValid = function() return false end } end
+FindAllOf = function() return {} end
+FindFirstOf = function() return nil end
+StaticFindObject = function() return nil end
+GetCachedWorld = function() return CreateInvalidObject() end
+LogOutput = function() end
+LoopInGameThreadWithDelay = function() return true end
+LoopInGameThreadAfterFrames = function() return true end
+IsValid = function(o) return o ~= nil end
+package.preload["socket"] = function()
+  return { bind = function() error("socket.bind must not be called in this test") end }
+end
+package.loaded["JsonParser"] = (function()
+  local function encode(v)
+    if type(v) == "table" then
+      if #v > 0 then
+        local parts = {}
+        for _, x in ipairs(v) do parts[#parts + 1] = encode(x) end
+        return "[" .. table.concat(parts, ",") .. "]"
+      end
+      local keys, parts = {}, {}
+      for k in pairs(v) do keys[#keys + 1] = k end
+      table.sort(keys)
+      for _, k in ipairs(keys) do parts[#parts + 1] = '"' .. tostring(k) .. '":' .. encode(v[k]) end
+      return "{" .. table.concat(parts, ",") .. "}"
+    elseif type(v) == "string" then
+      return '"' .. v:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+    elseif type(v) == "boolean" then
+      return tostring(v)
+    end
+    return tostring(v)
+  end
+  return { stringify = encode, parse = function() return nil end, null = {} }
+end)()
+
+local function fname(s) return { ToString = function() return s end } end
+local function player(name, rank, best, last)
+  return { PlayerName = fname(name), Rank = rank,
+    Laps = 2, SectionIndex = 6, BestLapTime = best or 90,
+    LastSectionTotalTimeSeconds = last or 180,
+    bFinished = false, bDisqualified = false }
+end
+local function wp(x)
+  return { Translation = { X = x, Y = 0, Z = 0 }, Scale3D = { Y = 1.2 } }
+end
+
+local EVENTS = {
+  {
+    EventGuid = { A = 1, B = 2, C = 3, D = 4 },
+    EventName = fname("Aewol Sprint"), State = 2, bInCountdown = false,
+    Players = { player("Alice", 1, 88.2, 180), player("LocalDriver", 2, 91.5, 181.4) },
+    RaceSetup = { NumLaps = 7, Route = { RouteName = fname("Aewol"),
+      Waypoints = { wp(1), wp(2), wp(3) } } },
+  },
+  {
+    EventGuid = { A = 9, B = 8, C = 7, D = 6 },
+    EventName = fname("Quarry Rally"), State = 1, bInCountdown = true,
+    Players = { player("Bob", 1, 95, 220) },
+    RaceSetup = { NumLaps = 3, Route = { RouteName = fname("Quarry"),
+      Waypoints = { wp(7) } } },
+  },
+}
+GetMotorTownGameState = function()
+  return { IsValid = function() return true end,
+    Net_EventSystem = { IsValid = function() return true end, Net_Events = EVENTS } }
+end
+GetMyPlayerController = function()
+  return { IsValid = function() return true end,
+    PlayerState = { IsValid = function() return true end,
+      PlayerName = fname("LocalDriver") } }
+end
+
+local LiveEvents = require("RaceCam/live_events")
+local Paths = require("RaceCam/paths")
+local Http = require("RaceCam/http")
+local tok = Paths.ensure_token()
+assert(type(tok) == "string" and #tok == 64, "token setup failed")
+_G.RACECAM_SHOTS = { target_name = "LocalDriver", active = { id = "heli_follow" },
+  list_targets = function() return { "Alice", "LocalDriver" } end }
+
+local function req(method, path, token_value, request_body)
+  return Http._make_response({
+    method = method or "GET", path = path,
+    headers = token_value and { ["x-racecam-token"] = token_value } or {},
+    body = request_body or "",
+  })
+end
+local function status(resp) return tonumber(resp:match("^HTTP/1.1 (%d+)")) end
+local function body(resp) return resp:match("\r\n\r\n(.*)$") or "" end
+local function ctype(resp) return resp:match("Content%-Type: ([^\r\n]+)") or "" end
+local function has(hay, needle) return hay:find(needle, 1, true) ~= nil end
+
+-- READ-ONLY, UNAUTHENTICATED: no token, no write side effects ----------------
+local r = req("GET", "/api/standings", nil)
+local b = body(r)
+assert(status(r) == 200, "GET /api/standings must be public: " .. tostring(status(r)))
+assert(has(ctype(r), "application/json"), "standings content-type: " .. ctype(r))
+for _, needle in ipairs({ '"ok":true', '"visible":true',
+    '"target_name":"LocalDriver"', '"active_shot":"heli_follow"',
+    '"event":{"event_name":"Aewol Sprint"', '"event_guid":"00000001',
+    '"state":2', '"in_countdown":false', '"num_laps":7', '"waypoint_count":3',
+    '"standings":[{"rank":1,"name":"Alice"' }) do
+  assert(has(b, needle), "/api/standings missing " .. needle .. ": " .. b)
+end
+assert(not has(b, '"waypoints"'), "standings payload must stay compact: " .. b)
+
+-- 250 ms cache stores only the serialized string, never a UObject -----------
+EVENTS[1].EventName = fname("Changed Mid Poll")
+local cached = body(req("GET", "/api/standings", nil))
+assert(cached == b, "250 ms string cache must absorb a rapid re-poll")
+EVENTS[1].EventName = fname("Aewol Sprint")
+LiveEvents.clear_cache()
+
+-- ?event=<guid> pins a specific lobby ---------------------------------------
+local events = LiveEvents.list("LocalDriver")
+local guid2 = events[2].guid
+local pinned = body(req("GET", "/api/standings?event=" .. guid2, nil))
+assert(has(pinned, '"event_name":"Quarry Rally"') and has(pinned, '"name":"Bob"'),
+       "?event= must pin the requested lobby: " .. pinned)
+
+-- OBS Browser Source page: public, HTML, self-contained ---------------------
+local page = req("GET", "/overlay/standings", nil)
+assert(status(page) == 200 and has(ctype(page), "text/html"), "overlay page must be public HTML")
+local html = body(page)
+for _, needle in ipairs({ 'id="tower"', "/api/standings", "tabular-nums",
+    "background:transparent", "translateY(", "rcOverlay" }) do
+  assert(has(html, needle), "overlay HTML missing " .. needle)
+end
+
+-- WRITE COMMAND: token-gated, mirrored into /api/state and /api/standings ---
+local unauth = req("POST", "/api/command", nil, '{"cmd":"overlay","args":"toggle"}')
+assert(status(unauth) == 400 and has(body(unauth), "bad token"),
+       "overlay command must require a token: " .. body(unauth))
+local badargs = req("POST", "/api/command", tok, '{"cmd":"overlay","args":"banana"}')
+assert(status(badargs) == 400 and has(body(badargs), "invalid overlay args"),
+       "invalid overlay args must be rejected: " .. body(badargs))
+
+local toggled = req("POST", "/api/command", tok, '{"cmd":"overlay","args":"toggle"}')
+assert(status(toggled) == 200 and has(body(toggled), '"overlay_visible":false'),
+       "toggle must hide the overlay: " .. body(toggled))
+local hiddenStandings = body(req("GET", "/api/standings", nil))
+assert(has(hiddenStandings, '"visible":false'),
+       "/api/standings must echo hidden visibility: " .. hiddenStandings)
+local state = req("GET", "/api/state", tok)
+assert(status(state) == 200 and has(body(state), '"overlay_visible":false'),
+       "/api/state must echo overlay_visible: " .. body(state))
+local shown = req("POST", "/api/command", tok, '{"cmd":"overlay","args":"show"}')
+assert(status(shown) == 200 and has(body(shown), '"overlay_visible":true'),
+       "show must restore visibility: " .. body(shown))
+local again = body(req("GET", "/api/standings", nil))
+assert(has(again, '"visible":true'), "cache must be invalidated by a command: " .. again)
+local hidden = req("POST", "/api/command", tok, '{"cmd":"overlay","args":"hide"}')
+assert(status(hidden) == 200 and has(body(hidden), '"overlay_visible":false'),
+       "hide must hide the overlay: " .. body(hidden))
+
+print("OVERLAY_OK")
 '''
 
 
@@ -770,7 +1260,8 @@ local looks = {}
 for _ = 1, 60 do T = T + DT60; looks[#looks + 1] = eo:pose_of(orbit).look[1] end
 assert(looks[1] < 100.0 and looks[60] > 250.0,
   string.format("orbit aim not smooth: first=%.2f last=%.2f", looks[1], looks[60]))
--- Trackside pan: fov glides toward the auto-zoom target, never steps.
+-- Trackside pan: physical auto-zoom fov glides toward the new target (never
+-- steps). The physical curve replaces the old 220000/dist heuristic.
 local pan = { id = "p1", kind = "trackside_pan", location = { 0, 0, 0 }, preset = "trackside_low" }
 T = 0.0
 local ep = new_engine(pan)
@@ -779,8 +1270,8 @@ local f0 = ep:pose_of(pan).fov
 move(2000, 0, 0)
 local fovs = {}
 for _ = 1, 60 do T = T + DT60; fovs[#fovs + 1] = ep:pose_of(pan).fov end
-assert(f0 > 50.0 and f0 < 60.0, "initial pan fov wrong: " .. tostring(f0))
-assert(fovs[1] > f0 and fovs[10] < fovs[60] and fovs[60] > 60.0,
+assert(f0 > 25.0 and f0 < 30.0, "initial pan fov wrong: " .. tostring(f0))
+assert(fovs[1] > f0 and fovs[10] < fovs[60] and fovs[60] > 45.0 and fovs[60] < 58.0,
   string.format("pan fov not smoothed: f0=%.2f f1=%.2f f10=%.2f f60=%.2f",
     f0, fovs[1], fovs[10], fovs[60]))
 -- Modes: case-insensitive validation + multiplier applied to effective taus.
@@ -797,7 +1288,8 @@ assert(at > bn and bn > cc, "tight/normal/cinematic taus not ordered")
 ep:reset_smoothing()
 assert(ep.follow_pos == nil and ep.follow_look == nil and ep.smooth_fov == nil and ep.tgt_filter == nil)
 local cut = ep:pose_of(pan)
-assert(math.abs(cut.look[1] - 2000.0) < 0.001 and math.abs(cut.fov - 65.0) < 0.01,
+-- Post-reset first frame snaps to the physical fov at 20 m (~52 deg).
+assert(math.abs(cut.look[1] - 2000.0) < 0.001 and cut.fov > 50.0 and cut.fov < 55.0,
   string.format("cut did not snap: look=%.2f fov=%.2f", cut.look[1], cut.fov))
 -- activate() performs the same cut even when the new target is far away.
 move(12000, 0, 0)
@@ -813,6 +1305,580 @@ move(0, 0, 0)
 for _ = 1, 30 do T = T + DT60; el:pose_of(legacy) end
 assert(el.tgt_filter ~= nil, "legacy damping shot did not initialize the estimator")
 print(string.format("SMOOTH_MODES_OK orbit=%.2f fov=%.2f cut=%.2f", looks[60], fovs[60], cut.look[1]))
+'''
+
+# Phase 1 (a): 16:9 viewport framing of the retuned follow presets.
+FRAMING_HARNESS = r'''
+-- Pinhole projection helper: nx/ny in [-1,+1], +/-1 == frame edge. UE's
+-- FieldOfView is horizontal; vertical half-angle is derived from 16:9.
+local function project(preset_id)
+  local shot = { id = "p", kind = "follow", preset = preset_id }
+  T = 0.0
+  local e = new_engine(shot)
+  move(0, 0, 0); pawn._yaw = 0
+  local p = e:pose_of(shot)
+  local fx, fy, fz = p.look[1] - p.pos[1], p.look[2] - p.pos[2], p.look[3] - p.pos[3]
+  local fl = math.sqrt(fx * fx + fy * fy + fz * fz)
+  fx, fy, fz = fx / fl, fy / fl, fz / fl
+  local rx, ry = -fy, fx                       -- right = world_up x forward
+  local rl = math.sqrt(rx * rx + ry * ry); rx, ry = rx / rl, ry / rl
+  local ux, uy, uz = -fz * ry, fz * rx, fx * ry - fy * rx
+  local dx, dy, dz = -p.pos[1], -p.pos[2], 110.0 - p.pos[3]  -- car body centre
+  local depth = dx * fx + dy * fy + dz * fz
+  local sx = dx * rx + dy * ry
+  local sy = dx * ux + dy * uy + dz * uz
+  local tan_h = math.tan(math.rad(p.fov * 0.5))
+  local tan_v = tan_h / (16.0 / 9.0)
+  return sx / (depth * tan_h), sy / (depth * tan_v), p.fov, p
+end
+
+local side_nx, side_ny = project("side_tracking")
+-- 24% of the half-width == ~12% of the full frame width from centre. The
+-- mandated right=620 / look_ahead=90 geometry cannot reach 12% of half-width
+-- under a pinhole camera; this is the regression guard for the retune.
+assert(math.abs(side_nx) < 0.28 and math.abs(side_ny) < 0.15,
+  string.format("side_tracking off hero zone: nx=%.4f ny=%.4f", side_nx, side_ny))
+local chase_ny = 0.0
+for _, id in ipairs({ "chase_close", "chase_wide", "front_chase" }) do
+  local nx, ny = project(id)
+  chase_ny = ny
+  assert(math.abs(nx) < 0.20 and ny > -0.35 and ny < 0.20,
+    string.format("%s bad framing: nx=%.4f ny=%.4f", id, nx, ny))
+end
+local hx, hy, hfov, hp = project("heli_follow")
+local hdist = math.sqrt(hp.pos[1]^2 + hp.pos[2]^2 + hp.pos[3]^2)
+assert(hdist < 5000.0 and hfov <= 64.0 and math.abs(hx) < 0.20,
+  string.format("heli not closer/centred: dist=%.1f fov=%.1f nx=%.4f", hdist, hfov, hx))
+assert(Presets.get("heli_follow").flags.tau_hdg >= 1.0, "heli tau_hdg must glide hairpins")
+
+-- Zero-spring check: car cruising at 3000 cm/s slams brakes to 0; camera
+-- boom length to filtered target must stay constant (no longitudinal spring)
+-- and filtered position must not ring/oscillate behind the stop point.
+local e_brk = new_engine({ id = "brk", kind = "follow", preset = "chase_close" })
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local x = 0.0
+for _ = 1, 90 do
+  T = T + DT60; x = x + 3000.0 * DT60; move(x, 0, 0)
+  e_brk:pose_of({ id = "brk", kind = "follow", preset = "chase_close" })
+end
+local stop_x = x
+local min_boom, max_boom = math.huge, 0.0
+local peak_overshoot, min_undershoot = 0.0, 0.0
+for _ = 1, 90 do
+  T = T + DT60; move(stop_x, 0, 0)
+  local p = e_brk:pose_of({ id = "brk", kind = "follow", preset = "chase_close" })
+  local fpos = e_brk.tgt_filter.pos
+  local boom = math.sqrt((fpos[1] - p.pos[1])^2 + (fpos[2] - p.pos[2])^2)
+  if boom < min_boom then min_boom = boom end
+  if boom > max_boom then max_boom = boom end
+  local err = fpos[1] - stop_x
+  if err > peak_overshoot then peak_overshoot = err end
+  if err < min_undershoot then min_undershoot = err end
+end
+assert(max_boom - min_boom < 1.0,
+  string.format("longitudinal spring detected: boom %.1f..%.1f", min_boom, max_boom))
+assert(min_undershoot > -20.0,
+  string.format("alpha-beta filter rang backward after stop: %.1f cm", min_undershoot))
+
+-- New rig presets exist with complete, valid flags (validate() in prelude).
+assert(Presets.types.pack_battle == true, "pack_battle type must be registered")
+for _, id in ipairs({ "onboard_tcam", "rear_battle", "pack_battle" }) do
+  local q = Presets.get(id)
+  assert(q and q.id == id and q.flags.pin_view_target == true
+         and type(q.flags.smoothing_alpha) == "number"
+         and type(q.flags.use_route_tangent) == "boolean"
+         and q.flags.tau_pos and q.flags.tau_look and q.flags.tau_hdg and q.flags.tau_fov,
+    "missing/incomplete preset " .. id)
+end
+print(string.format("FRAMING_OK side_nx=%.4f chase_ny=%.4f heli_dist=%.0f", side_nx, chase_ny, hdist))
+'''
+
+# Phase 2 (b): physical-size telephoto auto-zoom curve + tau_fov glide.
+ZOOM_HARNESS = r'''
+local pan = { id = "z1", kind = "trackside_pan", location = { 0, 0, 0 } }
+local function snap_fov(d)
+  T = 0.0
+  local e = new_engine(pan)
+  move(d, 0, 0); pawn._yaw = 0
+  return e:pose_of(pan).fov
+end
+local far_fov = snap_fov(12000.0)   -- 120 m: telephoto floor
+local apex_fov = snap_fov(1200.0)   -- 12 m: wide apex pass
+assert(far_fov >= 13.0 and far_fov <= 18.0,
+  "120 m zoom not telephoto: " .. tostring(far_fov))
+assert(apex_fov >= 45.0 and apex_fov <= 58.0,
+  "12 m zoom not wide: " .. tostring(apex_fov))
+local function trace(explicit_tau)
+  T = 0.0
+  local shot = { id = "z2", kind = "trackside_pan", location = { 0, 0, 0 } }
+  if explicit_tau then shot.tau_fov = 0.22 end
+  local e = new_engine(shot)
+  move(12000, 0, 0); pawn._yaw = 0
+  local prev = e:pose_of(shot).fov
+  local max_step = 0.0
+  for i = 1, 120 do
+    T = T + DT60
+    move(12000 - 10800.0 * (i / 120), 0, 0)
+    local f = e:pose_of(shot).fov
+    max_step = math.max(max_step, math.abs(f - prev)); prev = f
+  end
+  return prev, max_step
+end
+local final_fov, max_step = trace(false)
+local explicit_fov, explicit_step = trace(true)
+local alpha = Engine.exp_alpha(DT60, 0.22)
+assert(max_step < (apex_fov - far_fov) * alpha + 1.0,
+  string.format("zoom stepped: max_step=%.3f bound=%.3f", max_step, (apex_fov - far_fov) * alpha + 1.0))
+-- Default tau_fov is 0.22: omitting it must be identical to setting it.
+assert(math.abs(final_fov - explicit_fov) < 1.0e-6
+       and math.abs(max_step - explicit_step) < 1.0e-6,
+  "default tau_fov is not 0.22")
+assert(final_fov > 40.0 and final_fov <= 58.0,
+  "zoom did not widen toward the apex: " .. tostring(final_fov))
+print(string.format("ZOOM_OK far=%.2f apex=%.2f final=%.2f maxstep=%.3f",
+  far_fov, apex_fov, final_fov, max_step))
+'''
+
+# Phase 2 (c): approach-first director with minimum hold + cut snap.
+DIRECTOR_HARNESS = r'''
+local auto = { id = "auto", kind = "auto_trackside", preset = "trackside_low" }
+local function cam(id, x)
+  return { id = id, kind = "trackside_pan", location = { x, -800, 240 },
+           role = "trackside", preset = "trackside_low" }
+end
+local plan = { shots = { auto, cam("camA", 0), cam("camB", 5000), cam("camC", 10000) } }
+local e = Engine.new(Core, Presets, plan, nil)
+e.clock = function() return T end
+e.target = pawn
+T = 0.0; move(-2000, 0, 0); pawn._yaw = 0
+e:pose_of(auto)
+assert(e.auto_cam_id == "camA" and e.auto_cam_since == 0.0,
+  "director must open on the approaching camera: " .. tostring(e.auto_cam_id))
+-- Still on camera A after passing it by 20 m: minimum hold not yet expired.
+while pawn._x < 2000 do
+  T = T + DT60; move(pawn._x + 2000.0 * DT60, 0, 0); e:pose_of(auto)
+end
+assert(e.auto_cam_id == "camA" and T < 2.8,
+  string.format("min hold violated: id=%s T=%.3f", tostring(e.auto_cam_id), T))
+-- Seed stale smoothing right before the early-release cut; the new lens must
+-- snap straight onto the car at its own telephoto FOV.
+local prev_id, cut_pose = e.auto_cam_id, nil
+for _ = 1, 600 do
+  T = T + DT60; move(pawn._x + 2000.0 * DT60, 0, 0)
+  if e.auto_cam_id == "camA" and pawn._x > 3500.0 then
+    e.smooth_fov = 1234.0
+    e.follow_look = { 99999.0, 99999.0, 99999.0 }
+  end
+  local p = e:pose_of(auto)
+  if e.auto_cam_id ~= prev_id then cut_pose = p; break end
+end
+assert(e.auto_cam_id == "camB", "did not hand off to camera B: " .. tostring(e.auto_cam_id))
+local f = e.tgt_filter.pos
+local dx, dy, dz = f[1] - 5000.0, f[2] + 800.0, f[3] + 110.0 - 240.0
+local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+local raw_fov = math.max(13.0, math.min(58.0,
+  math.deg(2.0 * math.atan((550.0 / 0.28) / (2.0 * math.max(dist, 600.0))))))
+assert(cut_pose and math.abs(cut_pose.fov - raw_fov) < 0.01,
+  string.format("cut did not snap fov: got=%s want=%.4f",
+    cut_pose and cut_pose.fov or "nil", raw_fov))
+assert(math.abs(cut_pose.look[1] - f[1]) < 400.0, "cut did not snap aim onto the car")
+assert(math.abs(e.auto_cam_since - T) < 1.0e-9, "cut did not restart the hold timer")
+-- Hand off again once the car is >35 m past camera B.
+for _ = 1, 600 do
+  T = T + DT60; move(pawn._x + 2000.0 * DT60, 0, 0); e:pose_of(auto)
+  if e.auto_cam_id == "camC" then break end
+end
+assert(e.auto_cam_id == "camC", "no handoff to camera C: " .. tostring(e.auto_cam_id))
+-- Approach-first scoring: with the hold expired, prefer the camera ahead
+-- (camB, along=+3000) over the nearer-but-behind current camera (camA).
+T = 10.0; move(2000, 0, 0); pawn._yaw = 0
+local e2 = Engine.new(Core, Presets, plan, nil)
+e2.clock = function() return T end
+e2.target = pawn
+e2:pose_of(auto)
+e2.auto_cam_id = "camA"; e2.auto_cam_since = 0.0
+T = 11.0
+e2:pose_of(auto)
+assert(e2.auto_cam_id == "camB",
+  "approach-first bias failed: " .. tostring(e2.auto_cam_id))
+print(string.format("DIRECTOR_OK cut=%s at_x=%.0f handoff=%s", "camB", pawn._x, e.auto_cam_id))
+'''
+
+# Phase 1 (d): pack_battle two-car midpoint framing + solo fallback.
+PACK_HARNESS = r'''
+local rival = { _x = 2000.0, _y = 0.0, _z = 0.0 }
+function rival:K2_GetActorLocation() return { X = self._x, Y = self._y, Z = self._z } end
+function rival:K2_GetActorRotation() return { Yaw = 0 } end
+local pawns = { pawn, rival }
+_G.FindAllOf = function(cls)
+  if cls == "MTPlayerCharacter_C" then return pawns end
+  return {}
+end
+local shot = { id = "pb", kind = "pack_battle", preset = "pack_battle" }
+T = 0.0
+local e = new_engine(shot)
+move(0, 0, 0); pawn._yaw = 0
+local p = e:pose_of(shot)
+-- Midpoint = 0.6*focus + 0.4*rival = (800, 0, 110); camera sits behind it.
+assert(math.abs(p.look[1] - 800.0) < 5.0 and math.abs(p.look[3] - 110.0) < 5.0,
+  string.format("pack midpoint wrong: %.1f,%.1f,%.1f", p.look[1], p.look[2], p.look[3]))
+assert(math.abs(p.pos[1] + 400.0) < 5.0 and math.abs(p.pos[2] - 180.0) < 5.0
+       and math.abs(p.pos[3] - 420.0) < 5.0,
+  string.format("pack camera wrong: %.1f,%.1f,%.1f", p.pos[1], p.pos[2], p.pos[3]))
+assert(p.fov >= 56.0 and p.fov <= 84.0,
+  "pack fov out of broadcast range: " .. tostring(p.fov))
+-- Side-by-side rival 12 m right widens FOV more than nose-to-tail.
+rival._x = 0.0; rival._y = 1200.0
+local e_side = new_engine(shot)
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local p_side = e_side:pose_of(shot)
+assert(p_side.fov > p.fov and p_side.fov <= 84.0,
+  string.format("side-by-side must widen more than nose-to-tail: side=%.1f n2t=%.1f", p_side.fov, p.fov))
+-- Rival beyond max_rival_cm: clean fallback to the follow rig (preset fov).
+rival._x = 8000.0
+local e2 = new_engine(shot)
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local solo = e2:pose_of(shot)
+assert(math.abs(solo.pos[1] + 1200.0) < 5.0 and math.abs(solo.fov - 68.0) < 0.01,
+  string.format("solo fallback wrong: pos=%.1f fov=%.2f", solo.pos[1], solo.fov))
+print(string.format("PACK_OK look=%.0f fov=%.1f solo_fov=%.1f", p.look[1], p.fov, solo.fov))
+'''
+
+# Phase 1: vehicle-root tracking with safe fallback.
+VEHICLE_HARNESS = r'''
+local veh = { _x = 500.0, _y = 0.0, _z = 0.0, _yaw = 90.0 }
+function veh:IsValid() return true end
+function veh:K2_GetActorLocation() return { X = self._x, Y = self._y, Z = self._z } end
+function veh:K2_GetActorRotation() return { Yaw = self._yaw } end
+function pawn:GetVehicle() return veh end
+local shot = { id = "v1", kind = "follow", preset = "chase_close" }
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local e = new_engine(shot)
+local p = e:pose_of(shot)
+assert(e.seated_vehicle and e.seated_vehicle(pawn) == veh, "seated vehicle not detected")
+-- Vehicle root at (500,0,0), yaw 90 deg -> camera at (500,-1600,460).
+assert(math.abs(p.pos[1] - 500.0) < 1.0 and math.abs(p.pos[2] + 1600.0) < 1.0,
+  string.format("vehicle-root position wrong: %.1f,%.1f,%.1f", p.pos[1], p.pos[2], p.pos[3]))
+assert(math.abs(p.look[1] - 500.0) < 1.0 and math.abs(p.look[2] - 300.0) < 1.0,
+  string.format("vehicle-root yaw wrong: %.1f,%.1f", p.look[1], p.look[2]))
+-- Invalid vehicle / throwing GetVehicle must fall back to the pawn cleanly.
+local bad = { IsValid = function() return false end,
+              K2_GetActorLocation = veh.K2_GetActorLocation,
+              K2_GetActorRotation = veh.K2_GetActorRotation }
+function pawn:GetVehicle() return bad end
+local e2 = new_engine(shot)
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local p2 = e2:pose_of(shot)
+assert(e2.seated_vehicle(pawn) == nil and math.abs(p2.pos[1] + 1600.0) < 1.0,
+  "invalid vehicle did not fall back to the pawn")
+function pawn:GetVehicle() error("vehicle probe exploded") end
+local e3 = new_engine(shot)
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local p3 = e3:pose_of(shot)
+assert(p3 and math.abs(p3.pos[1] + 1600.0) < 1.0, "throwing GetVehicle broke the tick")
+print(string.format("VEHICLE_OK seated=%.0f,%.0f fallback=%.0f", p.pos[1], p.pos[2], p3.pos[1]))
+'''
+
+# Auto Director prelude: director.lua is pure Lua, so no UE4SS stubs or temp
+# data dir are needed -- only the module path and a few snapshot builders.
+AUTO_DIRECTOR_PRELUDE = r'''
+local DATA_DIR = "__DATA_DIR__"
+local ROOT = "__REPO_ROOT__/ClientScripts"
+package.path = ROOT .. "/?.lua;" .. ROOT .. "/?/init.lua;" .. package.path
+
+local D = require("RaceCam/director")
+
+local ALL = {}
+for _, id in ipairs({
+  "pack_battle", "front_chase", "rear_battle", "heli_follow", "auto_trackside",
+  "onboard_tcam", "side_tracking", "chase_close", "chase_wide", "follow_focus",
+  "start_line", "orbit_hero", "start_crane", "finish_line",
+}) do ALL[id] = true end
+
+local function row(name, rank, laps, section, split, finished, dq)
+  return { name = name, rank = rank, laps = laps or 2, section = section or 5,
+           split_s = split, finished = finished or false, dq = dq or false }
+end
+local function car(x, spd, streamed)
+  return { pos = { x = x, y = 0, z = 0 }, spd_cm_s = spd, streamed_in = streamed }
+end
+local function mk_snap(over)
+  local s = {
+    now = 0, mode = "full", event_state = "RACING", num_laps = 5,
+    standings = {}, cars = {}, available_shots = ALL,
+    finish_pos = { x = 90000, y = 0, z = 0 },
+    current_target = nil, current_shot = nil,
+  }
+  for k, v in pairs(over or {}) do s[k] = v end
+  return s
+end
+local function contains(s, needle) return s:find(needle, 1, true) ~= nil end
+'''
+
+# Scenario 1: a close midfield battle outscores a lonely (air-time-decayed)
+# leader, and cars stationary for >4 s are never selected during RACING.
+AUTO_DIRECTOR_BATTLE_HARNESS = r'''
+local d = D.new()
+local snap = mk_snap{
+  standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, 30),
+                row("P3", 3, 2, 5, 0.8), row("P4", 4, 2, 4, 40),
+                row("P5", 5, 2, 4, 50) },
+  cars = { P1 = car(0, 3000), P2 = car(5000, 3000), P3 = car(5100, 3000),
+           P4 = car(10000, 40), P5 = car(11000, 30) },
+  current_target = "P1",
+}
+local dead_seen, battle_seen, battle_reason = false, false, false
+for t = 0, 20 do
+  snap.now = t
+  local r = d:step(snap)
+  if r.target == "P4" or r.target == "P5" then dead_seen = true end
+  if r.target == "P2" or r.target == "P3" then battle_seen = true end
+  if r.target and contains(r.reason, "battle") then battle_reason = true end
+  assert(r.next_cut_in >= 0 and r.next_cut_in <= 16.001,
+         "next_cut_in out of range at " .. t .. ": " .. tostring(r.next_cut_in))
+  snap.current_target = r.target or snap.current_target
+end
+assert(not dead_seen, "dead/stopped car must never be selected during RACING")
+assert(battle_seen, "close battle never became the target")
+assert(battle_reason, "close-battle reason missing from step() output")
+assert(snap.current_target == "P2" or snap.current_target == "P3",
+       "final target not in the close battle: " .. tostring(snap.current_target))
+
+-- Zero split_s (missing/pre-gate timing) must NOT fabricate a close battle.
+local dz = D.new()
+local rz = dz:step(mk_snap{
+  standings = { row("P1", 1, 0, 0, 0), row("P2", 2, 0, 0, 0) },
+  cars = { P1 = car(0, 3000), P2 = car(50000, 3000) },
+  current_target = "P1",
+})
+assert(not contains(rz.reason, "battle"), "zero split_s fabricated a fake battle: " .. rz.reason)
+
+-- A long-watched solo leader must rotate to a fresh rival once air-time decay
+-- overcomes the +25% stickiness (12 s grace, 2.5/s, capped at -45).
+local d2 = D.new()
+local s2 = mk_snap{
+  standings = { row("P1", 1, 2, 5, nil), row("P6", 2, 2, 5, 30) },
+  cars = { P1 = car(0, 3000), P6 = car(50000, 3000) },
+  current_target = "P1",
+}
+local switched = nil
+for t = 0, 30 do
+  s2.now = t
+  local r = d2:step(s2)
+  s2.current_target = r.target or s2.current_target
+  if switched == nil and s2.current_target == "P6" then switched = t end
+end
+assert(switched ~= nil and switched > 12,
+       "air-time decay did not rotate the lonely leader: " .. tostring(switched))
+print("AUTO_DIRECTOR_BATTLE_OK battle=" .. tostring(battle_seen)
+      .. " dead=" .. tostring(dead_seen) .. " rotate_at=" .. tostring(switched))
+'''
+
+# Scenario 2: rank swap cuts immediately; final-lap finish sprint locks
+# finish_line (and falls back to start_crane when finish_line is not loaded).
+AUTO_DIRECTOR_SPRINT_HARNESS = r'''
+local d = D.new()
+local snap = mk_snap{
+  num_laps = 3,
+  standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, 20) },
+  cars = { P1 = car(0, 3000), P2 = car(50000, 3000) },
+  current_target = "P1",
+}
+local r = d:step(snap)
+assert(r.shot ~= nil, "no opening shot produced")
+snap.now = 1
+snap.standings = { row("P2", 1, 2, 5, nil), row("P1", 2, 2, 5, 20) }
+snap.current_target = r.target or "P1"
+r = d:step(snap)
+assert(r.target == "P2", "rank swap must cut the target immediately: " .. tostring(r.target))
+assert(contains(r.reason, "overtake"), "overtake reason missing: " .. r.reason)
+snap.now = 2
+snap.cars.P2 = car(89500, 3000)  -- 500 cm from finish, inside 250 m sprint zone
+snap.current_target = r.target or snap.current_target
+r = d:step(snap)
+assert(r.shot == "finish_line", "final lap must lock finish_line: " .. tostring(r.shot))
+assert(contains(r.reason, "finish_line"), "finish reason missing: " .. r.reason)
+
+local limited = {}
+for k, v in pairs(ALL) do limited[k] = v end
+limited.finish_line = nil
+local d2 = D.new()
+local s2 = mk_snap{
+  num_laps = 3,
+  standings = { row("P1", 1, 2, 5, nil) },
+  cars = { P1 = car(89500, 3000) },
+  available_shots = limited, current_target = "P1",
+}
+r = d2:step(s2)
+assert(r.shot == "start_crane",
+       "finish_line fallback must be start_crane: " .. tostring(r.shot))
+print("AUTO_DIRECTOR_SPRINT_OK overtake_target=P2 shot=" .. tostring(r.shot))
+'''
+
+# Scenario 3: alternating advantages between two equal battles must not
+# ping-pong the target; min_shot_hold (4.5 s) spaces shot cuts.
+AUTO_DIRECTOR_HOLD_HARNESS = r'''
+local d = D.new()
+local ct = "P1"
+local switches, cuts = 0, {}
+for t = 0, 50 do
+  local sa = (t % 2 == 0) and 0.8 or 3.0
+  local sb = (t % 2 == 0) and 3.0 or 0.8
+  local snap = mk_snap{
+    now = t,
+    standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, sa),
+                  row("P3", 3, 2, 5, nil), row("P4", 4, 2, 5, sb) },
+    cars = { P1 = car(0, 3000), P2 = car(500, 3000),
+             P3 = car(20000, 3000), P4 = car(20500, 3000) },
+    current_target = ct,
+    current_shot = (#cuts > 0) and cuts[#cuts].id or nil,
+  }
+  local r = d:step(snap)
+  if r.target and r.target ~= ct then switches = switches + 1; ct = r.target end
+  if r.shot then
+    if #cuts > 0 then
+      assert(t - cuts[#cuts].t >= 4.499,
+             "min_shot_hold violated: cut at " .. cuts[#cuts].t .. " then " .. t)
+    end
+    cuts[#cuts + 1] = { t = t, id = r.shot }
+  end
+  assert(r.next_cut_in >= 0 and r.next_cut_in <= 16.001)
+end
+assert(switches <= 1, "target ping-ponged between equal battles: " .. tostring(switches))
+assert(#cuts >= 4, "too few shot cuts over 50 s: " .. tostring(#cuts))
+for i = 2, #cuts do
+  assert(cuts[i].id ~= cuts[i - 1].id, "same shot repeated back-to-back")
+end
+print("AUTO_DIRECTOR_HOLD_OK switches=" .. tostring(switches) .. " cuts=" .. tostring(#cuts))
+'''
+
+# Scenario 4: a manual shot/target click pauses only that axis of the Auto
+# Director for the 15 s cooldown, without fighting the operator.
+AUTO_DIRECTOR_OVERRIDE_HARNESS = r'''
+local d = D.new()
+local snap = mk_snap{
+  standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, 20) },
+  cars = { P1 = car(0, 3000), P2 = car(50000, 3000) },
+  current_target = "P1",
+}
+local opening = d:step(snap)
+assert(opening.target ~= nil or opening.shot ~= nil, "director must be active before override")
+d:note_manual_shot(1)
+d:note_manual_target(1)
+for t = 2, 15 do
+  snap.now = t
+  local r = d:step(snap)
+  assert(r.target == nil and r.shot == nil,
+         "director fought the override at t=" .. t .. ": " .. r.reason)
+  assert(contains(r.reason, "override"), "override reason missing: " .. r.reason)
+  assert(math.abs(r.override_s - d:override_remaining(t)) < 1e-9,
+         "override_s disagrees with override_remaining()")
+end
+assert(d:override_remaining(16) == 0, "15 s cooldown did not expire")
+snap.now = 16
+local after = d:step(snap)
+assert(not contains(after.reason, "override"), "override still reported after cooldown")
+
+-- Shot-only override must leave target selection automatic.
+local d2 = D.new()
+d2:note_manual_shot(5)
+snap.current_target = nil
+local got_target = false
+for t = 5, 19 do
+  snap.now = t
+  local r = d2:step(snap)
+  assert(r.shot == nil, "shot override leaked at t=" .. t)
+  if r.target then got_target = true end
+end
+assert(got_target, "target selection must stay automatic during a shot-only override")
+print("AUTO_DIRECTOR_OVERRIDE_OK cooldown=15 target_still_auto=" .. tostring(got_target))
+'''
+
+# Scenario 5: a remote (not streamed-in) target is restricted to angles that
+# work on PlayerState location; streamed-in targets get the full solo pool.
+AUTO_DIRECTOR_REMOTE_HARNESS = r'''
+local d = D.new()
+local snap = mk_snap{
+  mode = "shots",
+  standings = { row("P1", 1, 2, 5, nil) },
+  cars = { P1 = car(0, 3000, false) },
+  current_target = "P1",
+}
+local shots = {}
+for i = 0, 20 do
+  snap.now = i * 16
+  local r = d:step(snap)
+  if r.shot then shots[#shots + 1] = r.shot; snap.current_shot = r.shot end
+end
+assert(#shots >= 10, "too few remote shot cuts: " .. tostring(#shots))
+local allowed = { auto_trackside = true, heli_follow = true,
+                  chase_wide = true, follow_focus = true }
+for i, s in ipairs(shots) do
+  assert(allowed[s], "remote target got disallowed shot " .. tostring(s))
+  assert(s ~= "onboard_tcam" and s ~= "side_tracking",
+         "remote target must never use onboard_tcam/side_tracking: " .. s)
+  if i > 1 then assert(s ~= shots[i - 1], "back-to-back shot repeat") end
+end
+
+-- Remote stays restricted even when it is part of a close battle.
+local d2 = D.new()
+local s2 = mk_snap{
+  mode = "shots",
+  standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, 0.5) },
+  cars = { P1 = car(0, 3000, false), P2 = car(500, 3000, true) },
+  current_target = "P1",
+}
+for i = 0, 9 do
+  s2.now = i * 5
+  local r = d2:step(s2)
+  if r.shot then
+    assert(allowed[r.shot], "remote battle got disallowed shot " .. tostring(r.shot))
+    s2.current_shot = r.shot
+  end
+end
+
+-- A streamed-in solo target may use onboard_tcam, side_tracking, and follow_focus.
+local d3 = D.new()
+local s3 = mk_snap{
+  mode = "shots",
+  standings = { row("P1", 1, 2, 5, nil) },
+  cars = { P1 = car(0, 3000, true) },
+  current_target = "P1",
+}
+local onboard, side, follow_focus = false, false, false
+for i = 0, 14 do
+  s3.now = i * 16
+  local r = d3:step(s3)
+  if r.shot then
+    s3.current_shot = r.shot
+    if r.shot == "onboard_tcam" then onboard = true end
+    if r.shot == "side_tracking" then side = true end
+    if r.shot == "follow_focus" then follow_focus = true end
+  end
+end
+assert(onboard and side and follow_focus,
+       "streamed-in target missing expected solo shots: onboard=" .. tostring(onboard)
+       .. " side=" .. tostring(side) .. " follow_focus=" .. tostring(follow_focus))
+
+-- Switching from a streamed-in target to a remote target on the SAME tick must
+-- check remoteness against the NEW target (never pick onboard_tcam).
+local d4 = D.new()
+local s4 = mk_snap{
+  mode = "full",
+  standings = { row("Near", 1, 2, 5, nil), row("Far", 2, 2, 5, 20) },
+  cars = { Near = car(0, 3000, true), Far = car(90000, 3000, false) },
+  current_target = "Near",
+  current_shot = "auto_trackside",
+}
+d4:step(s4)
+s4.now = 5
+s4.standings = { row("Far", 1, 2, 5, nil), row("Near", 2, 2, 5, 20) } -- rank swap to remote
+local r4 = d4:step(s4)
+assert(r4.target == "Far", "expected switch to Far: " .. tostring(r4.target))
+if r4.shot then
+  assert(allowed[r4.shot], "same-tick switch to remote picked disallowed shot: " .. tostring(r4.shot))
+end
+print("AUTO_DIRECTOR_REMOTE_OK remote_shots=" .. table.concat(shots, ","))
 '''
 
 class RaceCamLuaTests(unittest.TestCase):
@@ -878,6 +1944,10 @@ class RaceCamLuaTests(unittest.TestCase):
             "/api/inbox",
             "/api/inbox_file",
             "/api/my_pos",
+            "/api/event/state",
+            "/api/event/close",
+            "/api/event/join",
+            "/api/event/leave",
         ):
             with self.subTest(endpoint=endpoint):
                 needle = f'req.path == "{endpoint}"'
@@ -978,6 +2048,92 @@ class RaceCamLuaTests(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.assertIn(needle, src, f"http.lua missing {needle}")
 
+    def test_lua_event_control_static_surface(self) -> None:
+        """Source-level invariants for the event lifecycle wrapper and routes."""
+        ec = (RACECAM / "event_control.lua").read_text(encoding="utf-8")
+        for needle in (
+            "function M.set_state(", "function M.close_event(",
+            "function M.join_event(", "function M.leave_event(",
+            "function M.last_remove_response()", "ClientRemoveEventResponse",
+            "ServerChangeEventState", "ServerRemoveEvent",
+            "ServerJoinEvent", "ServerLeaveEvent",
+            "FindFirstOf", "find_event_guid_parts",
+            "A = parts.A, B = parts.B, C = parts.C, D = parts.D",
+            "none = 0, lobby = 0,", "ready = 1,",
+            "start = 2, in_progress = 2, racing = 2,",
+            "finish = 3, finished = 3,",
+        ):
+            with self.subTest(file="event_control.lua", needle=needle):
+                self.assertIn(needle, ec, f"event_control.lua missing {needle}")
+        # The HTTP tick already runs on the game thread; queueing via
+        # ExecuteInGameThread would retain a fresh PC UObject into the next tick.
+        self.assertNotIn("ExecuteInGameThread(", ec,
+                         "event_control.lua must not defer RPCs across ticks")
+
+        live = (RACECAM / "live_events.lua").read_text(encoding="utf-8")
+        for needle in (
+            "owner_guid =", "owner_name =", "is_owner =",
+            "is_joined =", "player_count =",
+            "function M.find_event_guid_parts(guid_str)",
+            "M.local_character_guid = local_character_guid", "function M.clear_cache()",
+        ):
+            with self.subTest(file="live_events.lua", needle=needle):
+                self.assertIn(needle, live, f"live_events.lua missing {needle}")
+        self.assertNotIn("if found or not ev then return end", live,
+                         "UE4SS ForEach callbacks must not return early")
+
+        src = HTTP_PATH.read_text(encoding="utf-8")
+        for path in ("/api/event/state", "/api/event/close",
+                     "/api/event/join", "/api/event/leave"):
+            pos = src.index(f'req.path == "{path}"')
+            end = src.find("\n  elseif ", pos)
+            block = src[pos:end if end > 0 else len(src)]
+            for needle in ("touch()", "invalidate_event_caches()", "audit("):
+                with self.subTest(path=path, needle=needle):
+                    self.assertIn(needle, block, f"{path} block missing {needle}")
+        self.assertIn('"confirm required"', src)
+        self.assertIn("payload.confirm == true", src)
+        self.assertIn("last_remove_response", src)
+        # Public OBS routes must remain read-only and outside the token gate.
+        gate_pos = src.index('not token or token == "" or req.headers["x-racecam-token"] ~= token')
+        for path in ("/api/standings", "/overlay/standings"):
+            self.assertLess(src.index(f'req.path == "{path}"'), gate_pos)
+        self.assertNotIn('req.method == "POST" and req.path == "/api/standings"', src)
+
+    def test_lua_event_control_behaviour(self) -> None:
+        """Lua 5.4 harness: token gate, RPC marshalling, state map, ownership."""
+        tmpdir = Path(tempfile.mkdtemp(prefix="racecam_event_ctrl_", dir=SCRATCH))
+        try:
+            harness = LUA_EVENT_CONTROL_HARNESS.replace(
+                "__DATA_DIR__", str(tmpdir)
+            ).replace("__REPO_ROOT__", str(REPO))
+            harness_path = tmpdir / "harness.lua"
+            harness_path.write_text(harness, encoding="utf-8")
+            # hostrun.sh stages the wrapper at /tmp/hr-<basename> on the host.
+            # Use a unique basename so concurrent/sequential harnesses cannot
+            # overwrite each other's staged script and return the wrong token.
+            wrapper_path = tmpdir / f"run_{tmpdir.name}.sh"
+            wrapper_path.write_text(
+                "#!/usr/bin/env bash\nset -u\n"
+                f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [str(HOSTRUN), str(wrapper_path)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            self.assertEqual(
+                0,
+                proc.returncode,
+                f"event control harness failed:\n{proc.stdout}\n{proc.stderr}",
+            )
+            self.assertIn("EVENT_CONTROL_OK", proc.stdout,
+                          f"{proc.stdout}\n{proc.stderr}")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     def test_lua_inbox_and_pos_behaviour(self) -> None:
         """Real Lua 5.4 harness: traversal-safe inbox API and local pose."""
         tmpdir = Path(tempfile.mkdtemp(prefix="racecam_inbox_", dir=SCRATCH))
@@ -987,7 +2143,10 @@ class RaceCamLuaTests(unittest.TestCase):
             )
             harness_path = tmpdir / "harness.lua"
             harness_path.write_text(harness, encoding="utf-8")
-            wrapper_path = tmpdir / "run_harness.sh"
+            # hostrun.sh stages the wrapper at /tmp/hr-<basename> on the host.
+            # Use a unique basename so concurrent/sequential harnesses cannot
+            # overwrite each other's staged script and return the wrong token.
+            wrapper_path = tmpdir / f"run_{tmpdir.name}.sh"
             wrapper_path.write_text(
                 "#!/usr/bin/env bash\nset -u\n"
                 f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
@@ -1015,7 +2174,10 @@ class RaceCamLuaTests(unittest.TestCase):
             harness = LUA_HARNESS.replace("__DATA_DIR__", str(tmpdir)).replace("__REPO_ROOT__", str(REPO))
             harness_path = tmpdir / "harness.lua"
             harness_path.write_text(harness, encoding="utf-8")
-            wrapper_path = tmpdir / "run_harness.sh"
+            # hostrun.sh stages the wrapper at /tmp/hr-<basename> on the host.
+            # Use a unique basename so concurrent/sequential harnesses cannot
+            # overwrite each other's staged script and return the wrong token.
+            wrapper_path = tmpdir / f"run_{tmpdir.name}.sh"
             wrapper_path.write_text(
                 "#!/usr/bin/env bash\nset -u\n"
                 f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
@@ -1046,7 +2208,10 @@ class RaceCamLuaTests(unittest.TestCase):
             )
             harness_path = tmpdir / "harness.lua"
             harness_path.write_text(harness, encoding="utf-8")
-            wrapper_path = tmpdir / "run_harness.sh"
+            # hostrun.sh stages the wrapper at /tmp/hr-<basename> on the host.
+            # Use a unique basename so concurrent/sequential harnesses cannot
+            # overwrite each other's staged script and return the wrong token.
+            wrapper_path = tmpdir / f"run_{tmpdir.name}.sh"
             wrapper_path.write_text(
                 "#!/usr/bin/env bash\nset -u\n"
                 f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
@@ -1067,6 +2232,64 @@ class RaceCamLuaTests(unittest.TestCase):
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
+    def test_overlay_static_surface_and_packaging(self) -> None:
+        """Public read routes precede auth; the write command stays gated."""
+        src = HTTP_PATH.read_text(encoding="utf-8")
+        gate_pos = src.index('not token or token == "" or req.headers["x-racecam-token"] ~= token')
+        for needle in ('req.path == "/api/standings"', 'req.path == "/overlay/standings"'):
+            with self.subTest(public_route=needle):
+                self.assertLess(src.index(needle), gate_pos,
+                                f"{needle} must not require a token")
+        for needle in ('cmd == "overlay"', '"overlay_visible":',
+                       'standings_payload_cache', 'RaceCam/overlay_ui',
+                       'text/html; charset=utf-8'):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, src)
+        self.assertGreater(src.index('cmd == "overlay"'), gate_pos,
+                           "overlay write command must stay token-gated")
+
+        overlay = (RACECAM / "overlay_ui.lua").read_text(encoding="utf-8")
+        for needle in ("function M.html()", 'id="tower"', "tabular-nums",
+                       "background:transparent", "qnum('top'", "qs.get('mode')",
+                       "qs.get('always')", "visible!==false"):
+            with self.subTest(overlay=needle):
+                self.assertIn(needle, overlay)
+
+        # Admin packaging copies the whole RaceCam tree (so overlay_ui.lua is
+        # included); the player variant deletes RaceCam entirely.
+        flake = (REPO / "flake.nix").read_text(encoding="utf-8")
+        self.assertIn('cp -r "$LUA_SCRIPTS_DIR"/* "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts/"', flake)
+        self.assertIn('ADMIN_ONLY="Shortcuts.lua Commands.lua OverlayBridge.lua '
+                      'VehicleManager.lua IntegrityChecker.lua RaceCam"', flake)
+        self.assertIn('for f in $ADMIN_ONLY; do rm -rf', flake)
+
+    def test_lua_overlay_endpoints_and_command(self) -> None:
+        """Real Lua 5.4 harness: public standings page + token-gated overlay cmd."""
+        tmpdir = Path(tempfile.mkdtemp(prefix="racecam_overlay_", dir=SCRATCH))
+        try:
+            harness = LUA_OVERLAY_HARNESS.replace("__DATA_DIR__", str(tmpdir)).replace(
+                "__REPO_ROOT__", str(REPO)
+            )
+            harness_path = tmpdir / "harness.lua"
+            harness_path.write_text(harness, encoding="utf-8")
+            # hostrun.sh stages the wrapper at /tmp/hr-<basename> on the host.
+            # Use a unique basename so concurrent/sequential harnesses cannot
+            # overwrite each other's staged script and return the wrong token.
+            wrapper_path = tmpdir / f"run_{tmpdir.name}.sh"
+            wrapper_path.write_text(
+                "#!/usr/bin/env bash\nset -u\n"
+                f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [str(HOSTRUN), str(wrapper_path)],
+                capture_output=True, text=True, timeout=180,
+            )
+            self.assertEqual(0, proc.returncode,
+                             f"overlay harness failed:\n{proc.stdout}\n{proc.stderr}")
+            self.assertIn("OVERLAY_OK", proc.stdout, f"{proc.stdout}\n{proc.stderr}")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def _run_smoothing_harness(self, body: str, token: str, prefix: str) -> None:
         """Run one deterministic Lua 5.4 smoothing harness on the NixOS host."""
@@ -1077,7 +2300,10 @@ class RaceCamLuaTests(unittest.TestCase):
             )
             harness_path = tmpdir / "harness.lua"
             harness_path.write_text(harness, encoding="utf-8")
-            wrapper_path = tmpdir / "run_harness.sh"
+            # hostrun.sh stages the wrapper at /tmp/hr-<basename> on the host.
+            # Use a unique basename so concurrent/sequential harnesses cannot
+            # overwrite each other's staged script and return the wrong token.
+            wrapper_path = tmpdir / f"run_{tmpdir.name}.sh"
             wrapper_path.write_text(
                 "#!/usr/bin/env bash\nset -u\n"
                 f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
@@ -1117,6 +2343,26 @@ class RaceCamLuaTests(unittest.TestCase):
     def test_lua_smoothing_orbit_pan_modes_and_reset(self) -> None:
         """Orbit/pan aim+fov smoothing, clean cut resets, smoothing modes."""
         self._run_smoothing_harness(SMOOTH_MODES_HARNESS, "SMOOTH_MODES_OK", "smoothmodes")
+
+    def test_lua_preset_framing_projection(self) -> None:
+        """Follow presets frame the car inside the 16:9 hero zone."""
+        self._run_smoothing_harness(FRAMING_HARNESS, "FRAMING_OK", "framing")
+
+    def test_lua_trackside_physical_auto_zoom(self) -> None:
+        """Physical telephoto curve (13-58 deg) glides with the 0.22 s tau."""
+        self._run_smoothing_harness(ZOOM_HARNESS, "ZOOM_OK", "zoom")
+
+    def test_lua_auto_trackside_approach_director(self) -> None:
+        """Approach-first camera picks, min hold, handoff and cut snapping."""
+        self._run_smoothing_harness(DIRECTOR_HARNESS, "DIRECTOR_OK", "director")
+
+    def test_lua_pack_battle_framing(self) -> None:
+        """Two-car midpoint framing widens FOV; solo falls back to follow."""
+        self._run_smoothing_harness(PACK_HARNESS, "PACK_OK", "packbattle")
+
+    def test_lua_vehicle_root_tracking(self) -> None:
+        """Seated drivers are tracked from the vehicle root with safe fallback."""
+        self._run_smoothing_harness(VEHICLE_HARNESS, "VEHICLE_OK", "vehicle")
 
     def test_lua_player_array_full_server_roster_and_remote_fallback(self) -> None:
         """list_targets merges GameState.PlayerArray; far drivers track PlayerState.Location and upgrade when streamed in."""
@@ -1190,6 +2436,94 @@ assert(pose2 and e.target == far_pawn and e.target_ps == nil and not e.target_lo
 print("PLAYER_ARRAY_ROSTER_OK count=3 upgraded=true")
 '''
         self._run_smoothing_harness(harness, "PLAYER_ARRAY_ROSTER_OK", "roster")
+
+
+    # ----- Auto Director: pure-Lua state machine -----------------------------
+
+    def _run_director_harness(self, body: str, token: str, prefix: str) -> None:
+        """Run one deterministic Lua 5.4 Auto Director harness on the host."""
+        tmpdir = Path(tempfile.mkdtemp(prefix=f"racecam_director_{prefix}_", dir=SCRATCH))
+        try:
+            harness = (AUTO_DIRECTOR_PRELUDE + body).replace("__DATA_DIR__", str(tmpdir)).replace(
+                "__REPO_ROOT__", str(REPO)
+            )
+            harness_path = tmpdir / "harness.lua"
+            harness_path.write_text(harness, encoding="utf-8")
+            # hostrun.sh stages the wrapper at /tmp/hr-<basename> on the host.
+            # Use a unique basename so concurrent/sequential harnesses cannot
+            # overwrite each other's staged script and return the wrong token.
+            wrapper_path = tmpdir / f"run_{tmpdir.name}.sh"
+            wrapper_path.write_text(
+                "#!/usr/bin/env bash\nset -u\n"
+                f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [str(HOSTRUN), str(wrapper_path)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            self.assertEqual(
+                0,
+                proc.returncode,
+                f"{prefix} harness failed:\n{proc.stdout}\n{proc.stderr}",
+            )
+            self.assertIn(token, proc.stdout, f"{proc.stdout}\n{proc.stderr}")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_director_static_surface(self) -> None:
+        """director.lua is pure Lua and exports the agreed wiring contract."""
+        src = (RACECAM / "director.lua").read_text(encoding="utf-8")
+        for needle in (
+            "D.MODES = { off = true, shots = true, full = true }",
+            "function D.normalize_mode(",
+            "function D.new(",
+            "function D:reset()",
+            "function D:note_manual_shot(now)",
+            "function D:note_manual_target(now)",
+            "function D:override_remaining(now)",
+            "function D:step(snap)",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, src, f"director.lua missing {needle}")
+        for forbidden in (
+            "FindAllOf", "FindFirstOf", "StaticFindObject", "GetCachedWorld",
+            "LoopInGameThread", "os.getenv", "io.open", "require(",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, src, f"director.lua must not use {forbidden}")
+
+    def test_lua_director_close_battle_beats_lonely_leader(self) -> None:
+        """Close battle + air-time decay win; stopped cars are filtered out."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_BATTLE_HARNESS, "AUTO_DIRECTOR_BATTLE_OK", "autobattle"
+        )
+
+    def test_lua_director_overtake_and_finish_sprint(self) -> None:
+        """Rank swap cuts instantly; final lap locks finish_line (or fallback)."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_SPRINT_HARNESS, "AUTO_DIRECTOR_SPRINT_OK", "autosprint"
+        )
+
+    def test_lua_director_hold_and_hysteresis(self) -> None:
+        """Equal alternating battles never ping-pong; shot cuts respect 4.5 s."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_HOLD_HARNESS, "AUTO_DIRECTOR_HOLD_OK", "autohold"
+        )
+
+    def test_lua_director_manual_override_pauses(self) -> None:
+        """Manual shot/target clicks pause the director for 15 s, no fighting."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_OVERRIDE_HARNESS, "AUTO_DIRECTOR_OVERRIDE_OK", "autooverride"
+        )
+
+    def test_lua_director_remote_target_shot_pool(self) -> None:
+        """Remote targets avoid onboard_tcam/side_tracking; streamed ones may use them."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_REMOTE_HARNESS, "AUTO_DIRECTOR_REMOTE_OK", "autoremote"
+        )
 
 
 if __name__ == "__main__":

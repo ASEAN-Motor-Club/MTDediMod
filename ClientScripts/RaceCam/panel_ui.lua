@@ -89,6 +89,8 @@ pre{background:#080b0f;border:1px solid var(--line);padding:8px;max-height:200px
 .scene-pad.pgm{border-color:var(--prog);box-shadow:0 0 0 2px rgba(229,57,53,.35)}
 .head-toggles{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.tog{font-size:10px;padding:4px 7px}
 .tog.on{background:#1b6b43;border-color:var(--prev)}
+.dir-ctl{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
+#dir_badge{font-size:10px;max-width:290px;overflow:hidden;text-overflow:ellipsis}
 /* Contestants / live leaderboard (click-safe button deck). */
 .roster{display:flex;flex-direction:column;gap:3px;margin-top:5px;max-height:300px;overflow:auto}
 .roster.standalone{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
@@ -138,9 +140,20 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
   <button id="arm_pill" class="pill standby" onclick="cmd('arm')">STANDBY</button>
   <span id="pgm" class="badge tally-off">PROGRAM —</span>
   <span id="prv" class="badge tally-off">PREVIEW —</span>
+  <span id="dir_badge" class="badge tally-off" style="display:none">AUTO —</span>
   <span class="onair-wrap">ON AIR <input id="tgt_name" size="12" placeholder="driver name"><button class="mini" onclick="lockTyped()">Lock</button></span>
   <span class="cd-wrap">COUNTDOWN <b id="cd">—</b></span>
   <span id="keys_pill" class="pill keys-on">KEYS ACTIVE</span>
+  <span class="dir-ctl" title="In-game HUD visibility: Full, Tags Only (hides HUD, keeps player name tags), or Clean (hides both)">
+    <span class="muted">HUD:</span>
+    <button id="hud_full" class="sm-btn on" onclick="setHudMode('full')">Full</button>
+    <button id="hud_tags" class="sm-btn" onclick="setHudMode('tags_only')">Tags Only</button>
+    <button id="hud_clean" class="sm-btn" onclick="setHudMode('clean')">Clean</button>
+  </span>
+  <span class="dir-ctl" title="OBS live standings overlay — timing tower Browser Source">
+    <button id="ov_toggle" class="sm-btn" onclick="toggleOverlay()">Overlay: ON</button>
+    <button id="ov_copy" class="sm-btn" onclick="copyObsUrl()">Copy OBS URL</button>
+  </span>
   <button id="auth_pill" class="pill" onclick="toggleConnDrawer()">Auth</button>
   <button id="obs_pill" class="pill" onclick="toggleConnDrawer()">OBS OFF</button>
   <button id="reh_btn" class="pill" onclick="toggleRehearsal()">REHEARSAL (R)</button>
@@ -168,6 +181,17 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
         <button id="sm_tight" class="sm-btn" onclick="setSmoothing('tight')">Tight</button>
         <button id="sm_normal" class="sm-btn on" onclick="setSmoothing('normal')">Normal</button>
         <button id="sm_cinematic" class="sm-btn" onclick="setSmoothing('cinematic')">Cinematic</button>
+        <button id="sm_tune_btn" class="sm-btn" onclick="toggleSmoothingTune()">Tune</button>
+      </div>
+      <div id="sm_tune_box" style="display:none;margin:6px 0 8px;padding:8px;background:#101624;border:1px solid #263147;border-radius:6px;font-size:12px">
+        <div class="pin-row" style="gap:8px;flex-wrap:wrap">
+          <label>Pos τ <input id="sm_tau_pos" type="range" min="0.05" max="2.00" step="0.02" value="0.28" oninput="onSmoothingInput()"> <span id="sm_tau_pos_v">0.28s</span></label>
+          <label>Hdg τ <input id="sm_tau_hdg" type="range" min="0.05" max="2.50" step="0.05" value="0.38" oninput="onSmoothingInput()"> <span id="sm_tau_hdg_v">0.38s</span></label>
+          <label>Look τ <input id="sm_tau_look" type="range" min="0.05" max="1.50" step="0.02" value="0.22" oninput="onSmoothingInput()"> <span id="sm_tau_look_v">0.22s</span></label>
+          <label>FOV τ <input id="sm_tau_fov" type="range" min="0.05" max="1.50" step="0.05" value="0.25" oninput="onSmoothingInput()"> <span id="sm_tau_fov_v">0.25s</span></label>
+          <label title="Uncheck for pure EMA damping with zero velocity prediction"><input id="sm_predict" type="checkbox" checked onchange="onSmoothingInput()"> Predict</label>
+          <button id="sm_reset" class="mini" onclick="resetSmoothingTune()">Reset</button>
+        </div>
       </div>
       <div class="select-row"><select id="sid"></select><button class="mini" onclick="trigger(sid.value)">Fire selected</button></div>
     </div>
@@ -200,6 +224,12 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
           <label class="tog" title="Auto-Start on Green Light"><input id="auto_start" type="checkbox" onchange="postAutoFlags()"> Auto-Start on Green Light</label>
           <button id="auto_follow" class="tog" title="Follow Race Leader" onclick="toggleFollow()">Follow Leader</button>
           <input id="follow_leader" type="checkbox" onchange="postAutoFlags()" style="display:none">
+          <span class="dir-ctl" title="Auto Director: hands-off camera / contestant selection">
+            <span class="muted">Auto:</span>
+            <button id="dir_off" class="sm-btn on" onclick="setDirector('off')">Off</button>
+            <button id="dir_shots" class="sm-btn" onclick="setDirector('shots')">Auto Shots</button>
+            <button id="dir_full" class="sm-btn" onclick="setDirector('full')">Auto Full</button>
+          </span>
         </span>
       </div>
       <div id="contestants" class="roster"></div>
@@ -251,6 +281,27 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
   Saved plans: <select id="saved_plans"></select>
   <button id="plans_refresh" onclick="refreshPlans()">Refresh</button>
   <button id="plan_load" onclick="loadPlanFromServer()">Load &amp; Apply</button>
+  </div>
+  <div class="card" style="margin-top:8px">
+  <div class="card-head"><h2>Event Control</h2><span class="muted">Live game server — these buttons really change the event</span></div>
+  <div class="select-row">
+    <select id="ev_ctrl_select" onchange="onEventCtrlSelect()"></select>
+    <span id="ev_ctrl_state" class="status-pill">LOBBY</span>
+    <span id="ev_ctrl_owner" class="muted" title="Event host">Host: —</span>
+  </div>
+  <div class="pin-row" style="margin-top:6px">
+    <button id="ev_btn_lobby" class="sm-btn" onclick="eventCtrlState('lobby')">Lobby</button>
+    <button id="ev_btn_ready" class="sm-btn" onclick="eventCtrlState('ready')">Ready</button>
+    <button id="ev_btn_start" class="sm-btn t-start" onclick="eventCtrlState('start')">Start</button>
+    <button id="ev_btn_finish" class="sm-btn" onclick="eventCtrlFinish()">Finish</button>
+  </div>
+  <div class="pin-row">
+    <button id="ev_btn_join" class="sm-btn" onclick="eventCtrlJoinLeave('join')">Join</button>
+    <button id="ev_btn_leave" class="sm-btn" onclick="eventCtrlJoinLeave('leave')">Leave</button>
+    <button id="ev_btn_close" class="sm-btn" onclick="eventCtrlClose()">Close Event</button>
+    <label title="Also arm RaceCam and fire the start sequence when starting the event"><input id="ev_auto_cam" type="checkbox"> Start RaceCam on Start</label>
+  </div>
+  <div class="muted">Rehearsal does NOT shield these controls — they affect the live Motor Town server. Finish and Close need a second click.</div>
   </div>
 </details>
 <details id="drawer_conn" class="card drawer">
@@ -308,7 +359,7 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
 <li><code>orbit_hero</code> — smooth 360° orbit around the target; great for grids and podiums.</li>
 <li><code>route_flyover</code> — continuous course flyover for pre-race track previews.</li>
 </ol>
-<div class="kbd">Dropdown-only <code>·</code> shots: <code>finish_line</code> (frames the line), <code>overview</code> (high static course view), and up to six <code>corner_XX_pan</code> cameras that pan and auto-zoom to the followed contestant. Shots past <code>9</code> have no number key — click their pad in the extra row. The <code>#sid</code> dropdown stays available as a compact fallback.</div>
+<div class="kbd">Dropdown-only <code>·</code> shots: <code>finish_line</code> (frames the line), <code>overview</code> (high static course view), broadcast rigs <code>onboard_tcam</code>, <code>rear_battle</code> and <code>pack_battle</code>, auto-placed <code>straight_telephoto</code>, <code>curb_apex</code> and <code>start_crane</code> cameras, and up to six <code>corner_XX_pan</code> cameras that pan and auto-zoom to the followed contestant. Shots past <code>9</code> have no number key — click their pad in the extra row. The <code>#sid</code> dropdown stays available as a compact fallback.</div>
 
 <h3>4. Keyboard Hotkeys <span class="kbd">(when focus is outside text inputs)</span></h3>
 <div class="kbd">
@@ -325,6 +376,7 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
 <li><strong>Rehearsal (<code>R</code>):</strong> cues and timing run but the live camera does not move. OBS <strong>Start record</strong> is blocked while rehearsal is on; <strong>Stop record</strong> still works so a dry run cannot pollute a real recording.</li>
 <li><strong>Safety &amp; fail-safes:</strong> <code>X</code> is the instant Panic Stop. If the browser tab closes or crashes for more than 120 s, the Lua server stops the camera and marks the session <code>DEGRADED</code>; reconnect, read the red banner and press <code>A</code> to re-arm. Watch the status strip for active shot, FOV, plan, countdown, heartbeat age and camera state — and the <code>out</code> log when something looks wrong.</li>
 <li><strong>OBS Studio:</strong> enable WebSocket v5 on <code>127.0.0.1:4455</code> with auth, enter the password once in the OBS card, click <strong>Connect</strong> and <strong>Check OBS</strong>, then <strong>Refresh scenes</strong> → <strong>Go to scene</strong> → <strong>Preview</strong>. Turn on Studio Mode in OBS so preview stays isolated from program; Start/Stop record and <strong>Preview</strong> are all controllable from here.</li>
+<li><strong>Live Standings Overlay:</strong> <strong>Copy OBS URL</strong> gives a token-free Browser Source URL (<code>/overlay/standings</code> on port <code>8767</code>) for OBS on this PC or a remote Mac on the LAN. The <code>Overlay: ON/OFF</code> button fades the timing tower in/out on cue without touching OBS; it stays hidden automatically when no race is active.</li>
 </ul>
 </details>
 <script>
@@ -346,6 +398,124 @@ async function setSmoothing(mode){
   smoothingMode=mode;highlightSmoothing(mode);
   return cmd('smoothing',mode);
 }
+let smTuneTimer=null,smTuneDirtyAt=0;
+function toggleSmoothingTune(){
+  const b=$('sm_tune_box');if(!b)return;
+  const open=b.style.display==='none';
+  b.style.display=open?'':'none';
+  const btn=$('sm_tune_btn');if(btn)btn.className='sm-btn'+(open?' on':'');
+}
+function syncSmoothingCfg(cfg){
+  if(!cfg||Date.now()-smTuneDirtyAt<1200)return;
+  const set=(id,vid,v)=>{const el=$(id);if(el&&v!=null){el.value=Number(v).toFixed(2);const sp=$(vid);if(sp)sp.textContent=Number(v).toFixed(2)+'s'}};
+  set('sm_tau_pos','sm_tau_pos_v',cfg.tau_pos);
+  set('sm_tau_hdg','sm_tau_hdg_v',cfg.tau_hdg);
+  set('sm_tau_look','sm_tau_look_v',cfg.tau_look);
+  set('sm_tau_fov','sm_tau_fov_v',cfg.tau_fov);
+  const pr=$('sm_predict');if(pr&&cfg.use_vel_predict!=null)pr.checked=!!cfg.use_vel_predict;
+}
+async function sendSmoothing(payload){
+  try{
+    const r=await fetch('/api/smoothing',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},hdr()),body:JSON.stringify(payload)});
+    return await r.json();
+  }catch(e){return null}
+}
+function onSmoothingInput(){
+  smTuneDirtyAt=Date.now();
+  const payload={
+    tau_pos:Number($('sm_tau_pos').value),
+    tau_hdg:Number($('sm_tau_hdg').value),
+    tau_look:Number($('sm_tau_look').value),
+    tau_fov:Number($('sm_tau_fov').value),
+    use_vel_predict:!!$('sm_predict').checked
+  };
+  $('sm_tau_pos_v').textContent=payload.tau_pos.toFixed(2)+'s';
+  $('sm_tau_hdg_v').textContent=payload.tau_hdg.toFixed(2)+'s';
+  $('sm_tau_look_v').textContent=payload.tau_look.toFixed(2)+'s';
+  $('sm_tau_fov_v').textContent=payload.tau_fov.toFixed(2)+'s';
+  if(smTuneTimer)clearTimeout(smTuneTimer);
+  smTuneTimer=setTimeout(()=>sendSmoothing(payload),80);
+}
+async function resetSmoothingTune(){
+  smTuneDirtyAt=0;
+  const r=await sendSmoothing({reset:true});
+  if(r&&r.smoothing_cfg)syncSmoothingCfg(r.smoothing_cfg);
+}
+
+/* ---- Auto Director: Off / Auto Shots / Auto Full ----
+   Lua owns every decision; the panel only sends the chosen mode and mirrors
+   the live reason / manual-override countdown from /api/state. */
+const DIRECTOR_MODES=['off','shots','full'];
+let directorMode='off',directorReason='',directorOverrideS=0;
+function highlightDirector(mode){
+  DIRECTOR_MODES.forEach(m=>{const el=$('dir_'+m);if(el)el.className='sm-btn'+(m===mode?' on':'')});
+}
+function renderDirBadge(){
+  const b=$('dir_badge');if(!b)return;
+  if(directorMode==='off'){
+    b.style.display='none';b.textContent='';b.className='badge tally-off';return;
+  }
+  b.style.display='';
+  const secs=Math.max(0,Math.round(Number(directorOverrideS)||0));
+  if(secs>0){b.textContent='OVERRIDE ('+secs+'s)';b.className='badge tally-on-prev';return}
+  const reason=String(directorReason||'');
+  b.textContent='AUTO: '+(reason||'idle');
+  b.className='badge '+(reason?'tally-on-prog':'tally-off');
+}
+async function setDirector(mode){
+  if(DIRECTOR_MODES.indexOf(mode)<0)return null;
+  directorMode=mode;highlightDirector(mode);renderDirBadge();
+  return cmd('director',mode);
+}
+
+/* ---- Broadcast HUD visibility: Full / Tags Only / Clean ---- */
+const HUD_MODES=['full','tags_only','clean'];
+const HUD_BTN_IDS={full:'hud_full',tags_only:'hud_tags',clean:'hud_clean'};
+let hudMode='full';
+function highlightHud(mode){
+  HUD_MODES.forEach(m=>{const el=$(HUD_BTN_IDS[m]);if(el)el.className='sm-btn'+(m===mode?' on':'')});
+}
+async function setHudMode(mode){
+  if(HUD_MODES.indexOf(mode)<0)return null;
+  hudMode=mode;highlightHud(mode);
+  return cmd('hud',mode);
+}
+
+/* ---- OBS live standings overlay: ON/OFF + Browser Source URL ----
+   /api/standings and /overlay/standings need no token, so the copied URL is
+   safe to paste into an OBS scene on this PC or a remote Mac. */
+let overlayVisible=true;
+function renderOverlayToggle(){
+  const b=$('ov_toggle');if(!b)return;
+  b.textContent=overlayVisible?'Overlay: ON':'Overlay: OFF';
+  b.className='sm-btn'+(overlayVisible?' on':'');
+  b.title=overlayVisible?'Timing tower visible in OBS':'Timing tower hidden in OBS';
+}
+async function toggleOverlay(){
+  const j=await cmd('overlay','toggle');
+  overlayVisible=(j&&typeof j.overlay_visible==='boolean')?!!j.overlay_visible:!overlayVisible;
+  renderOverlayToggle();
+  return j;
+}
+function obsOverlayUrl(){
+  const origin=location.origin||((location.href&&new URL(location.href).origin)||'http://127.0.0.1:8767');
+  return origin.replace(/\/$/,'')+'/overlay/standings';
+}
+async function copyObsUrl(){
+  const url=obsOverlayUrl();
+  try{
+    if(navigator&&navigator.clipboard&&navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(url);
+    }else{
+      const ta=document.createElement('textarea');
+      ta.value=url;document.body.appendChild(ta);ta.select();
+      document.execCommand&&document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    toast('Copied OBS URL '+url);
+    return url;
+  }catch(e){toast('Copy failed — '+url);return url}
+}
 
 /* ---- Broadcast Desk v2: tally, camera pads, preview→take, focus keys ----
    Purely a client-side operator surface. Every action still funnels through
@@ -353,7 +523,9 @@ async function setSmoothing(mode){
 const SHOT_LABELS={start_line:'Start Line',fly_up:'Fly Up',auto_trackside:'Auto Trackside',
   heli_follow:'Heli Follow',follow_focus:'Follow Focus',front_chase:'Front Chase',
   side_tracking:'Side Track',orbit_hero:'Orbit Hero',route_flyover:'Flyover',
-  finish_line:'Finish Line',overview:'Overview'};
+  finish_line:'Finish Line',overview:'Overview',
+  onboard_tcam:'Onboard T-Cam',rear_battle:'Rear Battle',pack_battle:'Pack Battle',
+  straight_telephoto:'Straight Tele',curb_apex:'Curb Apex',start_crane:'Start Crane'};
 let takeMode=false,stagedShot='',lastDeckSig='',lastCueSig='',lastDeckState=null;
 let recording=false,recStart=0;
 function toast(msg){const t=$('toast');if(t)t.textContent=String(msg===undefined||msg===null?'':msg).slice(0,140)}
@@ -369,7 +541,9 @@ function shotLabel(id){return SHOT_LABELS[id]||String(id||'').replace(/_/g,' ')
   .replace(/\b\w/g,c=>c.toUpperCase())}
 function shotKind(id){
   if(/^corner_/.test(id))return 'trackside';
+  if(id==='straight_telephoto'||id==='curb_apex'||id==='start_crane')return 'trackside';
   if(id==='finish_line'||id==='overview'||id==='orbit_hero')return 'hero';
+  if(id==='onboard_tcam'||id==='rear_battle'||id==='pack_battle')return 'follow';
   if(/follow|chase|focus/.test(id))return 'follow';
   if(/heli|fly|drone/.test(id))return 'drone';
   return 'track';
@@ -675,6 +849,14 @@ async function poll(){
     windowTargetLost=!!s.target_lost;
     const sMode=SMOOTHING_MODES.indexOf(s.smoothing)>=0?s.smoothing:'normal';
     smoothingMode=sMode;highlightSmoothing(sMode);
+    if(s.smoothing_cfg)syncSmoothingCfg(s.smoothing_cfg);
+    directorMode=DIRECTOR_MODES.indexOf(s.director_mode)>=0?s.director_mode:'off';
+    directorReason=String(s.director_reason||'');
+    directorOverrideS=Number(s.director_override_s)||0;
+    highlightDirector(directorMode);renderDirBadge();
+    const hMode=HUD_MODES.indexOf(s.hud_mode)>=0?s.hud_mode:'full';
+    hudMode=hMode;highlightHud(hMode);
+    if(s.overlay_visible!=null){overlayVisible=!!s.overlay_visible;renderOverlayToggle()}
     if(s.rehearsal!=null&&s.rehearsal!==rehearsal){rehearsal=!!s.rehearsal;$('rehb').textContent=rehearsal?'ON':'OFF'}
     banner();
     const cur=s.current||s.active_shot||'none';
@@ -707,6 +889,16 @@ async function poll(){
     renderShotDeck(s);
     renderCues();
     renderContestants(s);
+    // Event Control mirrors the active lobby and confirms pending RPCs.
+    if(s.event_guid!==undefined&&s.event_guid!==null&&s.event_guid!==''){
+      renderEventControl({guid:s.event_guid,state:s.event_state,
+        in_countdown:!!s.in_countdown,
+        owner_guid:s.event_owner_guid||'',owner_name:s.event_owner_name||'',
+        is_owner:!!s.event_is_owner,is_joined:!!s.event_is_joined,
+        player_count:Number(s.event_player_count)||0,
+        waypoint_count:Number(s.event_waypoint_count)||0});
+    }
+    verifyEventCtrl(s);
   }catch(e){}
   if((++pollTick%30)===0)refreshInbox();   // inbox can change while the panel is open
   setTimeout(poll,700);
@@ -736,7 +928,18 @@ const addv=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
 const scalev=(a,k)=>[a[0]*k,a[1]*k,a[2]*k];
 function normXY(a){const m=Math.hypot(a[0],a[1]);if(m<=EPS)throw new Error('degenerate XY vector');return [a[0]/m,a[1]/m,0.0]}
 const leftNormal=d=>[-d[1],d[0],0.0];
+const rightNormal=d=>[d[1],-d[0],0.0];
 const prevIdx=(i,n)=>((i-1)%n+n)%n;
+/* A corner's outside is the side away from its turn centre. With
+   crossZ = d_in x d_out > 0 the centre sits on leftNormal(d_in), so the
+   camera must go on rightNormal(d_in); for crossZ < 0 the reverse holds. */
+function outsideNormal(points,i){
+  const n=points.length;
+  const dIn=normXY(sub(points[i],points[prevIdx(i,n)]));
+  const dOut=normXY(sub(points[(i+1)%n],points[i]));
+  const crossZ=dIn[0]*dOut[1]-dIn[1]*dOut[0];
+  return crossZ>0?rightNormal(dIn):leftNormal(dIn);
+}
 function directionAt(points,i){
   const n=points.length;if(n<2)throw new Error('need at least 2 waypoints');
   let out=sub(points[(i+1)%n],points[i]);
@@ -877,22 +1080,73 @@ function followShot(sid,preset,fov){
   if(fov!=null)s.fov=fov;
   return s;
 }
-function cornerShot(points,gates,i,opts){
-  opts=opts||{};
-  let d=directionAt(points,i);
+function makeCornerCam(points,gates,i,sample){
+  const dOut=normXY(sub(points[(i+1)%points.length],points[i]));
   let half=(gates[i]*100.0)/2.0;
-  const sample=opts.sample||null;
+  sample=sample||null;
   if(sample&&sample.kind!=='gap'&&sample.lane_width){
-    const h=Number(sample.heading||0.0);
-    d=[Math.cos(h),Math.sin(h),0.0];
     half=Number(sample.lane_width)/2.0;
   }
-  const nn=leftNormal(d);
-  const loc=addv(addv(points[i],scalev(nn,half+500.0)),[0,0,250.0]);
-  const at=addv(points[i],scalev(d,800.0));
+  /* Outside of the corner, not the inside exit: see outsideNormal(). */
+  const outer=outsideNormal(points,i);
+  const loc=addv(addv(addv(points[i],scalev(outer,half+500.0)),scalev(dOut,400.0)),[0,0,240.0]);
+  const at=addv(points[i],scalev(dOut,800.0));
   return {id:'corner_'+(i<10?'0'+i:i)+'_pan',kind:'trackside_pan',role:'trackside',
     trigger:{type:'manual'},location:loc.map(round3),look_at:at.map(round3),
-    fov:70.0,auto_zoom:true,fov_min:28.0,fov_max:65.0};
+    fov:45.0,auto_zoom:true,fov_min:13.0,fov_max:58.0};
+}
+/* Legacy export name kept so any saved plan/tooling calling cornerShot still works. */
+const cornerShot=makeCornerCam;
+function longestStraightIndex(points){
+  const n=points.length;if(n<2)return 0;
+  const limit=isClosedLoop(points)?n:n-1;
+  let bestK=0,bestD=-1;
+  for(let k=0;k<limit;k++){
+    const d=distXY(points[k],points[(k+1)%n]);
+    if(d>bestD){bestD=d;bestK=k}
+  }
+  return bestK;
+}
+function sharpestCornerIndex(points){
+  const n=points.length;
+  if(n<3)return 0;                    // no interior corners on an open 2-point leg
+  let bestI=1,bestA=-1;
+  for(let i=1;i<n-1;i++){             // skip the closure duplicate at index 0 / n-1
+    const a=turnAngle(points,i);
+    if(a>bestA){bestA=a;bestI=i}
+  }
+  return bestI;
+}
+/* Three 100% track-general broadcast cameras: telephoto down the longest
+   straight, low curb-level view of the sharpest apex, and a start/finish jib. */
+function buildSpecialtyShots(points,gates,opts){
+  opts=opts||{};
+  const n=points.length;if(n<2)return [];
+  const sideMarginCm=opts.sideMarginCm!==undefined?opts.sideMarginCm:350.0;
+  const k=longestStraightIndex(points),a=points[k],b=points[(k+1)%n];
+  let dSeg;
+  try{dSeg=normXY(sub(b,a))}catch(e){dSeg=directionAt(points,k)}
+  const at90=addv(a,scalev(sub(b,a),0.9));
+  const straightLoc=addv(addv(at90,scalev(leftNormal(dSeg),450.0)),[0,0,220.0]);
+  const straight={id:'straight_telephoto',kind:'trackside_pan',role:'trackside',
+    trigger:{type:'manual'},location:straightLoc.map(round3),look_at:a.map(round3),
+    fov:35.0,auto_zoom:true,fov_min:12.0,fov_max:46.0};
+  const ci=sharpestCornerIndex(points);
+  const dOut=normXY(sub(points[(ci+1)%n],points[ci]));
+  const outer=outsideNormal(points,ci);
+  const curbLoc=addv(addv(points[ci],scalev(outer,320.0)),[0,0,55.0]);
+  const curbAt=addv(points[ci],scalev(dOut,600.0));
+  const curb={id:'curb_apex',kind:'trackside_pan',role:'trackside',
+    trigger:{type:'manual'},location:curbLoc.map(round3),look_at:curbAt.map(round3),
+    fov:62.0,auto_zoom:true,fov_min:24.0,fov_max:72.0};
+  const d0=directionAt(points,0),nn0=leftNormal(d0),halfGate=(gates[0]*100.0)/2.0;
+  const craneLoc=addv(addv(addv(points[0],scalev(d0,-800.0)),
+    scalev(nn0,halfGate+sideMarginCm+400.0)),[0,0,1400.0]);
+  const craneAt=addv(points[0],scalev(d0,600.0));
+  const crane={id:'start_crane',kind:'trackside_pan',role:'trackside',
+    trigger:{type:'manual'},location:craneLoc.map(round3),look_at:craneAt.map(round3),
+    fov:48.0,auto_zoom:true,fov_min:18.0,fov_max:56.0};
+  return [straight,curb,crane];
 }
 function rankCorners(points,maxTrackside){
   if(maxTrackside===undefined)maxTrackside=6;
@@ -928,8 +1182,11 @@ function buildShots(name,points,gates,opts){
   const n=points.length;
   const closed=isClosedLoop(points);
   const d0=directionAt(points,0),nn0=leftNormal(d0),halfGate=(gates[0]*100.0)/2.0;
-  const startLoc=addv(addv(addv(points[0],scalev(d0,-startBackCm)),scalev(nn0,halfGate+sideMarginCm)),[0,0,300.0]);
-  const startAt=addv(points[0],scalev(d0,600.0));
+  // Front-on centerline shot looking back down the starting grid so pit
+  // buildings, barriers, and grandstands on the sides never block the view.
+  const startAheadCm=opts.startAheadCm!==undefined?opts.startAheadCm:1800.0;
+  const startLoc=addv(addv(points[0],scalev(d0,startAheadCm)),[0,0,420.0]);
+  const startAt=addv(addv(points[0],scalev(d0,-600.0)),[0,0,120.0]);
   const fromPose={location:startLoc,look_at:startAt,fov:fovStart};
   const toPose={location:addv(addv(points[0],[0,0,overheadCm]),scalev(nn0,-400.0)),
     look_at:addv(points[0],scalev(d0,1000.0)),fov:fovAir};
@@ -957,9 +1214,12 @@ function buildShots(name,points,gates,opts){
     }
     return best;
   };
-  const dn=directionAt(points,n-1),nnLast=leftNormal(dn),halfLast=(gates[n-1]*100.0)/2.0;
-  const finishLoc=addv(addv(addv(points[n-1],scalev(nnLast,halfLast+500.0)),scalev(dn,-400.0)),[0,0,tracksideHeightCm]);
-  const finishTarget=closed?points[0]:addv(points[n-1],scalev(dn,-800.0));
+  // Front-on centerline finish shot: sits past the finish line on the road
+  // centerline looking back at oncoming cars so side structures cannot block.
+  const finAnchor=closed?points[0]:points[n-1];
+  const finDir=closed?d0:normXY(addv(points[n-1],scalev(points[Math.max(0,n-2)],-1)));
+  const finishLoc=addv(addv(finAnchor,scalev(finDir,1800.0)),[0,0,420.0]);
+  const finishTarget=addv(addv(finAnchor,scalev(finDir,-800.0)),[0,0,120.0]);
   shots.push(lookAtShot('finish_line',finishLoc,finishTarget,fovSide));
   let cx=0,cy=0,cz=0;
   for(const p of points){cx+=p[0];cy+=p[1];cz+=p[2]}
@@ -967,8 +1227,13 @@ function buildShots(name,points,gates,opts){
   shots.push({id:'overview',kind:'look_at',trigger:{type:'manual'},
     location:[round3(cx),round3(cy),round3(cz+overheadCm)],
     look_at:[round3(cx),round3(cy),round3(cz)],fov:fovAir});
+  shots.push(
+    {id:'onboard_tcam',kind:'follow',trigger:{type:'manual'},target:'focus',preset:'onboard_tcam',fov:78.0},
+    {id:'rear_battle',kind:'follow',trigger:{type:'manual'},target:'focus',preset:'rear_battle',fov:68.0},
+    {id:'pack_battle',kind:'pack_battle',trigger:{type:'manual'},target:'focus',preset:'pack_battle',fov:68.0});
+  for(const s of buildSpecialtyShots(points,gates,{sideMarginCm:sideMarginCm}))shots.push(s);
   for(const i of rankCorners(points,maxTrackside)){
-    shots.push(cornerShot(points,gates,i,{routeExport:routeExport,sample:splineSample(i)}));
+    shots.push(makeCornerCam(points,gates,i,splineSample(i)));
   }
   return {schema:1,name:name,source:{route:name,waypoints:n,closed_loop:closed},units:'cm',shots:shots};
 }
@@ -995,9 +1260,12 @@ function fallbackRouteExport(points,stepCm){
 }
 window.routePlanner={parseRoute:parseRoute,parseAnyInput:parseAnyInput,sanitizeId:sanitizeId,
   isClosedLoop:isClosedLoop,directionAt:directionAt,
-  leftNormal:leftNormal,turnAngle:turnAngle,rankCorners:rankCorners,buildShots:buildShots,
+  leftNormal:leftNormal,rightNormal:rightNormal,outsideNormal:outsideNormal,
+  turnAngle:turnAngle,rankCorners:rankCorners,buildShots:buildShots,
   fallbackRouteExport:fallbackRouteExport,normXY:normXY,distXY:distXY,round3:round3,pyRound:pyRound,
-  sub:sub,add:addv,scale:scalev,cornerShot:cornerShot,lookAtShot:lookAtShot,followShot:followShot};
+  sub:sub,add:addv,scale:scalev,cornerShot:cornerShot,makeCornerCam:makeCornerCam,
+  buildSpecialtyShots:buildSpecialtyShots,longestStraightIndex:longestStraightIndex,
+  sharpestCornerIndex:sharpestCornerIndex,lookAtShot:lookAtShot,followShot:followShot};
 
 /* ---- Live events / track loader / 2D preview ---- */
 let liveEvents=[],currentParsed=null,currentPoints=null,currentGates=null,currentRoute=null;
@@ -1041,7 +1309,144 @@ function renderLiveEvents(){
     sel.appendChild(o);
   });
   if([...sel.options].some(o=>o.value===keep))sel.value=keep;
+  renderEventControlSelect();
 }
+/* ---- Event lifecycle control (token-gated /api/event/*) ----
+   Thin operator surface over the LIVE game server. The RPCs are async: the
+   requested state is remembered and confirmed against the next /api/state
+   polls; a server that silently ignores a non-owner call raises a warning. */
+const EV_STATE_LABEL={0:'LOBBY',1:'READY',2:'RACING',3:'FINISHED'};
+const EV_STATE_NAME={0:'lobby',1:'ready',2:'start',3:'finish'};
+let evCtrlArm=null,evCtrlPending=null;
+
+function eventCtrlEvent(){
+  const sel=$('ev_ctrl_select');
+  if(sel&&sel.value!==''&&liveEvents[Number(sel.value)])return liveEvents[Number(sel.value)];
+  return currentLiveEvent()||null;
+}
+function eventCtrlGuid(ev){ev=ev||eventCtrlEvent();return ev&&ev.guid?String(ev.guid):''}
+function renderEventControl(ev){
+  ev=ev||eventCtrlEvent()||{};
+  const st=$('ev_ctrl_state'),own=$('ev_ctrl_owner'),start=$('ev_btn_start');
+  if(!st||!own||!start)return;
+  const state=Number(ev.state)||0,guid=eventCtrlGuid(ev);
+  const counting=!!ev.in_countdown;
+  st.textContent=counting?'COUNTDOWN':(EV_STATE_LABEL[state]||'LOBBY');
+  st.className='status-pill '+((counting||state===1)?'counting':(state===2?'racing':(state===3?'finished':'')));
+  const og=String(ev.owner_guid||''),isOwner=!!ev.is_owner;
+  if(!guid){
+    own.textContent='Host: —';own.className='muted';own.title='No event selected';own.onclick=null;
+  }else if(isOwner){
+    own.textContent='Host: You';own.className='pill ok';own.title='You own this event';own.onclick=null;
+  }else if(!og){
+    own.textContent='Host: None (Claim)';own.className='pill standby';
+    own.title='No host — click to join and claim this event';
+    own.onclick=()=>eventCtrlJoinLeave('join');
+  }else{
+    own.textContent='Host: '+(String(ev.owner_name||'').trim()||og.slice(0,8));
+    own.className='muted';
+    own.title='Another player owns this event — the server may require host rights';
+    own.onclick=null;
+  }
+  const noPlayers=(Number(ev.player_count)||0)===0;
+  const noWps=(Number(ev.waypoint_count)||0)===0;
+  start.disabled=!guid||noPlayers||noWps||state===2;
+  start.title=(noPlayers||noWps)?'Start needs at least one player and one waypoint':'';
+}
+function renderEventControlSelect(){
+  const sel=$('ev_ctrl_select');if(!sel)return;
+  const keep=sel.value,active=currentLiveEvent();
+  sel.innerHTML='';
+  liveEvents.forEach((ev,i)=>{
+    const o=document.createElement('option');
+    o.value=String(i);
+    const laps=Number(ev.num_laps)||((ev.waypoints||[]).length);
+    o.textContent=String(ev.name||'event')+' ('+laps+'L · '+(Number(ev.player_count)||0)+' racers)';
+    sel.appendChild(o);
+  });
+  const want=active?String(liveEvents.indexOf(active)):keep;
+  if([...sel.options].some(o=>o.value===want))sel.value=want;
+  renderEventControl();
+}
+function onEventCtrlSelect(){disarmEventCtrl();renderEventControl()}
+async function eventCtrlPost(path,extra){
+  const guid=eventCtrlGuid();
+  if(!guid){toast('No event selected — create/join an event in game first');return null}
+  try{
+    const body=Object.assign({event_guid:guid},extra||{});
+    const r=await fetch(path,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},hdr()),body:JSON.stringify(body)});
+    const j=await r.json();
+    $('out').textContent='EVENT '+path+' '+JSON.stringify(body)+' → '+JSON.stringify(j)+'\n'+$('out').textContent;
+    if(!j||j.ok===false){toast('Event error: '+((j&&j.error)||'unknown'));return null}
+    return j;
+  }catch(e){toast('Event ERR '+e);return null}
+}
+function disarmEventCtrl(){
+  if(evCtrlArm){const b=$(evCtrlArm.id);if(b)b.textContent=evCtrlArm.orig;evCtrlArm=null}
+}
+function armEventCtrl(id,label,confirmFn){
+  if(evCtrlArm&&evCtrlArm.id===id&&Date.now()-evCtrlArm.t<=4000){
+    disarmEventCtrl();confirmFn();return true;
+  }
+  disarmEventCtrl();
+  const b=$(id);
+  const orig=b?b.textContent:'';
+  if(b)b.textContent='Confirm '+label+'?';
+  evCtrlArm={id:id,label:label,orig:orig,t:Date.now()};
+  toast('Click again within 4 s to confirm '+label);
+  return false;
+}
+async function eventCtrlState(name){
+  const ev=eventCtrlEvent();
+  if(name==='start'&&ev&&((Number(ev.player_count)||0)===0||(Number(ev.waypoint_count)||0)===0)){
+    toast('Start needs at least one player and one waypoint');return null;
+  }
+  const guid=eventCtrlGuid(ev);
+  const j=await eventCtrlPost('/api/event/state',{state:name});
+  if(!j)return null;
+  const target=Number(j.state);
+  evCtrlPending={kind:'state',guid:String(j.event_guid||guid),state:target,
+    label:EV_STATE_LABEL[target]||String(name).toUpperCase(),t:Date.now()};
+  toast('Event → '+evCtrlPending.label+' (pending)');
+  const ac=$('ev_auto_cam');
+  if(name==='start'&&ac&&ac.checked){cmd('arm');cmd('start')}
+  return j;
+}
+function eventCtrlFinish(){
+  return armEventCtrl('ev_btn_finish','Finish',()=>eventCtrlState('finish'));
+}
+function eventCtrlClose(){
+  return armEventCtrl('ev_btn_close','Close',async()=>{
+    const j=await eventCtrlPost('/api/event/close',{confirm:true});
+    if(!j)return null;
+    evCtrlPending={kind:'close',guid:String(j.event_guid||eventCtrlGuid()),t:Date.now()};
+    toast('Event close requested (pending)');
+    return j;
+  });
+}
+async function eventCtrlJoinLeave(action){
+  const j=await eventCtrlPost(action==='join'?'/api/event/join':'/api/event/leave',{});
+  if(j)toast(action==='join'?'Joining event (pending)':'Leaving event (pending)');
+  return j;
+}
+function eventCtrlClaim(){return eventCtrlJoinLeave('join')}
+function verifyEventCtrl(s){
+  if(!evCtrlPending)return;
+  const p=evCtrlPending,ack=s&&s.last_remove_response;
+  if(p.kind==='close'&&ack&&ack.succeeded===false){
+    toast('Server rejected event change — check that you are event host');evCtrlPending=null;return;
+  }
+  const nowGuid=String((s&&s.event_guid)||'');
+  if(p.kind==='close'){
+    if(!nowGuid||nowGuid!==p.guid){toast('Event closed');evCtrlPending=null;return}
+  }else if(nowGuid===String(p.guid)&&Number(s.event_state)===Number(p.state)){
+    toast('Event → '+p.label);evCtrlPending=null;return;
+  }
+  if(Date.now()-p.t>2500){
+    toast('Server did not apply event change — check that you are event host');evCtrlPending=null;
+  }
+}
+
 function liveEventDoc(ev){
   return {RouteName:ev.name||'live event',Waypoints:(ev.waypoints||[]).map(w=>{
     const loc=(w.Location||w.location||w.Translation||w.translation);
@@ -1545,14 +1950,27 @@ window.racecamPanel={cmd:cmd,trigger:trigger,enqueue:enqueue,undo:undo,toggleReh
   sha256:sha256,sha256b64:sha256b64,routePlanner:window.routePlanner,
   renderContestants:renderContestants,setTargetByName:setTargetByName,lockTyped:lockTyped,
   setSmoothing:setSmoothing,highlightSmoothing:highlightSmoothing,poll:poll,
+  toggleOverlay:toggleOverlay,copyObsUrl:copyObsUrl,obsOverlayUrl:obsOverlayUrl,
+  renderOverlayToggle:renderOverlayToggle,getOverlayVisible:()=>overlayVisible,
   getSmoothingMode:()=>smoothingMode,
+  setDirector:setDirector,highlightDirector:highlightDirector,renderDirBadge:renderDirBadge,
+  getDirectorMode:()=>directorMode,
+  getDirectorState:()=>({mode:directorMode,reason:directorReason,override_s:directorOverrideS}),
   getRosterNames:()=>rosterNames.slice(),getRosterSig:()=>lastRosterSig,
   renderShotDeck:renderShotDeck,renderCues:renderCues,stageShot:stageShot,takeShot:takeShot,
   toggleMode:toggleMode,toggleFollow:toggleFollow,toggleRec:toggleRec,isTakeMode:isTakeMode,
   getStagedShot:()=>stagedShot,getDeckSig:()=>lastDeckSig,updateKeysPill:updateKeysPill,
   collapseSetup:collapseSetup,openSetup:openSetup,toggleConnDrawer:toggleConnDrawer,
   renderObsScenePads:renderObsScenePads,setAuthPill:setAuthPill,setObsPill:setObsPill,
-  syncObsAliases:syncObsAliases,toast:toast};
+  syncObsAliases:syncObsAliases,toast:toast,
+  renderEventControl:renderEventControl,renderEventControlSelect:renderEventControlSelect,
+  eventCtrlState:eventCtrlState,eventCtrlFinish:eventCtrlFinish,eventCtrlClose:eventCtrlClose,
+  eventCtrlJoinLeave:eventCtrlJoinLeave,eventCtrlClaim:eventCtrlClaim,
+  onEventCtrlSelect:onEventCtrlSelect,verifyEventCtrl:verifyEventCtrl,
+  disarmEventCtrl:disarmEventCtrl,
+  getEventCtrlArm:()=>evCtrlArm&&Object.assign({},evCtrlArm),
+  getEventCtrlPending:()=>evCtrlPending&&Object.assign({},evCtrlPending),
+  getEventCtrlGuid:()=>eventCtrlGuid()};
 </script></body></html>]=]
 
 return M

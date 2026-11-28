@@ -12,6 +12,7 @@ Run: python3 -m unittest tests.test_racecam_panel_js -v
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -40,6 +41,11 @@ VALID_IDS = {
     "banner", "tok", "rehb", "prog", "prv", "shot", "fov", "plan", "cd", "hb", "run",
     "queue", "qat", "sid", "tgt_name", "standings_hdr", "contestants",
     "sm_tight", "sm_normal", "sm_cinematic",
+    "sm_tune_btn", "sm_tune_box", "sm_tau_pos", "sm_tau_pos_v",
+    "sm_tau_hdg", "sm_tau_hdg_v", "sm_tau_look", "sm_tau_look_v",
+    "sm_tau_fov", "sm_tau_fov_v", "sm_predict", "sm_reset",
+    "dir_off", "dir_shots", "dir_full", "dir_badge",
+    "hud_full", "hud_tags", "hud_clean", "ov_toggle", "ov_copy",
     "live_current", "live_load_btn", "live_refresh", "live_events", "auto_start",
     "follow_leader", "track_file", "drop_zone", "saved_plans", "plans_refresh",
     "plan_load", "track_info", "track_canvas",
@@ -59,6 +65,10 @@ VALID_IDS = {
     # Broadcast Desk v2 — collapsible drawers + aliased OBS fields
     "drawer_setup", "drawer_conn", "drawer_log",
     "obs_url", "obs_pw", "obs_rem", "obs_sc",
+    # Event Control (live Motor Town event lifecycle)
+    "ev_ctrl_select", "ev_ctrl_state", "ev_ctrl_owner",
+    "ev_btn_lobby", "ev_btn_ready", "ev_btn_start", "ev_btn_finish",
+    "ev_btn_join", "ev_btn_leave", "ev_btn_close", "ev_auto_cam",
 }
 
 
@@ -98,7 +108,15 @@ function mkStore(){
 }
 globalThis.localStorage = mkStore();
 globalThis.sessionStorage = mkStore();
-globalThis.location = {hash:'', href:'http://127.0.0.1:8767/'};
+globalThis.location = {hash:'', href:'http://127.0.0.1:8767/', origin:'http://127.0.0.1:8767'};
+try{
+  if(!globalThis.navigator){
+    Object.defineProperty(globalThis, 'navigator', {configurable:true,
+      value:{clipboard:{writeText:async t => {globalThis.__copied = t;}}}});
+  }else if(!globalThis.navigator.clipboard){
+    globalThis.navigator.clipboard = {writeText:async t => {globalThis.__copied = t;}};
+  }
+}catch(e){}
 const replaceStateCalls = [];
 globalThis.history = {replaceState:(...a) => replaceStateCalls.push(a)};
 const fetchLog = [];
@@ -107,14 +125,22 @@ globalThis.fetch = async (url, opts) => {
   let j = {};
   if (url === '/api/state') j = globalThis.__stateOverride || {degraded:false, target_lost:false, shots:['start_line','corner_01_pan'],
                                  targets:['Driver'], rehearsal:false, running:false};
-  else if (url === '/api/live_events') j = globalThis.__noLiveEvents ? {events:[]} : {events:[{name:'Current Trial', is_member:true,
-    waypoints:[{x:0,y:0,z:0,gate_m:18},{x:4000,y:0,z:0,gate_m:18},{x:8000,y:0,z:0,gate_m:18}]}]};
+  else if (url === '/api/live_events') j = globalThis.__liveEventsOverride !== undefined
+    ? globalThis.__liveEventsOverride
+    : (globalThis.__noLiveEvents ? {events:[]} : {events:[{name:'Current Trial', is_member:true,
+    waypoints:[{x:0,y:0,z:0,gate_m:18},{x:4000,y:0,z:0,gate_m:18},{x:8000,y:0,z:0,gate_m:18}]}]});
   else if (url === '/api/plans') j = {plans:[]};
   else if (url === '/api/inbox') j = {has_drop_file:true, files:['event.json','route.txt']};
   else if (url && url.indexOf('/api/inbox_file?') === 0) j = globalThis.__inboxContent || '{}';
   else if (url === '/api/my_pos') {
     const i = (globalThis.__pinSeq = (globalThis.__pinSeq || 0) + 1);
     j = {x:i*1800.0, y:(i%2)*900.0, z:0, yaw:0};
+  }
+  else if (url && url.indexOf('/api/event/') === 0) {
+    let sent = {};
+    try { sent = JSON.parse((opts && opts.body) || '{}'); } catch(e) {}
+    j = Object.assign({ok:true, event_guid:sent.event_guid || ''},
+                      globalThis.__eventResponse || {});
   }
   return {json: async () => j,
           text: async () => (typeof j === 'string' ? j : JSON.stringify(j))};
@@ -400,6 +426,62 @@ class RoutePlannerTests(unittest.TestCase):
         else:
             self.assertEqual(a, b, "value at %s" % path)
 
+    @staticmethod
+    def core_projection(plan):
+        """Fields still byte-identical to the unchanged Python reference:
+        metadata plus the unchanged follow/overview core shots.
+        v2 deliberately repositions start_line/fly_up/finish_line to front-on
+        centerline angles (avoiding side barriers/grandstands) and adds
+        broadcast rigs, specialty cameras, and outside-apex corners; those are
+        covered by dedicated tests below.
+        """
+        front_repositioned = {"start_line", "fly_up", "finish_line"}
+        return {"schema": plan["schema"], "name": plan["name"],
+                "source": plan["source"], "units": plan["units"],
+                "shots": [s for s in plan["shots"][:11]
+                          if s.get("id") not in front_repositioned]}
+
+    def test_start_and_finish_line_are_front_on_centerline(self):
+        node = self._node_scripts()
+        for (name, pts, _gates), got in zip((s() for s in SHAPES), node):
+            with self.subTest(shape=name):
+                by_id = {s["id"]: s for s in got["script"]["shots"]}
+                dx = pts[1][0] - pts[0][0]
+                dy = pts[1][1] - pts[0][1]
+                ln = math.hypot(dx, dy)
+                d0x, d0y = dx / ln, dy / ln
+                # start_line sits ahead of points[0] on the centerline (zero lateral offset)
+                st = by_id["start_line"]
+                vx, vy = st["location"][0] - pts[0][0], st["location"][1] - pts[0][1]
+                along = vx * d0x + vy * d0y
+                lateral = abs(-vx * d0y + vy * d0x)
+                self.assertGreater(along, 1000.0)
+                self.assertLess(lateral, 5.0)
+                # looks back toward the grid behind points[0]
+                lx, ly = st["look_at"][0] - pts[0][0], st["look_at"][1] - pts[0][1]
+                self.assertLess(lx * d0x + ly * d0y, -200.0)
+                # finish_line also sits ahead of its anchor on the centerline
+                fin = by_id["finish_line"]
+                closed = got["script"]["source"]["closed_loop"]
+                anchor = pts[0] if closed else pts[-1]
+                if closed:
+                    fdx, fdy = d0x, d0y
+                else:
+                    ex = pts[-1][0] - pts[-2][0]
+                    ey = pts[-1][1] - pts[-2][1]
+                    el = math.hypot(ex, ey)
+                    fdx, fdy = ex / el, ey / el
+                fvx, fvy = fin["location"][0] - anchor[0], fin["location"][1] - anchor[1]
+                self.assertGreater(fvx * fdx + fvy * fdy, 1000.0)
+                self.assertLess(abs(-fvx * fdy + fvy * fdx), 5.0)
+                flx, fly = fin["look_at"][0] - anchor[0], fin["look_at"][1] - anchor[1]
+                self.assertLess(flx * fdx + fly * fdy, -200.0)
+
+    @staticmethod
+    def corner_ids(plan):
+        return [s["id"] for s in plan["shots"]
+                if re.match(r"^corner_\d+_pan$", s.get("id", ""))]
+
     def test_build_shots_parity_three_shapes(self):
         node = self._node_scripts()
         self.assertEqual(len(node), len(SHAPES))
@@ -407,21 +489,26 @@ class RoutePlannerTests(unittest.TestCase):
             with self.subTest(shape=name):
                 want = rp_py.build_shots(name, pts, gates, trackside_stride="auto")
                 self.assertEqual([s["id"] for s in got["script"]["shots"]][:9], UNIVERSAL)
-                self.assert_json_close(want, got["script"], tol=1e-3)
+                self.assert_json_close(self.core_projection(want),
+                                       self.core_projection(got["script"]), tol=1e-3)
+                self.assertEqual(self.corner_ids(want), self.corner_ids(got["script"]),
+                                 "corner selection must stay in parity with the Python planner")
                 want_route = rp_py.fallback_route_export(pts)
                 self.assert_json_close(want_route, got["route"], tol=1e-3)
 
     def test_corner_cameras_and_closed_loop_flags(self):
         node = self._node_scripts()
         for got in node:
-            corners = [s for s in got["script"]["shots"] if s.get("role") == "trackside"]
+            corners = [s for s in got["script"]["shots"]
+                       if re.match(r"^corner_\d+_pan$", s.get("id", ""))]
             self.assertTrue(corners, "no corner cameras for " + got["parsed"]["name"])
             for s in corners:
                 self.assertEqual(s["kind"], "trackside_pan")
+                self.assertEqual(s["role"], "trackside")
                 self.assertTrue(s["auto_zoom"])
-                self.assertEqual(s["fov_min"], 28.0)
-                self.assertEqual(s["fov_max"], 65.0)
-                self.assertRegex(s["id"], r"^corner_\d+_pan$")
+                self.assertEqual(s["fov"], 45.0)
+                self.assertEqual(s["fov_min"], 13.0)
+                self.assertEqual(s["fov_max"], 58.0)
             self.assertEqual(got["script"]["source"]["closed_loop"], got["route"]["closed_loop"])
 
     def test_build_shots_parity_real_fixtures(self):
@@ -439,8 +526,12 @@ class RoutePlannerTests(unittest.TestCase):
             with self.subTest(fixture=fixture):
                 name, pts, gates = rp_py.parse_route(json.loads(
                     (REFPY / "fixtures" / fixture).read_text(encoding="utf-8")))
-                self.assert_json_close(rp_py.build_shots(name, pts, gates, trackside_stride="auto"),
-                                       actual["script"], tol=1e-9)
+                self.assert_json_close(self.core_projection(rp_py.build_shots(
+                                           name, pts, gates, trackside_stride="auto")),
+                                       self.core_projection(actual["script"]), tol=1e-9)
+                self.assertEqual(self.corner_ids(rp_py.build_shots(
+                                     name, pts, gates, trackside_stride="auto")),
+                                 self.corner_ids(actual["script"]))
                 self.assert_json_close(rp_py.fallback_route_export(pts), actual["route"], tol=1e-9)
 
     def test_parse_route_input_shapes(self):
@@ -1028,6 +1119,132 @@ class SmoothingControlTests(unittest.TestCase):
 
 
 
+class AutoDirectorControlTests(unittest.TestCase):
+    """Auto Director 3-way control and live reason/override badge."""
+    MODES = ("off", "shots", "full")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js_match = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S)
+        assert cls.js_match, "no <script> block in panel_ui.lua"
+        cls.js = cls.js_match.group(1)
+        cls.handlers = {}
+        for mode in cls.MODES:
+            m = re.search(r'id="dir_%s"[^>]*onclick="([^"]+)"' % mode, cls.lua)
+            assert m, "missing onclick handler for dir_%s" % mode
+            cls.handlers[mode] = m.group(1)
+        # Zero Windows drive-letter paths (still holds with the new controls).
+        assert re.search(r"\bD:[\\/]", cls.lua) is None
+
+    @staticmethod
+    def _state(mode="off", reason="", override=0.0):
+        return {"degraded": False, "target_lost": False, "shots": ["start_line"],
+                "targets": ["Driver"], "rehearsal": False, "running": False,
+                "director_mode": mode, "director_reason": reason,
+                "director_override_s": override}
+
+    def _click(self, mode):
+        """Fire the real inline onclick string from the HTML on a live panel."""
+        extra = ("globalThis.__stateOverride = " + json.dumps(self._state()) + ";\n"
+                 "(new Function(PANEL_JS))();\n"
+                 "const CLICK = " + json.dumps(self.handlers[mode]) + ";\n")
+        return parse_result(run_node(self.js, r"""
+          await sleep(20);                       // let boot's first poll settle
+          const p = globalThis.racecamPanel;
+          (new Function('setDirector', CLICK))(p.setDirector);
+          await sleep(20);
+          const cls = ['off','shots','full'].map(m =>
+            document.getElementById('dir_'+m).className);
+          const b = document.getElementById('dir_badge');
+          console.log(JSON.stringify({
+            posts: fetchLog.filter(x => x.url === '/api/command')
+                           .map(x => JSON.parse(x.opts.body)),
+            classes: cls, mode: p.getDirectorMode(),
+            badge: {text:b.textContent, hidden:b.style.display === 'none', cls:b.className}
+          }));
+        """, extra=extra))
+
+    def test_markup_and_handler_wiring(self):
+        for mode in self.MODES:
+            with self.subTest(mode=mode):
+                self.assertIn('id="dir_%s"' % mode, self.lua)
+                self.assertEqual(self.handlers[mode],
+                                 "setDirector('%s')" % mode)
+        for snippet in ['id="dir_badge"']:
+            with self.subTest(markup=snippet):
+                self.assertIn(snippet, self.lua)
+        for snippet in ["const DIRECTOR_MODES=['off','shots','full']",
+                        "return cmd('director',mode)",
+                        "highlightDirector(directorMode)",
+                        "s.director_mode", "s.director_reason",
+                        "s.director_override_s", "'OVERRIDE ('+secs+'s)'",
+                        "'AUTO: '+(reason||'idle')"]:
+            with self.subTest(js=snippet):
+                self.assertIn(snippet, self.js)
+        self.assertIsNone(re.search(r"\bD:[\\/]", self.lua))
+
+    def test_click_posts_director_command_and_highlights(self):
+        for mode in self.MODES:
+            with self.subTest(mode=mode):
+                result = self._click(mode)
+                self.assertIn({"cmd": "director", "args": mode}, result["posts"])
+                self.assertEqual(result["mode"], mode)
+                self.assertEqual(result["classes"],
+                                 ["sm-btn" + (" on" if m == mode else "")
+                                  for m in self.MODES])
+                self.assertEqual(result["badge"]["hidden"], mode == "off")
+                if mode != "off":
+                    self.assertEqual(result["badge"]["text"], "AUTO: idle")
+
+    def test_poll_syncs_mode_reason_and_override_into_badge(self):
+        shots_state = self._state("shots", "P1-P2 battle (18m) · pack_battle", 0)
+        full_state = self._state("full", "finish sprint", 12.4)
+        off_state = self._state("off", "stale reason", 8)
+        extra = ("globalThis.__stateOverride = " + json.dumps(shots_state) + ";\n"
+                 "(new Function(PANEL_JS))();\n"
+                 "const FULL = " + json.dumps(full_state) + ";\n"
+                 "const OFF = " + json.dumps(off_state) + ";\n")
+        result = parse_result(run_node(self.js, r"""
+          await sleep(20);
+          const p = globalThis.racecamPanel;
+          const read = () => ({
+            mode: p.getDirectorMode(), state: p.getDirectorState(),
+            cls: ['off','shots','full'].map(m =>
+              document.getElementById('dir_'+m).className),
+            badge: (() => { const b = document.getElementById('dir_badge');
+              return {text:b.textContent, hidden:b.style.display === 'none', cls:b.className}; })()
+          });
+          const shots = read();
+          globalThis.__stateOverride = FULL;
+          await p.poll(); await sleep(10);
+          const full = read();
+          globalThis.__stateOverride = OFF;
+          await p.poll(); await sleep(10);
+          const off = read();
+          console.log(JSON.stringify({shots:shots, full:full, off:off}));
+        """, extra=extra))
+        self.assertEqual(result["shots"]["mode"], "shots")
+        self.assertEqual(result["shots"]["cls"],
+                         ["sm-btn", "sm-btn on", "sm-btn"])
+        self.assertFalse(result["shots"]["badge"]["hidden"])
+        self.assertEqual(result["shots"]["badge"]["text"],
+                         "AUTO: P1-P2 battle (18m) · pack_battle")
+
+        self.assertEqual(result["full"]["mode"], "full")
+        self.assertEqual(result["full"]["state"]["override_s"], 12.4)
+        self.assertEqual(result["full"]["cls"],
+                         ["sm-btn", "sm-btn", "sm-btn on"])
+        self.assertEqual(result["full"]["badge"]["text"], "OVERRIDE (12s)")
+        self.assertFalse(result["full"]["badge"]["hidden"])
+
+        self.assertEqual(result["off"]["mode"], "off")
+        self.assertEqual(result["off"]["cls"],
+                         ["sm-btn on", "sm-btn", "sm-btn"])
+        self.assertTrue(result["off"]["badge"]["hidden"])
+        self.assertEqual(result["off"]["badge"]["text"], "")
+
+
 class BroadcastDeskTests(unittest.TestCase):
     """Broadcast Desk v2: stream-board layout, camera pads, preview→take, focus UX."""
     @classmethod
@@ -1278,6 +1495,689 @@ class BroadcastDeskTests(unittest.TestCase):
                 self.assertIn(snippet, self.js)
         self.assertIsNone(re.search(r"\b[A-Z]:[\\/]", self.lua),
                           "no hardcoded Windows drive paths allowed")
+
+
+class BroadcastFramingV2Tests(unittest.TestCase):
+    """Phase 3: outside-apex corners, auto broadcast cameras, pad labels, standalone."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S).group(1)
+        cls.init_lua = (ROOT / "ClientScripts/RaceCam/init.lua").read_text(encoding="utf-8")
+
+    def node(self, body, extra=""):
+        return parse_result(run_node(self.js, body,
+                                     extra=extra + "\n(new Function(PANEL_JS))();\n"))
+
+    @staticmethod
+    def unit2(v):
+        m = math.hypot(v[0], v[1])
+        return [v[0] / m, v[1] / m]
+
+    def test_corner_cams_outside_left_and_right_turns(self):
+        # crossZ > 0: d_in=+X, d_out=+Y -> centre on leftNormal(+X)=+Y,
+        # so the camera must go on -Y (rightNormal), 400 cm along +Y.
+        left = [[-1000.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+                [0.0, 1000.0, 0.0], [1000.0, 1000.0, 0.0]]
+        # crossZ < 0: d_in=+X, d_out=-Y -> camera on +Y (leftNormal).
+        right = [[-1000.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+                 [0.0, -1000.0, 0.0], [1000.0, -1000.0, 0.0]]
+        got = self.node(r"""
+          const rp=globalThis.routePlanner, gates=[18,18,18,18];
+          console.log(JSON.stringify(TRACKS.map(pts=>{
+            const direct=rp.makeCornerCam(pts,gates,1,null);
+            const plan=rp.buildShots('bend',pts,gates,{tracksideStride:'auto'});
+            const fromPlan=plan.shots.find(s=>s.id==='corner_01_pan');
+            const outN=rp.outsideNormal(pts,1), c=pts[1];
+            return {direct:direct, fromPlan:fromPlan, outward:outN,
+              dot:outN[0]*(direct.location[0]-c[0])+outN[1]*(direct.location[1]-c[1])};
+          })));
+        """, extra="const TRACKS=" + json.dumps([left, right]) + ";\n")
+        self.assertEqual(len(got), 2)
+        for label, bend, expected_y, expected_at_y in [
+                ("left (crossZ>0)", got[0], -1000.0, 800.0),
+                ("right (crossZ<0)", got[1], 1000.0, -800.0)]:
+            with self.subTest(turn=label):
+                cam = bend["direct"]
+                self.assertEqual(cam["id"], "corner_01_pan")
+                self.assertEqual(cam["kind"], "trackside_pan")
+                self.assertEqual(cam["role"], "trackside")
+                self.assertEqual(cam["fov"], 45.0)
+                self.assertEqual(cam["fov_min"], 13.0)
+                self.assertEqual(cam["fov_max"], 58.0)
+                self.assertTrue(cam["auto_zoom"])
+                self.assertAlmostEqual(cam["location"][0], 0.0, places=2)
+                self.assertAlmostEqual(cam["location"][1], expected_y, places=2)
+                self.assertAlmostEqual(cam["location"][2], 240.0, places=2)
+                self.assertAlmostEqual(cam["look_at"][1], expected_at_y, places=2)
+                self.assertGreater(bend["dot"], 500.0,
+                                   "camera must sit on the OUTSIDE of the bend")
+                self.assertEqual(bend["fromPlan"]["location"], cam["location"],
+                                 "buildShots must use the same outside-apex camera")
+
+    def test_broadcast_specialty_and_rig_shots(self):
+        pts = [[0.0, 0.0, 0.0], [20000.0, 0.0, 0.0], [20000.0, 1000.0, 0.0],
+               [10000.0, 1000.0, 0.0], [10000.0, 15000.0, 0.0], [0.0, 15000.0, 0.0]]
+        gates = [18.0] * len(pts)
+        got = self.node(r"""
+          const rp=globalThis.routePlanner;
+          const plan=rp.buildShots('broadcast',PTS,GATES,{tracksideStride:'auto'});
+          const pick=id=>plan.shots.find(s=>s.id===id);
+          const k=rp.longestStraightIndex(PTS), ci=rp.sharpestCornerIndex(PTS);
+          console.log(JSON.stringify({
+            ids:plan.shots.map(s=>s.id), first9:plan.shots.slice(0,9).map(s=>s.id),
+            straight:pick('straight_telephoto'), curb:pick('curb_apex'),
+            crane:pick('start_crane'),
+            rigs:[pick('onboard_tcam'),pick('rear_battle'),pick('pack_battle')],
+            k:k, segA:PTS[k], segB:PTS[(k+1)%PTS.length],
+            ci:ci, cornerPt:PTS[ci], startPt:PTS[0], curbNormal:rp.outsideNormal(PTS,ci)
+          }));
+        """, extra="const PTS=" + json.dumps(pts) + ";\nconst GATES=" + json.dumps(gates) + ";\n")
+        self.assertEqual(got["first9"], UNIVERSAL, "hotkeys 1-9 must stay untouched")
+        for sid in ["onboard_tcam", "rear_battle", "pack_battle",
+                    "straight_telephoto", "curb_apex", "start_crane"]:
+            self.assertIn(sid, got["ids"], sid)
+        by_id = dict(zip(got["ids"], [None] * len(got["ids"])))
+        self.assertIn("finish_line", by_id)
+        self.assertIn("overview", by_id)
+        self.assertTrue(any(i.startswith("corner_") for i in got["ids"]))
+
+        s = got["straight"]
+        self.assertEqual(s["kind"], "trackside_pan")
+        self.assertEqual(s["role"], "trackside")
+        self.assertEqual(s["fov"], 35.0)
+        self.assertTrue(s["auto_zoom"])
+        self.assertEqual(s["fov_min"], 12.0)
+        self.assertEqual(s["fov_max"], 46.0)
+        a, b, d = got["segA"], got["segB"], self.unit2([got["segB"][0] - got["segA"][0],
+                                                        got["segB"][1] - got["segA"][1]])
+        expected = [a[0] + 0.9 * (b[0] - a[0]) - d[1] * 450.0,
+                    a[1] + 0.9 * (b[1] - a[1]) + d[0] * 450.0, a[2] + 220.0]
+        for x, y in zip(expected, s["location"]):
+            self.assertAlmostEqual(x, y, delta=1e-2)
+        self.assertEqual(s["look_at"], [a[0], a[1], a[2]], "must look back down the straight")
+
+        curb = got["curb"]
+        self.assertEqual(curb["kind"], "trackside_pan")
+        self.assertEqual(curb["role"], "trackside")
+        self.assertEqual(curb["fov"], 62.0)
+        self.assertTrue(curb["auto_zoom"])
+        self.assertEqual(curb["fov_min"], 24.0)
+        self.assertEqual(curb["fov_max"], 72.0)
+        c = got["cornerPt"]
+        self.assertAlmostEqual(curb["location"][2] - c[2], 55.0, places=2)
+        outward = curb["location"][0] - c[0], curb["location"][1] - c[1]
+        self.assertAlmostEqual(math.hypot(*outward), 320.0, places=2)
+        dot = outward[0] * got["curbNormal"][0] + outward[1] * got["curbNormal"][1]
+        self.assertGreater(dot, 300.0, "curb camera must be on the outside apex")
+
+        crane = got["crane"]
+        self.assertEqual(crane["kind"], "trackside_pan")
+        self.assertEqual(crane["role"], "trackside")
+        self.assertEqual(crane["fov"], 48.0)
+        self.assertTrue(crane["auto_zoom"])
+        self.assertEqual(crane["fov_min"], 18.0)
+        self.assertEqual(crane["fov_max"], 56.0)
+        d0 = self.unit2([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]])
+        n0 = [-d0[1], d0[0]]
+        offset = 900.0 + 350.0 + 400.0
+        expected = [pts[0][0] - 800.0 * d0[0] + offset * n0[0],
+                    pts[0][1] - 800.0 * d0[1] + offset * n0[1], pts[0][2] + 1400.0]
+        for x, y in zip(expected, crane["location"]):
+            self.assertAlmostEqual(x, y, delta=1e-2)
+        self.assertEqual(crane["look_at"], [600.0, 0.0, 0.0])
+
+        want_rigs = [("onboard_tcam", "follow", 78.0), ("rear_battle", "follow", 68.0),
+                     ("pack_battle", "pack_battle", 68.0)]
+        for rig, (sid, kind, fov) in zip(got["rigs"], want_rigs):
+            with self.subTest(rig=sid):
+                self.assertEqual(rig["id"], sid)
+                self.assertEqual(rig["kind"], kind)
+                self.assertEqual(rig["preset"], sid)
+                self.assertEqual(rig["fov"], fov)
+                self.assertEqual(rig["target"], "focus")
+                self.assertEqual(rig["trigger"], {"type": "manual"})
+
+    def test_new_shot_labels_and_pad_grid(self):
+        shots = UNIVERSAL + ["finish_line", "overview", "onboard_tcam", "rear_battle",
+                             "pack_battle", "straight_telephoto", "curb_apex",
+                             "start_crane", "corner_01_pan"]
+        state = {"shots": shots, "current": "start_line", "next": "", "targets": ["Driver"],
+                 "target_name": "Driver", "rehearsal": False, "degraded": False,
+                 "target_lost": False, "running": False}
+        got = self.node(r"""
+          const p=globalThis.racecamPanel;
+          p.renderShotDeck(S);
+          console.log(JSON.stringify({
+            primary:document.getElementById('shot_pads').innerHTML,
+            extra:document.getElementById('shot_pads_extra').innerHTML}));
+        """, extra="const S=" + json.dumps(state) + ";\n")
+        self.assertEqual(got["primary"].count("<button"), 9)
+        for n in range(1, 10):
+            self.assertIn('<span class="keycap">%d</span>' % n, got["primary"])
+        self.assertEqual(got["extra"].count("<button"), len(shots) - 9)
+        for label in ["Onboard T-Cam", "Rear Battle", "Pack Battle",
+                      "Straight Tele", "Curb Apex", "Start Crane"]:
+            with self.subTest(label=label):
+                self.assertIn(label, got["extra"])
+        for sid, kind in [("onboard_tcam", "follow"), ("rear_battle", "follow"),
+                          ("pack_battle", "follow"), ("straight_telephoto", "trackside"),
+                          ("curb_apex", "trackside"), ("start_crane", "trackside")]:
+            with self.subTest(shot=sid):
+                self.assertIn('data-rc-shot="%s"' % sid, got["extra"])
+                m = re.search(r'<button[^>]*data-rc-shot="%s"[^>]*>(.*?)</button>'
+                              % re.escape(sid), got["extra"], re.S)
+                self.assertIsNotNone(m, sid)
+                self.assertIn("pad-kind %s" % kind, m.group(1))
+
+    def test_standalone_default_plan_has_new_rigs(self):
+        block = self.init_lua[self.init_lua.index("local function default_plan()"):
+                              self.init_lua.index("--- Load .json first")]
+        for line in [
+                '{ id = "onboard_tcam", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "onboard_tcam", fov = 78.0 }',
+                '{ id = "rear_battle", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "rear_battle", fov = 68.0 }',
+                '{ id = "pack_battle", kind = "pack_battle", trigger = { type = "manual" }, target = "focus", preset = "pack_battle", fov = 68.0 }']:
+            with self.subTest(shot=line):
+                self.assertIn(line, block)
+
+    def test_zero_drive_paths_and_no_external_assets(self):
+        self.assertIsNone(re.search(r"\bD:[\\/]", self.lua))
+        self.assertIsNone(re.search(r"<(?:script|link)[^>]+(?:src|href)=", self.lua))
+
+
+OVERLAY_UI = ROOT / "ClientScripts" / "RaceCam" / "overlay_ui.lua"
+
+# Browser stubs for the self-contained overlay page. The page's own 500 ms
+# poll is suppressed; data is fed in explicitly through window.rcOverlay.
+OVERLAY_NODE_PREFIX = r"""
+globalThis.setTimeout = (fn, ms) => 0;
+globalThis.requestAnimationFrame = fn => 0;
+globalThis.Date.now = () => globalThis.__now || 1000;
+const els = {};
+function mkEl(id){
+  const o = {id:id, value:'', textContent:'', className:'', checked:false,
+    disabled:false, style:{}, options:[], files:[], src:'', _attrs:{}};
+  o.appendChild = c => { o.options.push(c); return c; };
+  o.addEventListener = (ev, fn) => { (o._ev = o._ev || {})[ev] = fn; };
+  o.setAttribute = (k, v) => { o._attrs[k] = v; };
+  o.getAttribute = k => (k in o._attrs) ? o._attrs[k] : null;
+  o.click = () => {};
+  Object.defineProperty(o, 'innerHTML', {configurable:true,
+    get(){return o._html || ''},
+    set(v){o._html = v; if(v === '')o.options.length = 0;
+           if(o.id === 'rows' && globalThis.__flipAutoAdvance)globalThis.__flipPhase = 'new';}});
+  o.getBoundingClientRect = () => {
+    const m = (globalThis.__flipPhase === 'old') ? (globalThis.__oldRects || {})
+                                                 : (globalThis.__newRects || {});
+    return {top:m[o.getAttribute('data-name') || o.id] || 0, left:0};
+  };
+  o.querySelectorAll = sel => {
+    if(sel !== '[data-name]')return [];
+    const list = (globalThis.__domRows || []).map(n => {
+      const e = mkEl('row'); e.setAttribute('data-name', n); return e;
+    });
+    globalThis.__queryEls = list;
+    return list;
+  };
+  return o;
+}
+globalThis.document = {getElementById(id){return els[id] || (els[id] = mkEl(id))},
+  createElement(t){return mkEl(t)}, addEventListener(){}};
+globalThis.window = globalThis;
+globalThis.location = {get search(){return globalThis.__search || ''},
+  origin:'http://127.0.0.1:8767', href:'http://127.0.0.1:8767/overlay/standings'};
+const overlayFetchLog = [];
+globalThis.fetch = async (url, opts) => {
+  overlayFetchLog.push({url:url, opts:opts || {}});
+  return {ok:true, status:200, json:async () => globalThis.__standings || {}};
+};
+"""
+
+
+def overlay_js():
+    lua = OVERLAY_UI.read_text(encoding="utf-8")
+    m = re.search(r"<script>([\s\S]*?)</script>", lua, re.S)
+    assert m, "no <script> block in overlay_ui.lua"
+    return m.group(1)
+
+
+def run_overlay_node(body: str, extra: str = "", timeout: int = 45):
+    source = (OVERLAY_NODE_PREFIX + "\nconst OVERLAY_JS = " + json.dumps(overlay_js())
+              + ";\n" + extra + "\n(new Function(OVERLAY_JS))();\n"
+              + "(async () => {\n" + body + "\n})();\n")
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix="rc-overlay-", suffix=".js", dir=str(SCRATCH))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(source)
+        return subprocess.run([NODE, path], capture_output=True, text=True, timeout=timeout)
+    finally:
+        os.unlink(path)
+
+
+SAMPLE_STANDINGS = {
+    "ok": True, "visible": True, "target_name": "Beta",
+    "active_shot": "heli_follow",
+    "event": {"event_name": "Aewol Sprint", "event_guid": "G1", "state": 2,
+              "in_countdown": False, "num_laps": 7, "waypoint_count": 23,
+              "standings": [
+                  {"rank": 1, "name": "Alpha", "laps": 2, "section": 14,
+                   "best_lap_s": 112.45, "last_sec_s": 284.12,
+                   "finished": False, "disqualified": False},
+                  {"rank": 2, "name": "Beta", "laps": 2, "section": 14,
+                   "best_lap_s": 113.0, "last_sec_s": 285.52,
+                   "finished": False, "disqualified": False},
+                  {"rank": 3, "name": "Charlie [AMC]", "laps": 1, "section": 20,
+                   "best_lap_s": 0, "last_sec_s": 300.0,
+                   "finished": False, "disqualified": False},
+                  {"rank": 4, "name": "Fin", "laps": 3, "section": 23,
+                   "best_lap_s": 0, "last_sec_s": 0,
+                   "finished": True, "disqualified": False},
+                  {"rank": 5, "name": "Dq", "laps": 0, "section": 0,
+                   "best_lap_s": 0, "last_sec_s": 0,
+                   "finished": False, "disqualified": True},
+              ]},
+}
+
+
+class OverlayUiSourceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = OVERLAY_UI.read_text(encoding="utf-8")
+
+    def test_module_surface_and_zero_dependencies(self):
+        self.assertIn("function M.html()", self.lua)
+        self.assertIn("return M", self.lua)
+        self.assertIn('id="tower"', self.lua)
+        self.assertIn("/api/standings", self.lua)
+        for snippet in ("background:transparent", "tabular-nums",
+                        "transition:opacity 350ms", "translateY(", "300ms",
+                        "AbortController", "busy", "Math.min(2000,delay*2)"):
+            # FLIP/backoff language may be expressed with equivalent code;
+            # require the concrete moving parts instead of the prose.
+            if snippet == "AbortController":
+                self.assertTrue("busy=true" in self.lua or "busy = true" in self.lua)
+                continue
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.lua)
+        for param in ("top", "mode", "scale", "pos", "compact", "always", "title", "event"):
+            with self.subTest(param=param):
+                self.assertTrue("qs.get('%s')" % param in self.lua
+                                or "qnum('%s'" % param in self.lua,
+                                f"overlay ignores ?{param}")
+        self.assertIsNone(re.search(r"<(?:script|link)[^>]+(?:src|href)=", self.lua))
+        self.assertIsNone(re.search(r"\bD:[\\/]", self.lua))
+
+    def test_lua_syntax(self):
+        p = subprocess.run([HOSTRUN, LUAC_CHECK, str(OVERLAY_UI)],
+                           capture_output=True, text=True, timeout=180)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("SYNTAX_OK", p.stdout + p.stderr)
+
+    def test_self_contained_size(self):
+        size = len(self.lua.encode("utf-8"))
+        self.assertLessEqual(size, 16384, "overlay must stay a single small payload")
+        self.assertGreater(size, 6000)
+
+
+class OverlayUiBehaviourTests(unittest.TestCase):
+    def test_gap_best_lap_badges_and_fade(self):
+        result = parse_result(run_overlay_node(r"""
+          const o=window.rcOverlay;
+          const s=globalThis.__snap;
+          const snap=o.buildRows(s);
+          const gaps=snap.rows.map(r=>o.fmtGap(r,snap.leader,23));
+          const res={gaps:gaps,best:o.fmtBest(112.45),fl:o.fastestLap(snap.rows),
+            badge:o.stateBadge(s.event).label,lap:o.lapLabel(s.event,snap.leader).text};
+          const shown=o.render(s);
+          res.html=document.getElementById('rows').innerHTML;
+          res.lapText=document.getElementById('lap').textContent;
+          res.footer=document.getElementById('footer').innerHTML;
+          res.visible=shown.visible;
+          res.opacity=document.getElementById('tower').style.opacity;
+          const hidden=o.render({ok:true,visible:true,event:null});
+          res.hiddenClass=document.getElementById('tower').className;
+          res.hiddenOpacity=document.getElementById('tower').style.opacity;
+          res.hiddenVisible=hidden.visible;
+          console.log(JSON.stringify(res));
+        """, extra="globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";"))
+        self.assertEqual(result["gaps"], ["LEADER", "+1.4s", "+1 LAP", "FIN", "DQ"])
+        self.assertEqual(result["best"], "1:52.45")
+        self.assertEqual(result["fl"], "Alpha")
+        self.assertEqual(result["badge"], "LIVE")
+        self.assertEqual(result["lap"], "LAP 3 / 7")
+        for needle in ('data-name="Alpha"', 'data-name="Beta"', 'LEADER',
+                       '+1.4s', '+1 LAP', 'FIN', 'DQ', 'target'):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, result["html"])
+        self.assertEqual(result["lapText"], "LAP 3 / 7")
+        self.assertIn('class="fl-badge">FL', result["footer"])
+        self.assertIn("1:52.45", result["footer"])
+        self.assertTrue(result["visible"])
+        self.assertEqual(result["opacity"], "1")
+        self.assertIn("hidden", result["hiddenClass"])
+        self.assertEqual(result["hiddenOpacity"], "0")
+        self.assertFalse(result["hiddenVisible"])
+
+    def test_overtake_delta_and_auto_clear(self):
+        result = parse_result(run_overlay_node(r"""
+          const o=window.rcOverlay,s=globalThis.__snap;
+          o.applySnapshot(s);
+          globalThis.__now=2000;
+          const swapped=JSON.parse(JSON.stringify(s));
+          swapped.event.standings[0].rank=2;
+          swapped.event.standings[1].rank=1;
+          const rows=o.applySnapshot(swapped);
+          const res={beta:rows.find(r=>r.name==='Beta').delta,
+                     alpha:rows.find(r=>r.name==='Alpha').delta,
+                     deltaHtml:o.render(swapped)&&document.getElementById('rows').innerHTML};
+          globalThis.__now=7000;
+          const after=o.applySnapshot(swapped);
+          res.laterBeta=after.find(r=>r.name==='Beta').delta;
+          res.laterAlpha=after.find(r=>r.name==='Alpha').delta;
+          res.html=o.render(swapped)&&document.getElementById('rows').innerHTML;
+          console.log(JSON.stringify(res));
+        """, extra="globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";"))
+        self.assertEqual(result["beta"], 1)
+        self.assertEqual(result["alpha"], -1)
+        self.assertEqual(result["laterBeta"], 0)
+        self.assertEqual(result["laterAlpha"], 0)
+        self.assertIn("▲1", result["deltaHtml"])
+        self.assertIn("▼1", result["deltaHtml"])
+        # At t=7000 the 4 s window has expired, so no arrows survive.
+        self.assertNotIn("▲1", result["html"])
+        self.assertNotIn("▼1", result["html"])
+
+    def test_pinned_camera_target_below_top(self):
+        result = parse_result(run_overlay_node(r"""
+          const o=window.rcOverlay;
+          const s=JSON.parse(JSON.stringify(globalThis.__snap));
+          s.event.standings.push({rank:7,name:'Echo',laps:0,section:2,
+            best_lap_s:0,last_sec_s:0,finished:false,disqualified:false});
+          s.target_name='Echo';
+          const shown=o.render(s);
+          const html=document.getElementById('rows').innerHTML;
+          console.log(JSON.stringify({html:html, visible:shown.visible,
+            names:shown.rows.map(r=>r.name)}));
+        """, extra=("globalThis.__search='?top=3&mode=gap';"
+                    "globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";")))
+        names = re.findall(r'data-name="([^"]+)"', result["html"])
+        self.assertEqual(names[:3], ["Alpha", "Beta", "Charlie [AMC]"])
+        self.assertIn("Echo", names[3:], "followed driver must be pinned below top")
+        self.assertIn('class="row target pinned" data-name="Echo"', result["html"])
+
+    def test_always_preview_and_mode_switch(self):
+        result = parse_result(run_overlay_node(r"""
+          globalThis.__search='?always=1';
+          const o=window.rcOverlay;
+          const preview=o.render(null);
+          const res={html:document.getElementById('rows').innerHTML,
+                     visible:preview.visible,
+                     opacity:document.getElementById('tower').style.opacity};
+          console.log(JSON.stringify(res));
+        """, extra="globalThis.__search='?always=1';"))
+        self.assertIn("WAITING FOR LIVE EVENT", result["html"])
+        self.assertTrue(result["visible"])
+        self.assertEqual(result["opacity"], "1")
+        best = parse_result(run_overlay_node(r"""
+          globalThis.__search='?mode=best';
+          const o=window.rcOverlay;
+          o.render(globalThis.__snap);
+          console.log(JSON.stringify({html:document.getElementById('rows').innerHTML}));
+        """, extra=("globalThis.__search='?mode=best';"
+                    "globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";")))
+        self.assertIn("1:52.45", best["html"])
+        self.assertIn("fl-dot", best["html"])
+
+    def test_flip_transform_on_overtake(self):
+        result = parse_result(run_overlay_node(r"""
+          globalThis.__oldRects={Alpha:0,Beta:30};
+          globalThis.__newRects={Alpha:30,Beta:0};
+          globalThis.__domRows=['Alpha','Beta'];
+          globalThis.__flipPhase='old';
+          globalThis.__flipAutoAdvance=true;
+          const o=window.rcOverlay;
+          o.render(globalThis.__snap);
+          const out={};
+          (globalThis.__queryEls||[]).forEach(e=>{
+            out[e.getAttribute('data-name')]=e.style.transform;});
+          console.log(JSON.stringify(out));
+        """, extra=("globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";")))
+        # Alpha moved 0 -> 30 (dy = -30), Beta moved 30 -> 0 (dy = +30).
+        self.assertEqual(result.get("Alpha"), "translateY(-30px)")
+        self.assertEqual(result.get("Beta"), "translateY(30px)")
+
+    def test_poll_in_flight_guard_and_url(self):
+        result = parse_result(run_overlay_node(r"""
+          await new Promise(r=>setImmediate(r));
+          globalThis.__standings=globalThis.__snap;
+          const before=overlayFetchLog.length;
+          const p1=window.rcOverlay.poll();
+          const p2=window.rcOverlay.poll();
+          await p1;
+          const accepted=await p2;
+          console.log(JSON.stringify({added:overlayFetchLog.length-before,
+            url:overlayFetchLog[overlayFetchLog.length-1].url,accepted:accepted,
+            rows:window.rcOverlay.getRows().length}));
+        """, extra=("globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";")))
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(result["url"], "/api/standings")
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["rows"], 5)
+
+
+class OverlayPanelControlTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S).group(1)
+
+    def test_markup_and_wiring(self):
+        for snippet in ('id="ov_toggle"', 'id="ov_copy"', "toggleOverlay()",
+                        "copyObsUrl()", "cmd('overlay','toggle')", "overlay_visible",
+                        "/overlay/standings"):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.lua)
+
+    def test_toggle_posts_token_gated_command_and_syncs_from_state(self):
+        result = parse_result(run_node(self.js, r"""
+          globalThis.__stateOverride={degraded:false,target_lost:false,shots:[],
+            targets:[],rehearsal:false,running:false,overlay_visible:false};
+          await globalThis.racecamPanel.poll();
+          const before=document.getElementById('ov_toggle').textContent;
+          await globalThis.racecamPanel.toggleOverlay();
+          const posts=fetchLog.filter(x=>x.url==='/api/command'&&x.opts.body&&
+            JSON.parse(x.opts.body).cmd==='overlay');
+          console.log(JSON.stringify({before:before,
+            after:document.getElementById('ov_toggle').textContent,
+            posts:posts.map(x=>JSON.parse(x.opts.body))}));
+        """, extra="(new Function(PANEL_JS))();\n"))
+        self.assertEqual(result["before"], "Overlay: OFF")
+        self.assertEqual(result["posts"], [{"cmd": "overlay", "args": "toggle"}])
+        # Stub /api/command returns no overlay_visible, so the local fallback
+        # flips the button until the next /api/state poll confirms the server.
+        self.assertEqual(result["after"], "Overlay: ON")
+
+    def test_copy_obs_url(self):
+        result = parse_result(run_node(self.js, r"""
+          const url=await globalThis.racecamPanel.copyObsUrl();
+          console.log(JSON.stringify({url:url,copied:globalThis.__copied,
+            toast:document.getElementById('toast').textContent}));
+        """, extra="(new Function(PANEL_JS))();\n"))
+        self.assertEqual(result["url"], "http://127.0.0.1:8767/overlay/standings")
+        self.assertEqual(result["copied"], result["url"])
+        self.assertIn("Copied OBS URL", result["toast"])
+
+
+class EventControlTests(unittest.TestCase):
+    """Operator-panel Event Control bar: 2-step confirm, host badge, RPC toast."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S).group(1)
+
+    # Exposes the module-scoped liveEvents list to the test without changing
+    # production code: the appended code runs inside the same Function body.
+    PRELUDE = r"""
+      (new Function(PANEL_JS + "\n;globalThis.__evt={refresh:refreshLiveEvents};"))();
+      globalThis.__liveEventsOverride = {events:[{name:'AMC Duro', guid:'G1',
+        is_member:true, waypoints:[{x:0,y:0,z:0,gate_m:18},{x:1,y:1,z:1,gate_m:18}],
+        state:0, owner_guid:'', is_owner:true, player_count:2, waypoint_count:2}]};
+      await globalThis.__evt.refresh();
+    """
+
+    def test_markup_and_wiring(self):
+        for snippet in (
+            'id="ev_ctrl_select"', 'id="ev_ctrl_state"', 'id="ev_ctrl_owner"',
+            'id="ev_btn_lobby"', 'id="ev_btn_ready"', 'id="ev_btn_start"',
+            'id="ev_btn_finish"', 'id="ev_btn_join"', 'id="ev_btn_leave"',
+            'id="ev_btn_close"', 'id="ev_auto_cam"',
+            "eventCtrlState('lobby')", "eventCtrlState('ready')",
+            "eventCtrlState('start')", "eventCtrlFinish()",
+            "eventCtrlClose()", "eventCtrlJoinLeave('join')",
+            "eventCtrlJoinLeave('leave')", "verifyEventCtrl(s)",
+            "Date.now()-evCtrlArm.t<=4000", "Date.now()-p.t>2500",
+            "{confirm:true}", "'/api/event/state'", "'/api/event/close'",
+            "'/api/event/join'", "'/api/event/leave'", "Host: None (Claim)",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.lua)
+
+    def test_finish_two_step_confirm_expires_after_four_seconds(self):
+        result = parse_result(run_node(self.js, self.PRELUDE + r"""
+          const p=globalThis.racecamPanel;
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>100000});
+          const btn=document.getElementById('ev_btn_finish');
+          btn.textContent='Finish';  // Node stub has no HTML-initialized label
+          const first=p.eventCtrlFinish();
+          const text1=btn.textContent, arm1=p.getEventCtrlArm();
+          const posts1=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0).length;
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>105000});
+          const expired=p.eventCtrlFinish();   // 5 s: window closed -> re-arm
+          const posts2=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0).length;
+          const arm2=p.getEventCtrlArm();
+          const confirmed=p.eventCtrlFinish(); // second click within 4 s
+          const posts3=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0)
+                              .map(x=>({url:x.url,body:JSON.parse(x.opts.body)}));
+          console.log(JSON.stringify({first:first,expired:expired,confirmed:confirmed,
+            text1:text1,arm1:arm1,arm2:arm2,
+            counts:[posts1,posts2,posts3.length],finalText:btn.textContent,
+            posted:posts3}));
+        """))
+        self.assertFalse(result["first"], "first Finish click must only arm")
+        self.assertEqual(result["text1"], "Confirm Finish?")
+        self.assertEqual(result["arm1"]["label"], "Finish")
+        self.assertFalse(result["expired"], "click after 4 s must not confirm")
+        self.assertEqual(result["arm2"]["t"], 105000, "expired arm must be re-armed")
+        self.assertTrue(result["confirmed"], "second click within 4 s must confirm")
+        self.assertEqual(result["counts"], [0, 0, 1])
+        self.assertEqual(result["finalText"], "Finish")
+        self.assertEqual(result["posted"], [
+            {"url": "/api/event/state", "body": {"event_guid": "G1", "state": "finish"}}])
+
+    def test_close_two_step_confirm_sends_confirm_true(self):
+        result = parse_result(run_node(self.js, self.PRELUDE + r"""
+          const p=globalThis.racecamPanel;
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>100000});
+          const btn=document.getElementById('ev_btn_close');
+          btn.textContent='Close Event';
+          const first=p.eventCtrlClose();
+          const text1=btn.textContent;
+          const posts1=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0).length;
+          const second=p.eventCtrlClose();
+          const posted=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0)
+                               .map(x=>({url:x.url,body:JSON.parse(x.opts.body)}));
+          console.log(JSON.stringify({first:first,second:second,text1:text1,
+            posts1:posts1,posted:posted,finalText:btn.textContent}));
+        """))
+        self.assertFalse(result["first"])
+        self.assertEqual(result["text1"], "Confirm Close?")
+        self.assertEqual(result["posts1"], 0, "first click must not post")
+        self.assertTrue(result["second"])
+        self.assertEqual(result["finalText"], "Close Event")
+        self.assertEqual(result["posted"], [
+            {"url": "/api/event/close",
+             "body": {"event_guid": "G1", "confirm": True}}])
+
+    def test_host_badge_states_and_start_guard(self):
+        result = parse_result(run_node(self.js, r"""
+          (new Function(PANEL_JS))();
+          const p=globalThis.racecamPanel;
+          const own=document.getElementById('ev_ctrl_owner');
+          const pill=document.getElementById('ev_ctrl_state');
+          const start=document.getElementById('ev_btn_start');
+          p.renderEventControl({guid:'G1',state:1,is_owner:true,owner_guid:'L1',
+            owner_name:'Me',player_count:2,waypoint_count:2});
+          const you={text:own.textContent,clickable:typeof own.onclick==='function',
+                     state:pill.textContent};
+          p.renderEventControl({guid:'G1',state:1,in_countdown:true,is_owner:true,
+            owner_guid:'L1',owner_name:'Me',player_count:2,waypoint_count:2});
+          const counting={text:pill.textContent,cls:pill.className};
+          p.renderEventControl({guid:'G1',state:0,is_owner:false,owner_guid:'',
+            owner_name:'',player_count:2,waypoint_count:2});
+          const none={text:own.textContent,clickable:typeof own.onclick==='function'};
+          p.renderEventControl({guid:'G1',state:2,is_owner:false,
+            owner_guid:'ABCDEF0123456789',owner_name:'Bob',
+            player_count:2,waypoint_count:2});
+          const other={text:own.textContent,clickable:typeof own.onclick==='function',
+                       state:pill.textContent,disabled:start.disabled};
+          p.renderEventControl({guid:'G1',state:0,is_owner:true,owner_guid:'L1',
+            owner_name:'Me',player_count:0,waypoint_count:2});
+          const empty={disabled:start.disabled,title:start.title};
+          p.renderEventControl({});
+          const noEvent={text:own.textContent,disabled:start.disabled};
+          console.log(JSON.stringify({you:you,counting:counting,none:none,other:other,
+            empty:empty,noEvent:noEvent}));
+        """))
+        self.assertEqual(result["you"], {"text": "Host: You", "clickable": False,
+                                         "state": "READY"})
+        self.assertEqual(result["counting"], {"text": "COUNTDOWN",
+                                              "cls": "status-pill counting"})
+        self.assertEqual(result["none"], {"text": "Host: None (Claim)",
+                                          "clickable": True})
+        self.assertEqual(result["other"], {"text": "Host: Bob", "clickable": False,
+                                           "state": "RACING", "disabled": True})
+        self.assertTrue(result["empty"]["disabled"])
+        self.assertIn("Start needs at least one player", result["empty"]["title"])
+        self.assertEqual(result["noEvent"], {"text": "Host: —", "disabled": True})
+
+    def test_post_rpc_verification_and_rejection_toasts(self):
+        result = parse_result(run_node(self.js, self.PRELUDE + r"""
+          const p=globalThis.racecamPanel;
+          const toast=()=>document.getElementById('toast').textContent;
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>200000});
+          globalThis.__eventResponse={ok:true,event_guid:'G1',state:1};
+          await p.eventCtrlState('ready');
+          const pendingA=p.getEventCtrlPending();
+          p.verifyEventCtrl({event_guid:'G1',event_state:1,last_remove_response:null});
+          const okToast=toast(), clearedA=p.getEventCtrlPending();
+          globalThis.__eventResponse={ok:true,event_guid:'G1',state:3};
+          await p.eventCtrlState('finish');
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>203000});
+          p.verifyEventCtrl({event_guid:'G1',event_state:1,last_remove_response:null});
+          const warnToast=toast(), clearedB=p.getEventCtrlPending();
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>300000});
+          await p.eventCtrlClose(); await p.eventCtrlClose();
+          await sleep(10);  // armEventCtrl fires the async confirm without awaiting
+          const pendingC=p.getEventCtrlPending();
+          p.verifyEventCtrl({event_guid:'G1',event_state:1,
+            last_remove_response:{guid:'G1',succeeded:false,ts:300000}});
+          const rejToast=toast(), clearedC=p.getEventCtrlPending();
+          console.log(JSON.stringify({pendingA:pendingA,okToast:okToast,
+            clearedA:clearedA,warnToast:warnToast,clearedB:clearedB,
+            pendingKindC:pendingC&&pendingC.kind,rejToast:rejToast,clearedC:clearedC}));
+        """))
+        self.assertEqual(result["pendingA"]["kind"], "state")
+        self.assertEqual(result["okToast"], "Event → READY")
+        self.assertIsNone(result["clearedA"], "confirmed state must clear pending")
+        self.assertIn("did not apply event change", result["warnToast"])
+        self.assertIn("event host", result["warnToast"])
+        self.assertIsNone(result["clearedB"], "timed-out state must clear pending")
+        self.assertEqual(result["pendingKindC"], "close")
+        self.assertIn("Server rejected", result["rejToast"])
+        self.assertIsNone(result["clearedC"], "rejected close must clear pending")
 
 
 if __name__ == "__main__":

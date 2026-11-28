@@ -4,6 +4,8 @@
 -- and an operator panel with OBS WebSocket v5 control, tally, cue queue and rehearsal mode.
 local Paths = require("RaceCam/paths")
 local LiveEvents = require("RaceCam/live_events")
+local ok_ec, EventControl = pcall(require, "RaceCam/event_control")
+if not ok_ec or type(EventControl) ~= "table" then EventControl = nil end
 local H = {}
 local D = Paths.data_dir()
 
@@ -82,6 +84,18 @@ end
 local server = nil
 local pending = {}
 local last_result = "idle"
+
+-- Producer-controlled visibility of the OBS standings overlay. Plain boolean:
+-- never a UObject, so it is safe to read on every HTTP tick.
+local overlay_visible = true
+
+-- OBS Browser Source markup lives in its own module, exactly like the panel.
+local ok_ov_ui, ov_ui = pcall(require, "RaceCam/overlay_ui")
+local OVERLAY_HTML = "<html><body>Standings overlay UI missing</body></html>"
+if ok_ov_ui and ov_ui and type(ov_ui.html) == "function" then
+  local ok_html, html = pcall(ov_ui.html)
+  if ok_html and type(html) == "string" and html ~= "" then OVERLAY_HTML = html end
+end
 
 -- Heartbeat fail-safe state: armed by the first authenticated request, so the
 -- panel only becomes load-bearing once an operator is actually watching.
@@ -238,6 +252,80 @@ local function standings_json(s)
   return "{" .. table.concat(parts, ",") .. "}"
 end
 
+--- Full /api/standings payload. The cache stores ONLY the serialized JSON
+--- string (never a UE4SS UObject), for at most 250 ms, so an OBS Browser
+--- Source + the operator panel cannot hammer Net_Events on the game thread.
+local standings_payload_cache = { key = nil, t = -math.huge, value = nil }
+
+--- Test seam for the Lua 5.4 harness; production uses the required module.
+H._event_control = EventControl
+
+--- Best-effort ServerRemoveEvent acknowledgement, plain values only.
+local function remove_response_json()
+  local ok, r = pcall(function()
+    local ec = H._event_control
+    return ec and type(ec.last_remove_response) == "function"
+      and ec.last_remove_response() or nil
+  end)
+  if not ok or type(r) ~= "table" then return "null" end
+  return '{"guid":"' .. jstr(r.guid) .. '","succeeded":' ..
+    tostring(r.succeeded and true or false) ..
+    ',"ts":' .. tostring(tonumber(r.ts) or 0) .. '}'
+end
+
+--- Any event lifecycle write changes what the OBS overlay must show: drop
+--- BOTH serialized-string caches (never cache a UObject in either one).
+local function invalidate_event_caches()
+  standings_payload_cache.t = -math.huge
+  pcall(function() LiveEvents.clear_cache() end)
+end
+
+local function snapshot_for_guid(guid)
+  if not guid or guid == "" then
+    local ok, s = pcall(function() return LiveEvents.active_standings() end)
+    return ok and s or nil
+  end
+  local ok, events = pcall(function() return LiveEvents.list() end)
+  if not ok or type(events) ~= "table" then return nil end
+  for _, ev in ipairs(events) do
+    if ev.guid == guid and #ev.standings > 0 then
+      return {
+        event_name = ev.name, event_guid = ev.guid, state = ev.state,
+        in_countdown = ev.in_countdown, num_laps = ev.num_laps,
+        waypoint_count = ev.waypoint_count, standings = ev.standings,
+      }
+    end
+  end
+  return nil
+end
+
+local function standings_payload_json(event_guid)
+  local key = tostring(event_guid or "")
+  local now = os.clock()
+  if standings_payload_cache.key == key and now - standings_payload_cache.t < 0.25 then
+    return standings_payload_cache.value
+  end
+  local s = snapshot_for_guid(key)
+  local e = _G.RACECAM_SHOTS
+  local target = e and e.target_name or nil
+  if not target then
+    local st = engine_status()
+    target = st and st.target_name or nil
+  end
+  if type(target) ~= "string" or target == "" then target = nil end
+  local parts = {}
+  parts[#parts + 1] = '"ok":true'
+  parts[#parts + 1] = '"visible":' .. tostring(overlay_visible)
+  parts[#parts + 1] = '"target_name":' ..
+    (target and ('"' .. jstr(target) .. '"') or "null")
+  parts[#parts + 1] = '"active_shot":"' .. jstr(active_shot_id()) .. '"'
+  parts[#parts + 1] = '"event":' .. (s and standings_json(s) or "null")
+  local value = "{" .. table.concat(parts, ",") .. "}"
+  standings_payload_cache.key, standings_payload_cache.t, standings_payload_cache.value =
+    key, now, value
+  return value
+end
+
 local function state_json()
   local e = _G.RACECAM_SHOTS
   local st = engine_status()
@@ -271,12 +359,37 @@ local function state_json()
   local init = get_init()
   parts[#parts + 1] = '"auto_start":' .. tostring(init and init.auto_start and true or false)
   parts[#parts + 1] = '"follow_leader":' .. tostring(init and init.follow_leader and true or false)
+  parts[#parts + 1] = '"director_mode":"' .. jstr((init and init.director_mode) or "off") .. '"'
+  parts[#parts + 1] = '"director_reason":"' .. jstr((init and init.director_reason) or "") .. '"'
+  parts[#parts + 1] = '"director_override_s":' ..
+    tostring(tonumber((init and init.director_override_s) or 0) or 0)
+  parts[#parts + 1] = '"hud_mode":"' .. jstr((init and init.hud_mode) or "full") .. '"'
+  parts[#parts + 1] = '"overlay_visible":' .. tostring(overlay_visible)
   local smoothing = (e and e.smoothing_mode) or (init and init.smoothing_mode) or "normal"
   if type(smoothing) ~= "string" or smoothing == "" then smoothing = "normal" end
   parts[#parts + 1] = '"smoothing":"' .. jstr(smoothing) .. '"'
+  if e and type(e.get_smoothing_config) == "function" then
+    local ok_sc, sc = pcall(function() return e:get_smoothing_config() end)
+    if ok_sc and type(sc) == "table" then
+      parts[#parts + 1] = '"smoothing_cfg":' .. json_encode(sc)
+    end
+  end
   local ok_ev, ev = pcall(function() return LiveEvents.current_event() end)
   parts[#parts + 1] = '"active_event":' ..
     ((ok_ev and ev and ev.name and ev.name ~= "") and ('"' .. jstr(ev.name) .. '"') or "null")
+  -- Event Control: ownership / membership of the active event so the panel
+  -- can render the host badge and verify a requested state change.
+  if ok_ev and ev then
+    parts[#parts + 1] = '"event_guid":"' .. jstr(ev.guid or "") .. '"'
+    parts[#parts + 1] = '"event_state":' .. tostring(tonumber(ev.state) or 0)
+    parts[#parts + 1] = '"event_owner_guid":"' .. jstr(ev.owner_guid or "") .. '"'
+    parts[#parts + 1] = '"event_owner_name":"' .. jstr(ev.owner_name or "") .. '"'
+    parts[#parts + 1] = '"event_is_owner":' .. tostring(ev.is_owner and true or false)
+    parts[#parts + 1] = '"event_is_joined":' .. tostring(ev.is_joined and true or false)
+    parts[#parts + 1] = '"event_player_count":' .. tostring(tonumber(ev.player_count) or 0)
+    parts[#parts + 1] = '"event_waypoint_count":' .. tostring(tonumber(ev.waypoint_count) or 0)
+  end
+  parts[#parts + 1] = '"last_remove_response":' .. remove_response_json()
   -- Live leaderboard: cached 500 ms in live_events.lua, no waypoints copied.
   local ok_s, active_standings = pcall(function() return LiveEvents.active_standings() end)
   parts[#parts + 1] = '"standings":' .. (ok_s and standings_json(active_standings) or "null")
@@ -350,7 +463,20 @@ local function dispatch(item)
   if not e or not core then return "NOENGINE" end
   local cmd, args = item.cmd, item.args or ""
   if cmd == "start" then e:signal("start"); return "started"
-  elseif cmd == "stop" then core.stop(); return "stopped"
+  elseif cmd == "stop" then
+    core.stop()
+    local init = get_init()
+    if init and type(init.set_hud_mode) == "function" and init.hud_mode ~= "full" then
+      pcall(function() init.set_hud_mode("full") end)
+    end
+    return "stopped"
+  elseif cmd == "hud" then
+    local init = get_init()
+    if init and type(init.set_hud_mode) == "function" then
+      local ok, applied = pcall(function() return init.set_hud_mode(args) end)
+      if ok and applied then return "hud:" .. applied end
+    end
+    return "ERR invalid hud mode"
   elseif cmd == "arm" then
     if core.running then return "already armed" end
     local ok, r = pcall(function() return core.restart() end)
@@ -360,7 +486,7 @@ local function dispatch(item)
     core.rehearsal = (args == "on" or args == "true" or args == "1")
     e:log("REHEARSAL " .. (core.rehearsal and "on" or "off"))
     return core.rehearsal and "rehearsal on" or "rehearsal off"
-  elseif cmd == "trigger" then return e:manual(args)
+  elseif cmd == "trigger" or cmd == "shot" or cmd == "cue" then return e:manual(args)
   elseif cmd == "select" then
     local name_err = "no target API"
     if type(e.set_target_by_name) == "function" then
@@ -483,6 +609,15 @@ local function make_response(req)
   local authed = false
   if req.method == "GET" and (req.path == "/" or req.path == "/index.html") then
     code, body, ctype = 200, PANEL, "text/html"
+  -- The standings API and OBS page are strictly read-only: no token, so the
+  -- secret never has to be pasted into an OBS Browser Source URL. Both sit
+  -- BEFORE the auth gate; every write route stays behind it.
+  elseif req.method == "GET" and
+      (req.path == "/api/standings" or req.path:match("^/api/standings%?")) then
+    code, body = 200, standings_payload_json(query_value(req.path, "event"))
+  elseif req.method == "GET" and
+      (req.path == "/overlay/standings" or req.path:match("^/overlay/standings%?")) then
+    code, body, ctype = 200, OVERLAY_HTML, "text/html; charset=utf-8"
   elseif not token or token == "" or req.headers["x-racecam-token"] ~= token then
     body = '{"error":"bad token"}'
   elseif req.method == "GET" and req.path == "/api/state" then
@@ -493,7 +628,87 @@ local function make_response(req)
     authed = true
     touch()
     local ok, events = pcall(function() return LiveEvents.list() end)
-    code, body = 200, json_encode({ events = (ok and type(events) == "table") and events or {} })
+    code, body = 200,
+      '{"events":' .. json_encode((ok and type(events) == "table") and events or {}) ..
+      ',"last_remove_response":' .. remove_response_json() .. '}'
+  elseif req.method == "POST" and req.path == "/api/event/state" then
+    authed = true
+    touch()
+    invalidate_event_caches()
+    local ec = H._event_control
+    local guid = json_field(req.body, "event_guid") or ""
+    local state_name = json_field(req.body, "state") or ""
+    if not ec then
+      code, body = 503, '{"ok":false,"error":"event control unavailable"}'
+      audit("event_state", guid, "ERR event control unavailable")
+    else
+      local ok, msg, meta = ec.set_state(guid, state_name)
+      if not ok then
+        code, body = 400, '{"ok":false,"error":"' .. jstr(msg) .. '"}'
+        audit("event_state", guid, "ERR " .. tostring(msg))
+      else
+        local st = tonumber(meta and meta.state) or 0
+        local nm = (meta and meta.state_name) or state_name
+        code, body = 200, '{"ok":true,"event_guid":"' .. jstr(guid) ..
+          '","state":' .. tostring(st) .. ',"state_name":"' .. jstr(nm) .. '"}'
+        audit("event_state", guid, "state=" .. tostring(st) .. "/" .. tostring(nm))
+      end
+    end
+  elseif req.method == "POST" and req.path == "/api/event/close" then
+    authed = true
+    touch()
+    invalidate_event_caches()
+    local ec = H._event_control
+    local guid = json_field(req.body, "event_guid") or ""
+    -- Server-side rail: a scripted or misclicked removal must carry confirm.
+    -- Prefer a real JSON parse so `"confirm":true` nested inside a quoted
+    -- string cannot pass; the regex fallback covers clients without JsonParser
+    -- (json_field is similarly raw). Require a JSON delimiter after `true`.
+    local payload = parse_json(req.body)
+    local confirmed = false
+    if type(payload) == "table" then
+      confirmed = payload.confirm == true
+    else
+      confirmed = tostring(req.body or ""):match('"confirm"%s*:%s*true%s*[},]') ~= nil
+    end
+    if not confirmed then
+      code, body = 400, '{"ok":false,"error":"confirm required"}'
+      audit("event_close", guid, "ERR confirm required")
+    elseif not ec then
+      code, body = 503, '{"ok":false,"error":"event control unavailable"}'
+      audit("event_close", guid, "ERR event control unavailable")
+    else
+      local ok, msg = ec.close_event(guid)
+      if not ok then
+        code, body = 400, '{"ok":false,"error":"' .. jstr(msg) .. '"}'
+        audit("event_close", guid, "ERR " .. tostring(msg))
+      else
+        code, body = 200, '{"ok":true,"event_guid":"' .. jstr(guid) .. '"}'
+        audit("event_close", guid, "remove requested")
+      end
+    end
+  elseif req.method == "POST" and
+      (req.path == "/api/event/join" or req.path == "/api/event/leave") then
+    authed = true
+    touch()
+    invalidate_event_caches()
+    local ec = H._event_control
+    local guid = json_field(req.body, "event_guid") or ""
+    local verb = (req.path == "/api/event/join") and "join" or "leave"
+    if not ec then
+      code, body = 503, '{"ok":false,"error":"event control unavailable"}'
+      audit("event_" .. verb, guid, "ERR event control unavailable")
+    else
+      local ok, msg = (verb == "join") and ec.join_event(guid) or ec.leave_event(guid)
+      if not ok then
+        code, body = 400, '{"ok":false,"error":"' .. jstr(msg) .. '"}'
+        audit("event_" .. verb, guid, "ERR " .. tostring(msg))
+      else
+        code, body = 200, '{"ok":true,"event_guid":"' .. jstr(guid) ..
+          '","action":"' .. verb .. '"}'
+        audit("event_" .. verb, guid, verb .. " requested")
+      end
+    end
   elseif req.method == "GET" and req.path == "/api/inbox" then
     authed = true
     touch()
@@ -606,6 +821,44 @@ local function make_response(req)
         code, body = 400, '{"error":"' .. jstr(tostring(flags)) .. '"}'
       end
     end
+  elseif req.method == "GET" and req.path == "/api/debug_smooth" then
+    authed = true
+    local init = get_init()
+    local e = init and init.engine
+    local rows = (e and type(e.debug_smooth) == "function") and e:debug_smooth() or {}
+    local lines = {}
+    for _, r in ipairs(rows) do
+      lines[#lines + 1] = string.format(
+        '{"dt":%.4f,"raw":[%.0f,%.0f,%.0f],"fpos":[%.0f,%.0f,%.0f],"fvel":[%.0f,%.0f,%.0f],"err":%.1f,"coast":%s,"stale":%.3f,"veh":%s}',
+        r.dt or 0, r.raw[1], r.raw[2], r.raw[3], r.fpos[1], r.fpos[2], r.fpos[3],
+        r.fvel[1], r.fvel[2], r.fvel[3], r.err or 0, r.coast and "true" or "false",
+        r.stale or 0, r.veh and "true" or "false")
+    end
+    code, body = 200, '{"ok":true,"frames":[' .. table.concat(lines, ",") .. ']}'
+  elseif req.method == "POST" and req.path == "/api/smoothing" then
+    authed = true
+    touch()
+    local payload = json_decode(req.body or "")
+    if type(payload) ~= "table" then
+      code, body = 400, '{"ok":false,"error":"invalid json"}'
+    else
+      local init = get_init()
+      local ok, res = false, nil
+      if init and type(init.set_smoothing_config) == "function" then
+        ok, res = pcall(function() return init.set_smoothing_config(payload) end)
+      elseif _G.RACECAM_SHOTS and type(_G.RACECAM_SHOTS.set_smoothing_config) == "function" then
+        ok, res = pcall(function() return _G.RACECAM_SHOTS:set_smoothing_config(payload) end)
+      end
+      if ok and res then
+        local e = _G.RACECAM_SHOTS
+        local cfg = (e and type(e.get_smoothing_config) == "function" and e:get_smoothing_config()) or {}
+        code, body = 200, json_encode({ ok = true, smoothing_cfg = cfg })
+        last_result = payload.reset and "smoothing:reset" or "smoothing:custom"
+        audit("smoothing", "", last_result)
+      else
+        code, body = 400, '{"ok":false,"error":"smoothing config failed"}'
+      end
+    end
   elseif req.method == "POST" and req.path == "/api/command" then
     authed = true
     touch()
@@ -641,8 +894,80 @@ local function make_response(req)
         log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
         audit("command", cmd, last_result)
       end
+    elseif cmd == "hud" then
+      local mode = string.lower(tostring(args or ""))
+      local init = get_init()
+      local applied = nil
+      if init and type(init.set_hud_mode) == "function" then
+        local ok, res = pcall(function() return init.set_hud_mode(mode) end)
+        if ok then applied = res end
+      end
+      if not applied then
+        code, body = 400, '{"ok":false,"error":"invalid mode"}'
+        last_result = "ERR invalid mode"
+        audit("command", cmd, last_result)
+      else
+        last_result = "hud:" .. applied
+        code, body = 200, '{"ok":true,"status":"hud:' .. jstr(applied) ..
+          '","hud_mode":"' .. jstr(applied) .. '"}'
+        log("CMD hud " .. applied .. " -> " .. last_result)
+        audit("command", cmd, last_result)
+      end
+    elseif cmd == "director" then
+      -- Off | Shots | Full. init validates case-insensitively; anything else
+      -- is rejected here so the operator can never leave a stale mode behind.
+      local init = get_init()
+      local mode = nil
+      if init and type(init.set_director_mode) == "function" then
+        local ok, applied = pcall(function() return init.set_director_mode(args) end)
+        if ok then mode = applied end
+      end
+      if not mode then
+        code, body = 400, '{"ok":false,"error":"invalid mode"}'
+        last_result = "ERR invalid mode"
+        audit("command", cmd, last_result)
+      else
+        last_result = "director:" .. mode
+        code, body = 200, '{"ok":true,"status":"director:' .. jstr(mode) ..
+          '","director_mode":"' .. jstr(mode) .. '"}'
+        audit("command", cmd, last_result)
+      end
+      log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
+    elseif cmd == "overlay" then
+      -- Producer show/hide/fade of the OBS timing tower. Token-gated like
+      -- every other write command; the read-only standings API stays public.
+      local ok_ov = true
+      if args == "show" or args == "" then
+        overlay_visible = true
+      elseif args == "hide" then
+        overlay_visible = false
+      elseif args == "toggle" then
+        overlay_visible = not overlay_visible
+      else
+        ok_ov = false
+        code, body = 400, '{"ok":false,"error":"invalid overlay args"}'
+        last_result = "ERR invalid overlay args"
+        audit("command", cmd, last_result)
+      end
+      if ok_ov then
+        -- Drop only the serialized-string cache so /api/standings echoes the
+        -- new visibility immediately (no UObject is ever cached).
+        standings_payload_cache.t = -math.huge
+        last_result = "overlay:" .. (overlay_visible and "show" or "hide")
+        code, body = 200, '{"ok":true,"status":"' .. jstr(last_result) ..
+          '","overlay_visible":' .. tostring(overlay_visible) .. '}'
+        audit("command", cmd, last_result)
+      end
+      log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
     else
+      local manual_shot = (cmd == "trigger" or cmd == "shot" or cmd == "cue" or cmd == "next")
       local ok, result = pcall(dispatch, { cmd = cmd, args = args })
+      if manual_shot then
+        local init = get_init()
+        if init and type(init.note_manual_shot) == "function" then
+          pcall(function() init.note_manual_shot() end)
+        end
+      end
       last_result = ok and tostring(result) or ("ERR " .. tostring(result))
       log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
       audit("command", cmd, last_result)
@@ -669,6 +994,10 @@ local function make_response(req)
         local init = get_init()
         if init and type(init.disengage_follow_leader) == "function" then
           pcall(function() init.disengage_follow_leader() end)
+        end
+        -- A manual contestant click pauses Auto Director target switching.
+        if init and type(init.note_manual_target) == "function" then
+          pcall(function() init.note_manual_target() end)
         end
         audit("target", name, "manual target; follow_leader disengaged")
       else
@@ -777,7 +1106,9 @@ end
 
 function H.start()
   if server then return "already started" end
-  local host = readfile(D .. "racecam_bind.txt") or "127.0.0.1"
+  local raw_host = readfile(D .. "racecam_bind.txt")
+  local host = (raw_host and raw_host:match("^%s*(.-)%s*$")) or ""
+  if host == "" then host = "0.0.0.0" end
   local ok, s = pcall(function()
     local b = assert(socket.bind(host, 8767))
     b:setoption("reuseaddr", true)
