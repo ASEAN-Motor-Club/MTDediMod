@@ -468,7 +468,31 @@ local function target_state(self, s, preset)
   end
   ex, ey, ez = ex * scale, ey * scale, ez * scale
   local tau_pos = shot_tau(self, s, preset, "tau_pos")
-  if self.use_vel_predict == false then
+  -- Detect stale/frozen network frames: on high-latency multiplayer links,
+  -- remote vehicle positions freeze between packets (50-200 ms) then jump.
+  -- Pulling the filter back toward a frozen packet causes synthetic braking
+  -- followed by a forward surge when the next packet arrives (springing!).
+  -- Coast smoothly at f.vel while raw is unchanged for < 0.20 s (packet gap),
+  -- then resume normal correction once raw updates or the car truly stops.
+  local rdx = f.last_raw and (raw[1] - f.last_raw[1]) or 999.0
+  local rdy = f.last_raw and (raw[2] - f.last_raw[2]) or 999.0
+  local rdz = f.last_raw and (raw[3] - f.last_raw[3]) or 999.0
+  local raw_moved = (rdx * rdx + rdy * rdy + rdz * rdz) > 0.25
+  local fspeed_sq = f.vel[1] * f.vel[1] + f.vel[2] * f.vel[2] + f.vel[3] * f.vel[3]
+  if raw_moved then
+    f.last_raw = { raw[1], raw[2], raw[3] }
+    f.stale_t = 0.0
+  else
+    f.stale_t = (f.stale_t or 0.0) + dt
+  end
+  local coasting = (not raw_moved) and (self.use_vel_predict ~= false)
+                   and (f.stale_t < 0.20) and (fspeed_sq > 2500.0)
+                   and (err < 600.0)
+
+  if coasting then
+    -- Pure smooth coast between delayed network packets (zero brake-pull!).
+    f.pos[1], f.pos[2], f.pos[3] = px, py, pz
+  elseif self.use_vel_predict == false then
     -- Pure 1st-order EMA damping (zero velocity prediction, zero overshoot).
     local k = exp_alpha(dt, tau_pos)
     f.pos[1] = lerp(f.pos[1], raw[1], k)
@@ -477,8 +501,7 @@ local function target_state(self, s, preset)
     f.vel[1], f.vel[2], f.vel[3] = 0.0, 0.0, 0.0
   else
     -- Critically damped alpha-beta predictor (zeta = 1.0, ZERO spring bounce):
-    -- For a 2nd-order critically damped tracker with time constant tau_pos,
-    -- alpha = 1 - exp(-2*dt/tau_pos) and beta_crit = 2 - alpha - 2*sqrt(1-alpha).
+    -- alpha = 1 - exp(-2*dt/tau_pos), beta_crit = 2 - alpha - 2*sqrt(1-alpha).
     local alpha_pos = exp_alpha(dt, tau_pos * 0.5)
     local beta_vel = 2.0 - alpha_pos - 2.0 * math.sqrt(math.max(0.0, 1.0 - alpha_pos))
     f.pos[1], f.pos[2], f.pos[3] = px + ex * alpha_pos, py + ey * alpha_pos, pz + ez * alpha_pos
@@ -488,9 +511,9 @@ local function target_state(self, s, preset)
     f.vel[3] = clamp_num(f.vel[3] + ez * inv_dt * beta_vel, -12000.0, 12000.0)
     -- Blend live UE vehicle velocity when available (smoothly low-passed) so
     -- real multiplayer cars track braking/accel cleanly even at high tau_pos.
-    if not is_remote and tgt then
+    if p then
       local ok_v, rv = pcall(function()
-        local src = self:seated_vehicle(tgt) or tgt
+        local src = self:seated_vehicle(p) or p
         if src and src.GetVelocity then return src:GetVelocity() end
         return nil
       end)
