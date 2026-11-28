@@ -684,9 +684,19 @@ function E.pose_of(self, s)
       or lo.look_ahead or lo.ahead or 250.0
     local want_look = { loc[1] + fx * look_ahead, loc[2] + fy * look_ahead,
                         loc[3] + (lo.up or 130.0) }
+    -- Stage 1 already filtered st.pos and st.fwd with zero steady-state lag.
+    -- Running a world-space EMA on look XY made the camera lag 5-10 m behind
+    -- fast-moving cars (especially in heli_follow), pushing the car to the
+    -- leading edge of the screen. Keep XY locked to filtered want_look and
+    -- damp vertical Z only.
     local look = want_look
     if self.follow_look then
-      look = vlerp(self.follow_look, want_look, exp_alpha(dt, shot_tau(self, s, preset, "tau_look") * 0.5))
+      local klz = exp_alpha(dt, shot_tau(self, s, preset, "tau_look"))
+      look = {
+        want_look[1],
+        want_look[2],
+        lerp(self.follow_look[3], want_look[3], klz),
+      }
     end
     self.follow_look = look
     return { pos = pos, look = look, fov = s.fov or (preset and preset.fov) or 70.0 }
