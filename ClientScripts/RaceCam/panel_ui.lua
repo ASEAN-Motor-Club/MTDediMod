@@ -11,138 +11,270 @@ local M = {}
 
 M.HTML = [=[<!doctype html><html><head><meta charset="utf-8"><title>AMC RaceCam</title>
 <style>
-body{font:14px system-ui;background:#111;color:#eee;margin:0;padding:16px}
-h1{font-size:18px;margin:0 0 12px}h2{font-size:15px;margin:0 0 8px}
-.card{background:#1b1b1b;border:1px solid #333;border-radius:6px;padding:12px;margin-bottom:12px}
-button{background:#2b6cb0;border:0;color:#fff;padding:8px 12px;border-radius:4px;cursor:pointer;margin:2px}
-button:hover{background:#3182ce}button:disabled{background:#444;color:#888;cursor:not-allowed}
-input,select{background:#222;color:#eee;border:1px solid #444;padding:6px;border-radius:4px}
-input[type=checkbox]{width:auto}label{margin-right:10px}
-pre{background:#0c0c0c;border:1px solid #333;padding:8px;max-height:220px;overflow:auto;white-space:pre-wrap}
-.badge{display:inline-block;padding:6px 14px;border-radius:4px;font-weight:bold;margin-right:8px}
-.tally-on-prog{background:#c53030}.tally-on-prev{background:#2f855a}.tally-off{background:#444;color:#aaa}
-#banner{display:none;padding:10px;border-radius:4px;margin-bottom:12px;font-weight:bold}
-#banner.degraded{display:block;background:#742a2a;color:#fff}
-#banner.rehearsal{display:block;background:#975a16;color:#fff}
-.kbd{color:#888;font-size:12px;margin-top:6px}
-.muted{color:#999;font-size:12px}
-/* Live leaderboard / contestant button deck (replaces the old dropdown). */
-.roster{display:flex;flex-direction:column;gap:4px;margin-top:6px}
-.roster.standalone{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
-.roster button.rc-driver{display:flex;align-items:center;gap:8px;width:100%;margin:0;
-  padding:6px 8px;text-align:left;background:#1f2733;border:1px solid #3a4756;border-radius:4px}
+:root{--bg:#0d1117;--surface:#161b22;--surface2:#1c2430;--line:#30363d;--ink:#e6edf3;
+  --muted:#8b949e;--prog:#e53935;--prev:#2fbf71;--warn:#f0a020;--accent:#58a6ff}
+*{box-sizing:border-box}
+body{font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);
+  color:var(--ink);margin:0;padding:0 12px 12px}
+h1{font-size:15px;margin:0;white-space:nowrap}h2{font-size:13px;margin:0 0 6px;color:#c9d1d9}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:9px 10px;margin:0}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
+button{background:#234a73;border:1px solid #315f8f;color:#fff;padding:6px 10px;border-radius:5px;
+  cursor:pointer;margin:0;font:inherit}
+button:hover{background:#2d6096}button:disabled{background:#30363d;border-color:#3d444d;color:#7d8590;cursor:not-allowed}
+input,select,textarea{background:#0d1117;color:var(--ink);border:1px solid var(--line);padding:5px 7px;border-radius:4px;font:inherit}
+input[type=checkbox]{width:auto;accent-color:var(--accent)}label{margin-right:8px}
+pre{background:#080b0f;border:1px solid var(--line);padding:8px;max-height:200px;overflow:auto;white-space:pre-wrap;font:11px ui-monospace,monospace}
+.kbd{color:var(--muted);font-size:11px}
+.muted{color:var(--muted);font-size:11px}
+.badge{display:inline-block;padding:4px 9px;border-radius:4px;font-weight:700;font-size:11px;margin-right:5px;white-space:nowrap}
+.tally-on-prog{background:var(--prog);color:#fff;box-shadow:0 0 9px rgba(229,57,53,.45)}
+.tally-on-prev{background:var(--prev);color:#06281a}.tally-off{background:#30363d;color:#8b949e}
+/* Sticky top tally bar — always visible, even while a drawer is open. */
+#tally_bar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:6px;flex-wrap:nowrap;
+  min-height:52px;padding:6px 10px;margin:0 -12px 0;background:#0b0f14;border-bottom:1px solid var(--line);
+  box-shadow:0 2px 14px rgba(0,0,0,.55)}
+.brand{font-size:12px;letter-spacing:.5px;color:var(--muted);white-space:nowrap}.brand b{color:var(--prog)}
+.pill{font-size:10px;font-weight:700;letter-spacing:.4px;padding:5px 9px;border-radius:12px;
+  background:#21262d;border:1px solid var(--line);color:#c9d1d9;white-space:nowrap}
+.pill.armed{background:#1b4332;border-color:var(--prev);color:#9ae6b4}
+.pill.standby{background:#3d2f10;border-color:#8a6d1f;color:#f6e05e}
+.pill.ok{background:#17301f;border-color:var(--prev);color:#9ae6b4}
+.pill.rec{background:#4a1418;border-color:var(--prog);color:#ffb3b3}
+.pill.keys-on{background:#17301f;border-color:var(--prev);color:#9ae6b4}
+.pill.keys-paused{background:#432c0c;border-color:var(--warn);color:#fbd38d}
+.onair-wrap,.cd-wrap{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--muted);white-space:nowrap}
+.onair-wrap input{width:110px;font-size:11px;padding:3px 6px}
+.cd-wrap b{font:700 13px ui-monospace,monospace;color:#fbd38d}
+.mini{padding:3px 7px;font-size:11px}
+.panic{background:var(--prog);border-color:#ff6b6b;color:#fff;font-weight:800;letter-spacing:.6px;
+  padding:8px 13px;box-shadow:0 0 12px rgba(229,57,53,.5)}
+.panic:hover{background:#ff4d4d}
+.alert{display:none;font-weight:700;font-size:12px;padding:5px 10px;border-radius:0;margin:0 -12px 2px}
+.alert.on{display:block}.alert.deg{background:#742a2a;color:#fff}.alert.reh{background:#7a5310;color:#fff}
+/* Zero-scroll two-column broadcast desk. */
+#desk{display:grid;grid-template-columns:minmax(0,1.32fr) minmax(0,1fr);gap:9px;align-items:start;padding-top:8px}
+.col-left,.col-right{display:flex;flex-direction:column;gap:8px;min-width:0}
+.transport{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px}
+.t-arm{background:#7a5c12;border-color:#b8860b}.t-start{background:#1b6b43;border-color:var(--prev)}
+.t-next{background:#234a73}.t-undo{background:#30363d;border-color:#484f58}
+.t-mode{background:#3b2d63;border-color:#6b5ca5}.t-mode.on{background:#2f855a;border-color:var(--prev)}
+.t-take{background:#8a2d34;border-color:var(--prog);font-weight:800}
+.select-row{display:flex;gap:6px;align-items:center;margin-top:6px}.select-row select{flex:1 1 auto;min-width:0}
+/* Stream-deck camera pad grid. */
+.pad-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.pad-grid.extra{grid-template-columns:repeat(auto-fill,minmax(92px,1fr));margin-top:6px}
+.shot-pad{position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;
+  min-height:56px;margin:0;padding:7px 8px;text-align:left;border:1px solid #3a4756;border-radius:6px;
+  background:linear-gradient(#1f2733,#151c25);color:var(--ink);font-weight:600;overflow:hidden}
+.shot-pad:hover{background:#26364a;border-color:#4b6584}
+.shot-pad.pgm{border-color:var(--prog);box-shadow:0 0 0 2px rgba(229,57,53,.35),0 0 14px rgba(229,57,53,.42);
+  background:linear-gradient(#3d1719,#241012)}
+.shot-pad.prv{border-color:var(--prev);box-shadow:0 0 0 2px rgba(47,191,113,.35)}
+.keycap{position:absolute;top:5px;left:6px;background:#0b0f14;border:1px solid #48586b;border-radius:4px;
+  padding:0 5px;font:11px ui-monospace,monospace;color:#9fb3c8}
+.pad-label{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.pad-kind{font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+.pad-kind.drone{color:#63b3ed}.pad-kind.follow{color:#68d391}.pad-kind.trackside{color:#f6ad55}.pad-kind.hero{color:#d6bcfa}
+.onair-dot{position:absolute;top:5px;right:5px;background:var(--prog);color:#fff;border-radius:8px;
+  padding:0 5px;font-size:9px;font-weight:800}
+.cue-chips{display:flex;flex-wrap:wrap;gap:5px;min-height:22px;margin:4px 0}
+.cue-chip{background:#21262d;border:1px solid var(--line);border-radius:12px;padding:2px 6px;font-size:11px}
+.cue-x{border:0;background:transparent;color:var(--muted);padding:0 3px;font-size:13px;line-height:1}
+.muted-btn{background:#262c34;border-color:#3d444d;color:#a9b2bd}
+.rec{background:#4a1418;border-color:var(--prog);font-weight:800;animation:recpulse 1.6s ease-in-out infinite}
+.rec.on{background:var(--prog);color:#fff}
+@keyframes recpulse{0%,100%{opacity:1}50%{opacity:.55}}
+.scene-pad{padding:6px 8px;font-size:11px;background:#1f2733;border-color:#3a4756}
+.scene-pad.pgm{border-color:var(--prog);box-shadow:0 0 0 2px rgba(229,57,53,.35)}
+.head-toggles{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.tog{font-size:10px;padding:4px 7px}
+.tog.on{background:#1b6b43;border-color:var(--prev)}
+/* Contestants / live leaderboard (click-safe button deck). */
+.roster{display:flex;flex-direction:column;gap:3px;margin-top:5px;max-height:300px;overflow:auto}
+.roster.standalone{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
+.roster button.rc-driver{display:flex;align-items:center;gap:6px;width:100%;margin:0;
+  padding:5px 7px;text-align:left;background:#1f2733;border:1px solid #3a4756;border-radius:4px}
 .roster button.rc-driver:hover{background:#2a3a4d}
 .roster button.rc-driver.onair{border-color:#48bb78;box-shadow:inset 0 0 0 1px #48bb78;background:#17301f}
-.rc-pos{flex:0 0 32px;text-align:center;font-weight:bold;border-radius:3px;padding:2px 3px;background:#444;color:#ddd}
+.rc-pos{flex:0 0 30px;text-align:center;font-weight:bold;border-radius:3px;padding:2px 3px;background:#444;color:#ddd;font-size:11px}
 .rc-pos.p1{background:#b8860b;color:#fff}.rc-pos.p2{background:#8a8a8a;color:#fff}
 .rc-pos.p3{background:#8c5a2b;color:#fff}.rc-pos.dq{background:#5a2323;color:#e8a0a0}
-.rc-name{flex:1 1 auto;font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rc-tele{margin-left:auto;font-family:ui-monospace,monospace;font-size:11px;color:#cbd5e0;
-  text-align:right;white-space:nowrap}
+.rc-name{flex:1 1 auto;font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.rc-tele{margin-left:auto;font-family:ui-monospace,monospace;font-size:10px;color:#cbd5e0;text-align:right;white-space:nowrap}
 .rc-gap{color:#f6ad55}
 .onair-pill{background:#48bb78;color:#06281a;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:bold;margin-left:6px}
-.status-pill{font-size:11px;padding:1px 7px;border-radius:9px;margin-left:6px;background:#2b6cb0;color:#fff}
+.status-pill{font-size:10px;padding:1px 7px;border-radius:9px;margin-left:6px;background:#2b6cb0;color:#fff}
 .status-pill.counting{background:#975a16}.status-pill.racing{background:#2f855a}
 .status-pill.finished{background:#4a5568;color:#e2e8f0}
+#pv_canvas{display:block;width:100%;height:auto;max-height:200px;background:#080b0f;border:1px solid var(--line);
+  border-radius:4px;margin-top:6px}
 #drop_zone{border:1px dashed #555;border-radius:6px;padding:10px;text-align:center;color:#999;margin:6px 0;cursor:pointer}
 #drop_zone.over{background:#234;color:#fff}
 .card.drop-over{border-color:#63b3ed;background:#1c2733;box-shadow:inset 0 0 0 2px rgba(99,179,237,.35)}
 .badge.standalone{background:#2b6cb0;color:#fff;font-weight:normal}
-#paste_json{width:100%;height:90px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical}
-.pin-row button{padding:5px 9px;font-size:12px}
-/* Camera smoothing preset toggle — compact, active mode stays green. */
-.sm-btn{padding:5px 9px;font-size:12px}
-.sm-btn.on{background:#2f855a;box-shadow:inset 0 0 0 1px #48bb78}
-#track_canvas{display:block;width:100%;max-width:640px;height:auto;background:#0c0c0c;border:1px solid #444;border-radius:4px;margin-top:8px}
-hr{border:0;border-top:1px solid #333;margin:10px 0}
-/* Collapsible operator guide — same dark card as the controls above. */
+#paste_json{width:100%;height:80px;font-family:ui-monospace,monospace;font-size:11px;resize:vertical}
+.pin-row button{padding:4px 8px;font-size:11px}
+.sm-btn{padding:4px 9px;font-size:11px}
+.sm-btn.on{background:#1b6b43;border-color:var(--prev);color:#9ae6b4;box-shadow:inset 0 0 0 1px var(--prev)}
+hr{border:0;border-top:1px solid var(--line);margin:8px 0}
+/* Collapsible drawers + 1-line toast. */
+.drawer{margin-top:8px}.drawer>summary{cursor:pointer;color:var(--accent);font-weight:700}
+.drawer>summary strong{color:var(--ink)}
+.drawer[open]>summary{margin-bottom:8px;border-bottom:1px solid var(--line);padding-bottom:6px}
+#footer_bar{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-top:8px;
+  padding:5px 10px;background:#0b0f14;border:1px solid var(--line);border-radius:6px}
+#toast{font-size:11px;color:#9ae6b4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%}
 #panel_manual summary{cursor:pointer;color:#63b3ed}
 #panel_manual summary strong{color:#eee}
 #panel_manual h3{font-size:13px;margin:14px 0 6px;color:#63b3ed}
 #panel_manual ol,#panel_manual ul{margin:6px 0;padding-left:22px}
 #panel_manual li{margin:4px 0;line-height:1.45}
-#panel_manual code{background:#0c0c0c;border:1px solid #333;border-radius:3px;padding:1px 4px;font-family:ui-monospace,monospace;font-size:12px}
-#panel_manual[open]>summary{margin-bottom:8px;border-bottom:1px solid #333;padding-bottom:6px}
+#panel_manual code{background:#080b0f;border:1px solid var(--line);border-radius:3px;padding:1px 4px;font-family:ui-monospace,monospace;font-size:12px}
+#panel_manual[open]>summary{margin-bottom:8px;border-bottom:1px solid var(--line);padding-bottom:6px}
+@media(max-width:900px){#desk{grid-template-columns:minmax(0,1fr)}#tally_bar{flex-wrap:wrap}.brand{display:none}}
 </style></head><body>
-<h1>AMC RaceCam — local operator</h1>
-<div id="banner"></div>
-<div class="card">Token: <input id="tok" type="password" placeholder="optional"> <button onclick="save()">Set</button>
-&nbsp;REHEARSAL: <button id="rehb" onclick="toggleRehearsal()">OFF</button> <span class="kbd">(R)</span></div>
-<div class="card" id="track_loader_card"><h2>Track Loader &amp; Live Event</h2>
-<span class="badge standalone" id="standalone_badge" style="display:none">Standalone / File Mode — manual Start (S) &amp; driver target active</span>
-<div id="live_current" class="muted">No in-game event detected</div>
-<button id="live_refresh" onclick="refreshLiveEvents()">Refresh events</button>
-<button id="live_load_btn" onclick="loadCurrentLiveEvent()" disabled>Load &amp; Preview</button><br>
-Server events: <select id="live_events"></select>
-<button onclick="applySelectedLiveEvent()">Load &amp; Apply selected</button><br>
-<label><input id="auto_start" type="checkbox" onchange="postAutoFlags()"> Auto-Start on Green Light</label>
-<label><input id="follow_leader" type="checkbox" onchange="postAutoFlags()"> Follow Race Leader</label>
-<div class="kbd">Auto flags are opt-in and sent to /api/auto_flags only when you tick them.</div>
-<hr>
-<div>Track JSON: <input id="track_file" type="file" accept=".json,.txt,application/json,text/plain">
-<button onclick="pickTrackFile()">Choose file</button></div>
-<div id="drop_zone">or drop a .json / .txt event, route or plan file anywhere on this card</div>
-<label><input id="auto_apply" type="checkbox"> Auto-apply on drop</label>
-<details style="margin:6px 0">
-<summary class="muted">Paste JSON (Discord code blocks welcome)</summary>
-<textarea id="paste_json" placeholder='Paste an event / route / plan JSON here — ```json fences are stripped automatically'></textarea>
-<button id="paste_preview" onclick="parsePasted()">Parse &amp; Preview</button>
+<header id="tally_bar">
+  <div class="brand">AMC <b>RACE</b>CAM</div>
+  <button id="arm_pill" class="pill standby" onclick="cmd('arm')">STANDBY</button>
+  <span id="pgm" class="badge tally-off">PROGRAM —</span>
+  <span id="prv" class="badge tally-off">PREVIEW —</span>
+  <span class="onair-wrap">ON AIR <input id="tgt_name" size="12" placeholder="driver name"><button class="mini" onclick="lockTyped()">Lock</button></span>
+  <span class="cd-wrap">COUNTDOWN <b id="cd">—</b></span>
+  <span id="keys_pill" class="pill keys-on">KEYS ACTIVE</span>
+  <button id="auth_pill" class="pill" onclick="toggleConnDrawer()">Auth</button>
+  <button id="obs_pill" class="pill" onclick="toggleConnDrawer()">OBS OFF</button>
+  <button id="reh_btn" class="pill" onclick="toggleRehearsal()">REHEARSAL (R)</button>
+  <button id="stop_btn" class="panic" onclick="cmd('stop')">STOP (X)</button>
+</header>
+<div id="reh" class="alert reh"></div>
+<div id="deg" class="alert deg"></div>
+<div class="muted" style="padding:1px 10px">Shot <b id="shot">—</b> · FOV <b id="fov">—</b> · Plan <b id="plan">—</b> · HB <b id="hb">—</b> · Camera <b id="run">—</b></div>
+<div id="banner" style="display:none"></div>
+<span id="prog" class="badge tally-off" style="display:none">PROGRAM —</span>
+<span id="rehb" class="muted" style="display:none">OFF</span>
+<main id="desk">
+  <section class="col-left">
+    <div class="card" id="transport_card">
+      <div class="card-head"><h2>Switching Desk</h2><span class="muted">Color-coded transport · cut bus</span></div>
+      <div class="transport">
+        <button class="t-arm" onclick="cmd('arm')">Arm (A)</button>
+        <button class="t-start" onclick="cmd('start')">Start (S)</button>
+        <button class="t-next" onclick="cmd('next')">Next cue (N)</button>
+        <button class="t-undo" onclick="undo()">Undo (Z)</button>
+        <button id="mode_btn" class="t-mode" onclick="toggleMode()">Cut Bus</button>
+        <button id="take_btn" class="t-take" onclick="takeShot()" disabled>TAKE (Space)</button>
+      </div>
+      <div class="pin-row">Smoothing:
+        <button id="sm_tight" class="sm-btn" onclick="setSmoothing('tight')">Tight</button>
+        <button id="sm_normal" class="sm-btn on" onclick="setSmoothing('normal')">Normal</button>
+        <button id="sm_cinematic" class="sm-btn" onclick="setSmoothing('cinematic')">Cinematic</button>
+      </div>
+      <div class="select-row"><select id="sid"></select><button class="mini" onclick="trigger(sid.value)">Fire selected</button></div>
+    </div>
+    <div class="card" id="pad_card">
+      <div class="card-head"><h2>Camera Pads</h2><span class="muted">1–9 primary · click to cut</span></div>
+      <div id="shot_pads" class="pad-grid"></div>
+      <div id="shot_pads_extra" class="pad-grid extra"></div>
+    </div>
+    <div class="card" id="cue_card">
+      <div class="card-head"><h2>Cue Rundown</h2>
+        <span class="muted">At t+ <input id="qat" size="5" placeholder="t+ sec">
+        <button class="mini" onclick="enqueue()">Queue cue (Q)</button>
+        <button class="muted-btn mini" onclick="cmd('queue_clear')">Clear queue</button></span>
+      </div>
+      <div id="q" class="cue-chips"></div>
+      <div id="queue" class="muted">—</div>
+    </div>
+    <div class="card" id="obs_quick" style="display:none">
+      <div class="card-head"><h2>OBS Scene Pads</h2>
+        <span><button id="rec_btn" class="rec" onclick="toggleRec()">● REC</button>
+        <span id="rec_time" class="muted">00:00</span></span></div>
+      <div id="obs_scene_pads" class="pad-grid extra"></div>
+    </div>
+  </section>
+  <section class="col-right">
+    <div class="card" id="field_card">
+      <div class="card-head">
+        <div id="standings_hdr" class="kbd">Live Vehicles (click to target)</div>
+        <span class="head-toggles">
+          <label class="tog" title="Auto-Start on Green Light"><input id="auto_start" type="checkbox" onchange="postAutoFlags()"> Auto-Start on Green Light</label>
+          <button id="auto_follow" class="tog" title="Follow Race Leader" onclick="toggleFollow()">Follow Leader</button>
+          <input id="follow_leader" type="checkbox" onchange="postAutoFlags()" style="display:none">
+        </span>
+      </div>
+      <div id="contestants" class="roster"></div>
+      <div class="muted">Manual target: type in the ON AIR field above, then Lock.</div>
+    </div>
+    <div class="card" id="preview_card">
+      <div class="card-head"><h2>Track Preview</h2><button class="mini" onclick="openSetup()">Change Track</button></div>
+      <canvas id="pv_canvas" width="640" height="320"></canvas>
+      <div id="pv_meta" class="muted">No route loaded</div>
+      <div id="track_info" class="muted">No route loaded. Planner runs entirely in this page — no Python needed.</div>
+      <canvas id="track_canvas" width="640" height="320" style="display:none"></canvas>
+    </div>
+  </section>
+</main>
+<footer id="footer_bar"><span id="toast">Ready</span>
+<span class="kbd">A arm · S start · X stop · 1-9 trigger shot · Alt+1-9 target contestant · N next cue · Z last-shot undo · R rehearsal toggle · Esc release focus · Space take</span></footer>
+<details id="drawer_setup" class="card drawer">
+  <summary><strong>Track &amp; Event Setup</strong> — live event, upload / drop / paste, pins, saved plans</summary>
+  <div class="card" id="track_loader_card"><h2>Track Loader &amp; Live Event</h2>
+  <span class="badge standalone" id="standalone_badge" style="display:none">Standalone / File Mode — manual Start (S) &amp; driver target active</span>
+  <div id="live_current" class="muted">No in-game event detected</div>
+  <button id="live_refresh" onclick="refreshLiveEvents()">Refresh events</button>
+  <button id="live_load_btn" onclick="loadCurrentLiveEvent()" disabled>Load &amp; Preview</button><br>
+  Server events: <select id="live_events"></select>
+  <button onclick="applySelectedLiveEvent()">Load &amp; Apply selected</button><br>
+  <div class="kbd">Auto flags are opt-in and sent to /api/auto_flags only when you tick them.</div>
+  <hr>
+  <div>Track JSON: <input id="track_file" type="file" accept=".json,.txt,application/json,text/plain">
+  <button onclick="pickTrackFile()">Choose file</button></div>
+  <div id="drop_zone">or drop a .json / .txt event, route or plan file anywhere on this card</div>
+  <label><input id="auto_apply" type="checkbox"> Auto-apply on drop</label>
+  <details style="margin:6px 0">
+  <summary class="muted">Paste JSON (Discord code blocks welcome)</summary>
+  <textarea id="paste_json" placeholder='Paste an event / route / plan JSON here — ```json fences are stripped automatically'></textarea>
+  <button id="paste_preview" onclick="parsePasted()">Parse &amp; Preview</button>
+  </details>
+  <hr>
+  <div><b>Dropped Files (racecam/inbox/)</b> <button id="inbox_refresh" onclick="refreshInbox()">Refresh</button><br>
+  <select id="inbox_files"></select>
+  <button id="inbox_load" onclick="loadInboxFile()">Load Dropped File</button></div>
+  <hr>
+  <div class="pin-row"><b>Free-Roam Pins</b>
+  <button id="pin_position" onclick="pinPosition()">Pin Position</button>
+  <button id="pin_undo" onclick="undoPin()">Undo Pin</button>
+  <button id="pin_clear" onclick="clearPins()">Clear Pins</button>
+  <span id="pin_count" class="muted">0 pins</span>
+  <button id="pin_build" onclick="buildPins()" disabled>Build &amp; Load Pins</button></div>
+  <hr>
+  Saved plans: <select id="saved_plans"></select>
+  <button id="plans_refresh" onclick="refreshPlans()">Refresh</button>
+  <button id="plan_load" onclick="loadPlanFromServer()">Load &amp; Apply</button>
+  </div>
 </details>
-<hr>
-<div><b>Dropped Files (racecam/inbox/)</b> <button id="inbox_refresh" onclick="refreshInbox()">Refresh</button><br>
-<select id="inbox_files"></select>
-<button id="inbox_load" onclick="loadInboxFile()">Load Dropped File</button></div>
-<hr>
-<div class="pin-row"><b>Free-Roam Pins</b>
-<button id="pin_position" onclick="pinPosition()">Pin Position</button>
-<button id="pin_undo" onclick="undoPin()">Undo Pin</button>
-<button id="pin_clear" onclick="clearPins()">Clear Pins</button>
-<span id="pin_count" class="muted">0 pins</span>
-<button id="pin_build" onclick="buildPins()" disabled>Build &amp; Load Pins</button></div>
-<hr>
-Saved plans: <select id="saved_plans"></select>
-<button id="plans_refresh" onclick="refreshPlans()">Refresh</button>
-<button id="plan_load" onclick="loadPlanFromServer()">Load &amp; Apply</button><br>
-<span id="track_info" class="muted">No route loaded. Planner runs entirely in this page — no Python needed.</span>
-<canvas id="track_canvas" width="640" height="320"></canvas>
-</div>
-<div class="card">
-<span class="badge tally-off" id="prog">PROGRAM —</span><span class="badge tally-off" id="prv">PREVIEW —</span>
-Active: <b id="shot">—</b> &nbsp; FOV: <b id="fov">—</b> &nbsp; Plan: <b id="plan">—</b>
-&nbsp; Countdown: <b id="cd">—</b> &nbsp; HB age: <b id="hb">—</b> &nbsp; Camera: <b id="run">—</b>
-</div>
-<div class="card">Cue queue: <span id="queue">—</span>
-<input id="qat" size="7" placeholder="t+ sec">
-<button onclick="enqueue()">Queue cue (Q)</button>
-<button onclick="cmd('next')">Next cue (N)</button> <button onclick="cmd('queue_clear')">Clear queue</button></div>
-<div class="card">
-<button onclick="cmd('arm')">Arm (A)</button><button onclick="cmd('start')">Start (S)</button>
-<button onclick="cmd('stop')">Stop / restore view (X)</button><button onclick="undo()">Last-shot undo (Z)</button><br>
-<select id="sid"></select><button onclick="trigger(sid.value)">Trigger shot (1-9)</button><br>
-<div class="pin-row" style="margin-top:6px">Smoothing:
-<button id="sm_tight" class="sm-btn" onclick="setSmoothing('tight')">Tight</button>
-<button id="sm_normal" class="sm-btn on" onclick="setSmoothing('normal')">Normal</button>
-<button id="sm_cinematic" class="sm-btn" onclick="setSmoothing('cinematic')">Cinematic</button></div>
-<div id="standings_hdr" class="kbd">Live Vehicles (click to target)</div>
-<div id="contestants" class="roster"></div>
-Manual target: <input id="tgt_name" size="12" placeholder="driver name"><button onclick="lockTyped()">Lock</button>
-</div>
-<div class="card">
-OBS WebSocket: <input id="obsurl" size="28" value="ws://127.0.0.1:4455">
-Password: <input id="obspw" type="password" size="12">
-<button onclick="obsConnect()">Connect</button> <button onclick="obsDisc()">Disconnect</button>
-<span id="obsst">disconnected</span><br>
-<button id="obs_check" onclick="obsCheck()">Check OBS</button>
-<label><input id="obs_remember" type="checkbox"> Remember OBS password on this PC</label><br>
-<button onclick="obsRec(true)">Start record</button><button onclick="obsRec(false)">Stop record</button>
-Scene: <select id="obsscene" onchange="obsSources()"></select>
-<button onclick="obsScenes()">Refresh scenes</button>
-<button onclick="obsSetScene()">Go to scene</button><br>
-Source: <select id="obssrc"></select> <button onclick="obsShot()">Preview</button>
-<img id="obsprev" style="max-width:320px;display:none;border:1px solid #444;margin-top:6px">
-</div>
-<div class="card"><pre id="out"></pre>
-<div class="kbd">A arm · S start · X stop · 1-9 trigger shot · Alt+1-9 target contestant · N next cue · Z last-shot undo · R rehearsal toggle</div></div>
+<details id="drawer_conn" class="card drawer">
+  <summary><strong>Auth &amp; OBS Settings</strong> — token and OBS WebSocket</summary>
+  <div class="pin-row">Token: <input id="tok" type="password" placeholder="optional"> <button onclick="save()">Set</button></div>
+  <div class="pin-row">OBS WebSocket: <input id="obs_url" size="28" value="ws://127.0.0.1:4455">
+    <input id="obsurl" size="28" value="ws://127.0.0.1:4455" style="display:none">
+    Password: <input id="obs_pw" type="password" size="16">
+    <input id="obspw" type="password" size="12" style="display:none"></div>
+  <div class="pin-row"><button onclick="obsConnect()">Connect</button> <button onclick="obsDisc()">Disconnect</button>
+    <span id="obsst">disconnected</span>
+    <button id="obs_check" onclick="obsCheck()">Check OBS</button>
+    <label><input id="obs_rem" type="checkbox"> Remember OBS password on this PC</label>
+    <input id="obs_remember" type="checkbox" style="display:none"></div>
+  <div class="pin-row"><button onclick="obsRec(true)">Start record</button><button onclick="obsRec(false)">Stop record</button>
+    Scene: <select id="obs_sc" onchange="obsSources()"></select>
+    <select id="obsscene" onchange="obsSources()" style="display:none"></select>
+    <button onclick="obsScenes()">Refresh scenes</button>
+    <button onclick="obsSetScene()">Go to scene</button></div>
+  <div class="pin-row">Source: <select id="obssrc"></select> <button onclick="obsShot()">Preview</button></div>
+  <img id="obsprev" style="max-width:320px;display:none;border:1px solid #444;margin-top:6px">
+</details>
+<details id="drawer_log" class="card drawer"><summary><strong>Raw Log</strong> — latest command results</summary>
+<pre id="out"></pre></details>
 <details id="panel_manual" class="card">
 <summary><strong>Operator Guide — How to Use This Panel</strong> (click to expand)</summary>
 <div class="kbd">This page is your local broadcast desk: tracks go in, camera shots come out, OBS follows along. Nothing here needs Python on the game PC.</div>
@@ -164,7 +296,7 @@ Source: <select id="obssrc"></select> <button onclick="obsShot()">Preview</butto
 </ul>
 
 <h3>3. Universal <code>1</code>–<code>9</code> Shot Deck &amp; extra (<code>·</code>) shots</h3>
-<div class="kbd">The same nine slots exist on every track so your muscle memory carries between events. Click a shot in the dropdown or press its number.</div>
+<div class="kbd">The same nine slots exist on every track so your muscle memory carries between events. On the <strong>Camera Pads</strong> grid click a pad or press its number; each pad shows a keycap badge, a friendly label and a category pill (Track / Follow / Drone / Hero). The active PROGRAM pad glows red, the staged PREVIEW pad glows green.</div>
 <ol>
 <li><code>start_line</code> — grid / start-line frame; active on arm.</li>
 <li><code>fly_up</code> — 4 s rising intro tween to an overhead establishing shot; fired by <code>S</code>.</li>
@@ -176,12 +308,13 @@ Source: <select id="obssrc"></select> <button onclick="obsShot()">Preview</butto
 <li><code>orbit_hero</code> — smooth 360° orbit around the target; great for grids and podiums.</li>
 <li><code>route_flyover</code> — continuous course flyover for pre-race track previews.</li>
 </ol>
-<div class="kbd">Dropdown-only <code>·</code> shots: <code>finish_line</code> (frames the line), <code>overview</code> (high static course view), and up to six <code>corner_XX_pan</code> cameras that pan and auto-zoom to the followed contestant. Shots past <code>9</code> have no number key — pick them from the dropdown.</div>
+<div class="kbd">Dropdown-only <code>·</code> shots: <code>finish_line</code> (frames the line), <code>overview</code> (high static course view), and up to six <code>corner_XX_pan</code> cameras that pan and auto-zoom to the followed contestant. Shots past <code>9</code> have no number key — click their pad in the extra row. The <code>#sid</code> dropdown stays available as a compact fallback.</div>
 
 <h3>4. Keyboard Hotkeys <span class="kbd">(when focus is outside text inputs)</span></h3>
 <div class="kbd">
 <code>A</code> Arm &nbsp;·&nbsp; <code>S</code> Start Race &nbsp;·&nbsp; <code>1</code>–<code>9</code> Camera Slots &nbsp;·&nbsp; <code>Alt+1</code>–<code>Alt+9</code> Switch Contestant &nbsp;·&nbsp; <code>Q</code> Queue shot (type a delay in <strong>At t+</strong> first) &nbsp;·&nbsp; <code>N</code> Fire next queued cue &nbsp;·&nbsp; <code>Z</code> Clear queue &nbsp;·&nbsp; <code>R</code> Toggle Rehearsal &nbsp;·&nbsp; <code>X</code> Panic Stop
 </div>
+<div class="kbd"><strong>Preview→Take (<code>Space</code>):</strong> toggle the Switching Desk mode button; <code>1</code>–<code>9</code> or a pad click then stages the shot in green <strong>PREVIEW</strong>, and <code>Space</code> (or the <strong>TAKE</strong> button) cuts it to <strong>PROGRAM</strong>. The default <strong>Cut Bus</strong> cuts on the first click. Typing in any field pauses hotkeys — the tally bar shows <code>KEYS PAUSED (Esc)</code>; press <code>Esc</code> to blur the field and restore <code>KEYS ACTIVE</code>.</div>
 <div class="kbd">The <strong>Next cue</strong> and <strong>Clear queue</strong> buttons beside the cue queue work even while you are typing in a field. In this panel build <code>Z</code> is also wired to <strong>Last-shot undo</strong>, so use the button when you need to empty the queue mid-show.</div>
 
 <h3>5. Contestants, Automation, Safety/Fail-Safes &amp; OBS</h3>
@@ -214,26 +347,165 @@ async function setSmoothing(mode){
   return cmd('smoothing',mode);
 }
 
+/* ---- Broadcast Desk v2: tally, camera pads, preview→take, focus keys ----
+   Purely a client-side operator surface. Every action still funnels through
+   the unchanged cmd()/trigger()/fetch() API — no new endpoints. */
+const SHOT_LABELS={start_line:'Start Line',fly_up:'Fly Up',auto_trackside:'Auto Trackside',
+  heli_follow:'Heli Follow',follow_focus:'Follow Focus',front_chase:'Front Chase',
+  side_tracking:'Side Track',orbit_hero:'Orbit Hero',route_flyover:'Flyover',
+  finish_line:'Finish Line',overview:'Overview'};
+let takeMode=false,stagedShot='',lastDeckSig='',lastCueSig='',lastDeckState=null;
+let recording=false,recStart=0;
+function toast(msg){const t=$('toast');if(t)t.textContent=String(msg===undefined||msg===null?'':msg).slice(0,140)}
+function typingEl(el){return !!el&&/INPUT|SELECT|TEXTAREA/.test(String(el.tagName||''))}
+function updateKeysPill(){
+  const p=$('keys_pill');if(!p)return;
+  const paused=typingEl(document.activeElement);
+  p.textContent=paused?'KEYS PAUSED (Esc)':'KEYS ACTIVE';
+  p.className='pill '+(paused?'keys-paused':'keys-on');
+}
+function isTakeMode(){return !!takeMode}
+function shotLabel(id){return SHOT_LABELS[id]||String(id||'').replace(/_/g,' ')
+  .replace(/\b\w/g,c=>c.toUpperCase())}
+function shotKind(id){
+  if(/^corner_/.test(id))return 'trackside';
+  if(id==='finish_line'||id==='overview'||id==='orbit_hero')return 'hero';
+  if(/follow|chase|focus/.test(id))return 'follow';
+  if(/heli|fly|drone/.test(id))return 'drone';
+  return 'track';
+}
+/* Click-safe, signature-diffed stream-deck renderer. The nine universal slots
+   get keycap badges; everything past slot 9 (finish_line, overview, corners)
+   lands in the extra row. PROGRAM = red .pgm, PREVIEW = green .prv. */
+function renderShotDeck(state){
+  if(state)lastDeckState=state;
+  const s=lastDeckState||{};
+  const sel=$('sid');
+  const fromSel=sel&&sel.options?Array.from(sel.options).map(o=>o.value):[];
+  const shots=(Array.isArray(s.shots)&&s.shots.length)?s.shots:fromSel;
+  const cur=String(s.current||s.active_shot||'');
+  const nx=stagedShot||String(s.next||'');
+  const sig=shots.join('|')+'#'+cur+'#'+nx+'#'+(takeMode?'T':'C');
+  if(sig===lastDeckSig)return sig;
+  lastDeckSig=sig;
+  const pad=(id,i)=>{
+    const cls=['shot-pad'];
+    if(cur&&id===cur)cls.push('pgm');
+    if(nx&&id===nx)cls.push('prv');
+    const kind=shotKind(id);
+    const badge=i<9?('<span class="keycap">'+(i+1)+'</span>'):'<span class="keycap dot">·</span>';
+    return '<button type="button" class="'+cls.join(' ')+'" data-rc-shot="'+escHtml(id)+'">'+
+      badge+'<span class="pad-label">'+escHtml(shotLabel(id))+'</span>'+
+      '<span class="pad-kind '+kind+'">'+kind+'</span>'+
+      (cur&&id===cur?'<span class="onair-dot">ON AIR</span>':'')+'</button>';
+  };
+  $('shot_pads').innerHTML=shots.slice(0,9).map(pad).join('');
+  $('shot_pads_extra').innerHTML=shots.slice(9).map((id,j)=>pad(id,j+9)).join('');
+  return sig;
+}
+/* Interactive cue rundown: chips with a quick × remove; the muted Clear queue
+   button (cmd('queue_clear')) stays physically separate from Next cue. */
+function renderCues(){
+  const sig=JSON.stringify(cueList);
+  if(sig===lastCueSig)return sig;
+  lastCueSig=sig;
+  $('q').innerHTML=cueList.map((c,i)=>'<span class="cue-chip"><b>'+(i+1)+'.</b> '+
+    escHtml(c&&c.id)+(c&&c.at_t!=null?(' @ t+'+escHtml(c.at_t)+'s'):'')+
+    '<button type="button" class="cue-x" data-cue-remove="'+i+'" title="Remove cue">×</button></span>').join('')
+    ||'<span class="muted">No cues queued</span>';
+  return sig;
+}
+function stageShot(id){
+  if(!id)return null;
+  stagedShot=String(id);
+  const p=$('prv');if(p){p.className='badge tally-on-prev';p.textContent='PREVIEW '+stagedShot}
+  lastDeckSig='';renderShotDeck();
+  toast('STAGED '+stagedShot+' — Space / TAKE to cut');
+  return stagedShot;
+}
+function takeShot(){
+  if(!takeMode){toast('Switch to Preview→Take first (mode button)');return null}
+  if(!stagedShot){toast('No shot staged — press 1–9 first');return null}
+  const id=stagedShot;stagedShot='';
+  trigger(id);lastDeckSig='';renderShotDeck();
+  toast('TAKE '+id);
+  return id;
+}
+function toggleMode(){
+  takeMode=!takeMode;stagedShot='';
+  const b=$('mode_btn');if(b){b.textContent=takeMode?'Preview→Take':'Cut Bus';b.className='t-mode'+(takeMode?' on':'')}
+  const t=$('take_btn');if(t)t.disabled=!takeMode;
+  lastDeckSig='';renderShotDeck();
+  toast(takeMode?'Preview→Take: 1–9 stages, Space takes':'Cut Bus: 1–9 cuts immediately');
+  return takeMode;
+}
+function toggleFollow(){
+  const cb=$('follow_leader');
+  if(!cb||cb.disabled){toast('Follow Leader needs an active in-game event');return null}
+  cb.checked=!cb.checked;
+  const b=$('auto_follow');if(b){b.className='tog'+(cb.checked?' on':'');b.textContent=cb.checked?'✓ Follow Leader':'Follow Leader'}
+  return postAutoFlags();
+}
+function openSetup(){const d=$('drawer_setup');if(d)d.open=true;return d}
+function collapseSetup(){const d=$('drawer_setup');if(d)d.open=false;return d}
+function toggleConnDrawer(){const d=$('drawer_conn');if(d)d.open=!d.open;return d}
+function setAuthPill(){const p=$('auth_pill');if(p){p.textContent=tok?'Auth ✓':'Auth';p.className='pill'+(tok?' ok':'')}}
+function setObsPill(t){
+  const p=$('obs_pill');if(!p)return;
+  const live=/connected|recording|scene set|ready|checking/i.test(String(t||''));
+  p.textContent=recording?'OBS ● REC':(live?'OBS LIVE':'OBS OFF');
+  p.className='pill '+(!live&&!recording?'':(recording?'rec':'ok'));
+}
+/* New operator fields are the visible ones; the original IDs remain in the DOM
+   as mirrors so every legacy handler/test keeps working unchanged. */
+function syncObsAliases(){
+  const a=$('obs_url'),b=$('obsurl');if(a&&b&&String(a.value||'').trim())b.value=a.value;
+  const p=$('obs_pw'),q=$('obspw');if(p&&q&&String(p.value||''))q.value=p.value;
+  const r=$('obs_rem'),s=$('obs_remember');if(r&&s)s.checked=!!r.checked;
+  const sc=$('obs_sc'),osc=$('obsscene');if(sc&&osc&&sc.value)osc.value=sc.value;
+}
+function renderObsScenePads(scenes,current){
+  const list=Array.isArray(scenes)?scenes:[];
+  const host=$('obs_scene_pads');if(host)host.innerHTML=list.map(sc=>
+    '<button type="button" class="scene-pad'+(sc===current?' pgm':'')+'" data-rc-scene="'+escHtml(sc)+'">'+
+    escHtml(sc)+'</button>').join('');
+  const q=$('obs_quick');if(q)q.style.display=list.length?'':'none';
+  return list.length;
+}
+function toggleRec(){
+  recording=!recording;
+  if(recording)recStart=Date.now();
+  const b=$('rec_btn');if(b)b.className='rec'+(recording?' on':'');
+  obsRec(recording);
+  return recording;
+}
+
 async function toggleRehearsal(){
   const next=!rehearsal;
   const j=await cmd('rehearsal',next?'on':'off');
   if(j&&j.status&&j.status.indexOf('on')>=0)rehearsal=true;
   else if(j&&j.status&&j.status.indexOf('off')>=0)rehearsal=false;
-  $('rehb').textContent=rehearsal?'ON':'OFF';banner();
+  $('rehb').textContent=rehearsal?'ON':'OFF';
+  const rb=$('reh_btn');if(rb){rb.textContent=rehearsal?'REHEARSAL ON (R)':'REHEARSAL (R)';rb.className='pill'+(rehearsal?' rec':'')}
+  banner();
 }
 function banner(){
   const b=$('banner');b.className='';b.textContent='';
-  if(windowDegraded){b.className='degraded';b.textContent='DEGRADED — operator heartbeat lost, shots stopped. Press Arm (A), then Start (S) to resume.'}
-  else if(windowTargetLost){b.className='degraded';b.textContent='TARGET LOST — followed player not found; holding last camera pose.'}
-  else if(rehearsal){b.className='rehearsal';b.textContent='REHEARSAL — camera and OBS record commands are suppressed'}
+  const deg=$('deg'),reh=$('reh');
+  if(deg){deg.className='alert deg';deg.textContent=''}
+  if(reh){reh.className='alert reh';reh.textContent=''}
+  if(windowDegraded){b.className='degraded';b.textContent='DEGRADED — operator heartbeat lost, shots stopped. Press Arm (A), then Start (S) to resume.';if(deg){deg.className='alert deg on';deg.textContent=b.textContent}}
+  else if(windowTargetLost){b.className='degraded';b.textContent='TARGET LOST — followed player not found; holding last camera pose.';if(deg){deg.className='alert deg on';deg.textContent=b.textContent}}
+  else if(rehearsal){b.className='rehearsal';b.textContent='REHEARSAL — camera and OBS record commands are suppressed';if(reh){reh.className='alert reh on';reh.textContent=b.textContent}}
 }
 async function cmd(c,a){
   try{
     let r=await fetch('/api/command',{method:'POST',headers:Object.assign({'content-type':'application/json'},hdr()),body:JSON.stringify({cmd:c,args:a||''})});
     let j=await r.json();
     $('out').textContent=JSON.stringify(j)+'\n'+$('out').textContent;
+    toast((j&&j.status)?j.status:(c+' ok'));
     return j;
-  }catch(e){$('out').textContent='ERR '+e+'\n'+$('out').textContent}
+  }catch(e){$('out').textContent='ERR '+e+'\n'+$('out').textContent;toast('ERR '+e)}
 }
 let cueList=[];
 function trigger(id){if(!id)return;shotHist.push(id);if(shotHist.length>50)shotHist.shift();cmd('trigger',id)}
@@ -243,6 +515,7 @@ function enqueue(){
   const cue=at?{id:id,at_t:parseFloat(at)}:{id:id};
   cueList.push(cue);
   cmd('queue',JSON.stringify(cueList));
+  renderCues();
   $('qat').value='';
 }
 function undo(){shotHist.pop();const p=shotHist[shotHist.length-1];if(p)cmd('trigger',p);else cmd('stop')}
@@ -365,6 +638,13 @@ async function setTargetByName(name){
 function lockTyped(){const n=$('tgt_name').value.trim();return n?setTargetByName(n):null}
 document.addEventListener('keydown',e=>{
   const t=(e.target&&e.target.tagName)||'';
+  // Esc releases any focused field at once so 1-9 / A / S / X work again.
+  if(e.key==='Escape'||e.key==='Esc'){
+    const a=document.activeElement;
+    if(a&&a.blur&&typingEl(a))a.blur();
+    updateKeysPill();
+    return;
+  }
   if(/INPUT|SELECT|TEXTAREA/.test(t))return;
   const k=e.key.toLowerCase();
   // Alt+1..9 cut the target without stealing the 1..9 camera shot slots.
@@ -381,7 +661,11 @@ document.addEventListener('keydown',e=>{
   else if(k==='q')enqueue();
   else if(k==='z')undo();
   else if(k==='r')toggleRehearsal();
-  else if(/^[1-9]$/.test(k)){const o=$('sid').options[+k-1];if(o)trigger(o.value)}
+  else if(k===' '||e.code==='Space'){if(takeMode){e.preventDefault();takeShot()}}
+  else if(/^[1-9]$/.test(k)){
+    const o=$('sid').options[+k-1];
+    if(o){if(takeMode)stageShot(o.value);else trigger(o.value)}
+  }
 });
 
 async function poll(){
@@ -412,6 +696,16 @@ async function poll(){
       s.shots.forEach((shot,i)=>{let o=document.createElement('option');o.value=shot;o.textContent=(i<9?(i+1)+'. ':'· ')+shot;$('sid').appendChild(o)});
       if([...$('sid').options].some(o=>o.value===keep))$('sid').value=keep;
     }
+    // Broadcast Desk v2: live tally mirrors, pads and interactive cue chips.
+    const pg=$('pgm');if(pg){pg.className='badge '+(cur&&cur!=='none'?'tally-on-prog':'tally-off');pg.textContent='PROGRAM '+(cur&&cur!=='none'?cur:'—')}
+    if(stagedShot){$('prv').className='badge tally-on-prev';$('prv').textContent='PREVIEW '+stagedShot}
+    const ap=$('arm_pill');if(ap){const on=s.running===true;ap.textContent=on?'ARMED':'STANDBY';ap.className='pill '+(on?'armed':'standby')}
+    const tn=$('tgt_name');if(tn&&document.activeElement!==tn&&s.target_name)tn.value=s.target_name;
+    const rb=$('reh_btn');if(rb){rb.textContent=rehearsal?'REHEARSAL ON (R)':'REHEARSAL (R)';rb.className='pill'+(rehearsal?' rec':'')}
+    if(recording){const sec=Math.floor((Date.now()-recStart)/1000);const mm=String(Math.floor(sec/60)).padStart(2,'0'),ss=String(sec%60).padStart(2,'0');const rt=$('rec_time');if(rt)rt.textContent=mm+':'+ss}
+    setObsPill($('obsst').textContent);
+    renderShotDeck(s);
+    renderCues();
     renderContestants(s);
   }catch(e){}
   if((++pollTick%30)===0)refreshInbox();   // inbox can change while the panel is open
@@ -707,6 +1001,7 @@ window.routePlanner={parseRoute:parseRoute,parseAnyInput:parseAnyInput,sanitizeI
 
 /* ---- Live events / track loader / 2D preview ---- */
 let liveEvents=[],currentParsed=null,currentPoints=null,currentGates=null,currentRoute=null;
+let currentTrackName='';
 let pins=[],currentPlanId=null,pollTick=0;
 function note(s){$('track_info').textContent=s}
 async function refreshLiveEvents(){
@@ -756,6 +1051,7 @@ function liveEventDoc(ev){
   })};
 }
 function setParsed(parsed,label){
+  currentTrackName=parsed.name||label||'Track';
   currentParsed=parsed;currentPoints=parsed.points;currentGates=parsed.gates;
   currentRoute=routePlanner.fallbackRouteExport(currentPoints);
   const script=routePlanner.buildShots(parsed.name,currentPoints,currentGates,{tracksideStride:'auto'});
@@ -843,6 +1139,7 @@ function applyParsedInput(res,label,autoApply){
   if(!res)return null;
   if(res.mode==='prebuilt_plan'){
     const pts=pointsFromRoute(res.route,res.plan);
+    currentTrackName=(res.plan&&res.plan.name)||res.plan_id||label||'Track';
     currentParsed=null;currentPoints=pts;currentGates=pts.map(()=>18);
     currentRoute=res.route||routePlanner.fallbackRouteExport(pts);
     currentPlanId=res.plan_id;
@@ -852,6 +1149,7 @@ function applyParsedInput(res,label,autoApply){
     if(autoApply)return postPlan(res.plan_id,res.plan);
     return res.plan;
   }
+  currentTrackName=res.parsed.name||res.plan_id||label||'Track';
   currentParsed=res.parsed;currentPoints=res.parsed.points;currentGates=res.parsed.gates;
   currentRoute=res.route;currentPlanId=res.plan_id;
   drawTrackPreview(currentPoints,res.plan.shots);
@@ -949,8 +1247,13 @@ async function buildPins(){
   return applyParsedInput(res,'Free-Roam Pins ('+pins.length+' pins)',true);
 }
 function drawTrackPreview(points,shots){
-  const c=$('track_canvas'),ctx=c&&c.getContext?c.getContext('2d'):null;
-  if(!ctx||!points||!points.length)return;
+  collapseSetup();
+  const pm=$('pv_meta');
+  if(pm)pm.textContent=(points&&points.length)?(currentTrackName+' · '+points.length+' waypoints · '+((shots&&shots.length)||0)+' shots'):'No route loaded';
+  if(!points||!points.length)return;
+  ['pv_canvas','track_canvas'].forEach(cid=>{
+  const c=$(cid),ctx=c&&c.getContext?c.getContext('2d'):null;
+  if(!ctx)return;
   const W=c.width||640,H=c.height||320,pad=28;
   ctx.clearRect(0,0,W,H);ctx.fillStyle='#0c0c0c';ctx.fillRect(0,0,W,H);
   let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
@@ -985,7 +1288,9 @@ function drawTrackPreview(points,shots){
       ctx.moveTo(px-ux*10,py+uy*10);ctx.lineTo(px+ux*14,py-uy*14);ctx.stroke();
     }
   });
+  });
 }
+
 function dataTrackIndex(sh){
   const m=/corner_(\d+)_pan/.exec(sh.id);
   return m?Number(m[1]):0;
@@ -1034,9 +1339,10 @@ function sha256(msg){
 }
 function hexB64(h){let s='';for(let i=0;i<h.length;i+=2)s+=String.fromCharCode(parseInt(h.substr(i,2),16));return btoa(s)}
 function sha256b64(s){return hexB64(sha256(s))}
-function obsSet(t){$('obsst').textContent=t}
+function obsSet(t){$('obsst').textContent=t;setObsPill(t);toast(t)}
 function obsConnect(){
-  let u; try{u=new URL(($('obsurl').value||'ws://127.0.0.1:4455').trim())}catch(e){obsSet('bad url');return}
+  syncObsAliases();
+  let u; try{u=new URL(($('obsurl').value||$('obs_url').value||'ws://127.0.0.1:4455').trim())}catch(e){obsSet('bad url');return}
   if(u.protocol!=='ws:'||!['127.0.0.1','localhost'].includes(u.hostname)){obsSet('OBS WS must be localhost');return}
   const url=u.href;
   if(obs){try{obs.close()}catch(e){}}
@@ -1071,14 +1377,19 @@ function obsReq(rt,rd,cb){
   const id='r'+(++obsId);obsPend[id]=cb||function(){};
   obs.send(JSON.stringify({op:6,d:{requestType:rt,requestData:rd||{},requestId:id}}));
 }
-function obsScenes(){obsReq('GetSceneList',{},d=>{
+function obsScenes(){syncObsAliases();obsReq('GetSceneList',{},d=>{
   if(!(d.requestStatus&&d.requestStatus.result)){obsSet('scene list failed');return}
   const s=$('obsscene');s.innerHTML='';
   (d.responseData.scenes||[]).forEach(sc=>{let o=document.createElement('option');o.value=sc.sceneName;o.textContent=sc.sceneName;s.appendChild(o)});
   if(d.responseData.currentProgramSceneName)s.value=d.responseData.currentProgramSceneName;
+  const scenes=(d.responseData.scenes||[]).map(sc=>sc.sceneName);
+  const ss=$('obs_sc');
+  if(ss){ss.innerHTML='';scenes.forEach(sc=>{let o=document.createElement('option');o.value=sc;o.textContent=sc;ss.appendChild(o)});ss.value=s.value}
+  renderObsScenePads(scenes,s.value);
   obsSources();
 })}
 function obsSources(){
+  syncObsAliases();
   const sc=$('obsscene').value;if(!sc)return;
   obsReq('GetSceneItemList',{sceneName:sc},d=>{
     const s=$('obssrc');s.innerHTML='';
@@ -1086,6 +1397,7 @@ function obsSources(){
   });
 }
 function obsSetScene(){
+  syncObsAliases();
   const sc=$('obsscene').value;
   obsReq('SetCurrentProgramScene',{sceneName:sc},d=>obsSet((d.requestStatus&&d.requestStatus.result)?'scene set: '+sc:'scene switch failed'));
 }
@@ -1110,8 +1422,11 @@ function obsCheck(){
   setTimeout(()=>obsShot(),200);
 }
 function obsRememberChange(){
-  if($('obs_remember').checked){
-    localStorage.setItem('rc_obs_pw',$('obspw').value||'');
+  const np=$('obs_pw'),lp=$('obspw'),nr=$('obs_rem'),lr=$('obs_remember');
+  const raw=String((np&&np.value)||(lp&&lp.value)||'');
+  const on=!!((nr&&nr.checked)||(lr&&lr.checked));
+  if(on){
+    localStorage.setItem('rc_obs_pw',raw);
     localStorage.setItem('rc_obs_pw_saved','1');
   }else{
     localStorage.removeItem('rc_obs_pw');localStorage.removeItem('rc_obs_pw_saved');
@@ -1127,6 +1442,31 @@ function obsRememberChange(){
     const t=e&&e.target,btn=t&&t.closest&&t.closest('button[data-rc-target]');
     if(btn)setTargetByName(btn.getAttribute('data-rc-target'));
   });
+  // Broadcast Desk v2: delegated pads/cues/scenes survive every DOM rebuild.
+  const padClick=e=>{
+    const t=e&&e.target,b=t&&t.closest&&t.closest('[data-rc-shot]');
+    if(!b)return;
+    const id=b.getAttribute('data-rc-shot');
+    if(takeMode)stageShot(id);else trigger(id);
+  };
+  $('shot_pads').addEventListener('click',padClick);
+  $('shot_pads_extra').addEventListener('click',padClick);
+  $('q').addEventListener('click',e=>{
+    const t=e&&e.target,b=t&&t.closest&&t.closest('[data-cue-remove]');
+    if(!b)return;
+    const i=Number(b.getAttribute('data-cue-remove'));
+    if(!isFinite(i))return;
+    cueList.splice(i,1);cmd('queue',JSON.stringify(cueList));renderCues();
+  });
+  $('obs_scene_pads').addEventListener('click',e=>{
+    const t=e&&e.target,b=t&&t.closest&&t.closest('[data-rc-scene]');
+    if(!b)return;
+    const sc=b.getAttribute('data-rc-scene');
+    if(sc){$('obs_sc').value=sc;syncObsAliases();obsSetScene()}
+  });
+  document.addEventListener('focusin',updateKeysPill);
+  document.addEventListener('focusout',()=>{setTimeout(updateKeysPill,0)});
+  updateKeysPill();
   $('drop_zone').addEventListener('click',pickTrackFile);
   const card=$('track_loader_card');
   card.addEventListener('dragover',e=>{
@@ -1161,9 +1501,13 @@ function obsRememberChange(){
     }
   });
   $('obs_remember').addEventListener('change',obsRememberChange);
+  $('obs_rem').addEventListener('change',()=>{syncObsAliases();obsRememberChange()});
   if(localStorage.getItem('rc_obs_pw_saved')==='1'){
-    $('obspw').value=localStorage.getItem('rc_obs_pw')||'';
+    const savedPw=localStorage.getItem('rc_obs_pw')||'';
+    $('obspw').value=savedPw;
+    $('obs_pw').value=savedPw;
     $('obs_remember').checked=true;
+    $('obs_rem').checked=true;
     obsConnect();
   }
   const hash=location.hash||'';
@@ -1175,10 +1519,16 @@ function obsRememberChange(){
       try{localStorage.setItem('rc_tok',tok)}catch(e){}
       try{sessionStorage.setItem('racecam_tok',tok)}catch(e){}
       $('tok').value=tok;
+      setAuthPill();
       history.replaceState(null,'','/');
       if(params.get('autoload')==='current')loadCurrentLiveEvent();
     }
   }
+  // Setup stays open only while there is no route; other drawers start shut.
+  const setup=$('drawer_setup');if(setup)setup.open=!currentPoints;
+  const conn=$('drawer_conn');if(conn)conn.open=false;
+  const logDrawer=$('drawer_log');if(logDrawer)logDrawer.open=false;
+  setAuthPill();
   poll();  // start live polling only after the hash token has been applied
   refreshLiveEvents();
   refreshPlans();
@@ -1196,7 +1546,13 @@ window.racecamPanel={cmd:cmd,trigger:trigger,enqueue:enqueue,undo:undo,toggleReh
   renderContestants:renderContestants,setTargetByName:setTargetByName,lockTyped:lockTyped,
   setSmoothing:setSmoothing,highlightSmoothing:highlightSmoothing,poll:poll,
   getSmoothingMode:()=>smoothingMode,
-  getRosterNames:()=>rosterNames.slice(),getRosterSig:()=>lastRosterSig};
+  getRosterNames:()=>rosterNames.slice(),getRosterSig:()=>lastRosterSig,
+  renderShotDeck:renderShotDeck,renderCues:renderCues,stageShot:stageShot,takeShot:takeShot,
+  toggleMode:toggleMode,toggleFollow:toggleFollow,toggleRec:toggleRec,isTakeMode:isTakeMode,
+  getStagedShot:()=>stagedShot,getDeckSig:()=>lastDeckSig,updateKeysPill:updateKeysPill,
+  collapseSetup:collapseSetup,openSetup:openSetup,toggleConnDrawer:toggleConnDrawer,
+  renderObsScenePads:renderObsScenePads,setAuthPill:setAuthPill,setObsPill:setObsPill,
+  syncObsAliases:syncObsAliases,toast:toast};
 </script></body></html>]=]
 
 return M
