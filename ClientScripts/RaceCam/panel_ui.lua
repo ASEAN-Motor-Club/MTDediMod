@@ -150,6 +150,10 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
     <button id="hud_tags" class="sm-btn" onclick="setHudMode('tags_only')">Tags Only</button>
     <button id="hud_clean" class="sm-btn" onclick="setHudMode('clean')">Clean</button>
   </span>
+  <span class="dir-ctl" title="OBS live standings overlay — timing tower Browser Source">
+    <button id="ov_toggle" class="sm-btn" onclick="toggleOverlay()">Overlay: ON</button>
+    <button id="ov_copy" class="sm-btn" onclick="copyObsUrl()">Copy OBS URL</button>
+  </span>
   <button id="auth_pill" class="pill" onclick="toggleConnDrawer()">Auth</button>
   <button id="obs_pill" class="pill" onclick="toggleConnDrawer()">OBS OFF</button>
   <button id="reh_btn" class="pill" onclick="toggleRehearsal()">REHEARSAL (R)</button>
@@ -351,6 +355,7 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
 <li><strong>Rehearsal (<code>R</code>):</strong> cues and timing run but the live camera does not move. OBS <strong>Start record</strong> is blocked while rehearsal is on; <strong>Stop record</strong> still works so a dry run cannot pollute a real recording.</li>
 <li><strong>Safety &amp; fail-safes:</strong> <code>X</code> is the instant Panic Stop. If the browser tab closes or crashes for more than 120 s, the Lua server stops the camera and marks the session <code>DEGRADED</code>; reconnect, read the red banner and press <code>A</code> to re-arm. Watch the status strip for active shot, FOV, plan, countdown, heartbeat age and camera state — and the <code>out</code> log when something looks wrong.</li>
 <li><strong>OBS Studio:</strong> enable WebSocket v5 on <code>127.0.0.1:4455</code> with auth, enter the password once in the OBS card, click <strong>Connect</strong> and <strong>Check OBS</strong>, then <strong>Refresh scenes</strong> → <strong>Go to scene</strong> → <strong>Preview</strong>. Turn on Studio Mode in OBS so preview stays isolated from program; Start/Stop record and <strong>Preview</strong> are all controllable from here.</li>
+<li><strong>Live Standings Overlay:</strong> <strong>Copy OBS URL</strong> gives a token-free Browser Source URL (<code>/overlay/standings</code> on port <code>8767</code>) for OBS on this PC or a remote Mac on the LAN. The <code>Overlay: ON/OFF</code> button fades the timing tower in/out on cue without touching OBS; it stays hidden automatically when no race is active.</li>
 </ul>
 </details>
 <script>
@@ -453,6 +458,42 @@ async function setHudMode(mode){
   if(HUD_MODES.indexOf(mode)<0)return null;
   hudMode=mode;highlightHud(mode);
   return cmd('hud',mode);
+}
+
+/* ---- OBS live standings overlay: ON/OFF + Browser Source URL ----
+   /api/standings and /overlay/standings need no token, so the copied URL is
+   safe to paste into an OBS scene on this PC or a remote Mac. */
+let overlayVisible=true;
+function renderOverlayToggle(){
+  const b=$('ov_toggle');if(!b)return;
+  b.textContent=overlayVisible?'Overlay: ON':'Overlay: OFF';
+  b.className='sm-btn'+(overlayVisible?' on':'');
+  b.title=overlayVisible?'Timing tower visible in OBS':'Timing tower hidden in OBS';
+}
+async function toggleOverlay(){
+  const j=await cmd('overlay','toggle');
+  overlayVisible=(j&&typeof j.overlay_visible==='boolean')?!!j.overlay_visible:!overlayVisible;
+  renderOverlayToggle();
+  return j;
+}
+function obsOverlayUrl(){
+  const origin=location.origin||((location.href&&new URL(location.href).origin)||'http://127.0.0.1:8767');
+  return origin.replace(/\/$/,'')+'/overlay/standings';
+}
+async function copyObsUrl(){
+  const url=obsOverlayUrl();
+  try{
+    if(navigator&&navigator.clipboard&&navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(url);
+    }else{
+      const ta=document.createElement('textarea');
+      ta.value=url;document.body.appendChild(ta);ta.select();
+      document.execCommand&&document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    toast('Copied OBS URL '+url);
+    return url;
+  }catch(e){toast('Copy failed — '+url);return url}
 }
 
 /* ---- Broadcast Desk v2: tally, camera pads, preview→take, focus keys ----
@@ -794,6 +835,7 @@ async function poll(){
     highlightDirector(directorMode);renderDirBadge();
     const hMode=HUD_MODES.indexOf(s.hud_mode)>=0?s.hud_mode:'full';
     hudMode=hMode;highlightHud(hMode);
+    if(s.overlay_visible!=null){overlayVisible=!!s.overlay_visible;renderOverlayToggle()}
     if(s.rehearsal!=null&&s.rehearsal!==rehearsal){rehearsal=!!s.rehearsal;$('rehb').textContent=rehearsal?'ON':'OFF'}
     banner();
     const cur=s.current||s.active_shot||'none';
@@ -1740,6 +1782,8 @@ window.racecamPanel={cmd:cmd,trigger:trigger,enqueue:enqueue,undo:undo,toggleReh
   sha256:sha256,sha256b64:sha256b64,routePlanner:window.routePlanner,
   renderContestants:renderContestants,setTargetByName:setTargetByName,lockTyped:lockTyped,
   setSmoothing:setSmoothing,highlightSmoothing:highlightSmoothing,poll:poll,
+  toggleOverlay:toggleOverlay,copyObsUrl:copyObsUrl,obsOverlayUrl:obsOverlayUrl,
+  renderOverlayToggle:renderOverlayToggle,getOverlayVisible:()=>overlayVisible,
   getSmoothingMode:()=>smoothingMode,
   setDirector:setDirector,highlightDirector:highlightDirector,renderDirBadge:renderDirBadge,
   getDirectorMode:()=>directorMode,

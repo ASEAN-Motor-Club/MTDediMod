@@ -83,6 +83,18 @@ local server = nil
 local pending = {}
 local last_result = "idle"
 
+-- Producer-controlled visibility of the OBS standings overlay. Plain boolean:
+-- never a UObject, so it is safe to read on every HTTP tick.
+local overlay_visible = true
+
+-- OBS Browser Source markup lives in its own module, exactly like the panel.
+local ok_ov_ui, ov_ui = pcall(require, "RaceCam/overlay_ui")
+local OVERLAY_HTML = "<html><body>Standings overlay UI missing</body></html>"
+if ok_ov_ui and ov_ui and type(ov_ui.html) == "function" then
+  local ok_html, html = pcall(ov_ui.html)
+  if ok_html and type(html) == "string" and html ~= "" then OVERLAY_HTML = html end
+end
+
 -- Heartbeat fail-safe state: armed by the first authenticated request, so the
 -- panel only becomes load-bearing once an operator is actually watching.
 local hb_armed = false
@@ -238,6 +250,57 @@ local function standings_json(s)
   return "{" .. table.concat(parts, ",") .. "}"
 end
 
+--- Full /api/standings payload. The cache stores ONLY the serialized JSON
+--- string (never a UE4SS UObject), for at most 250 ms, so an OBS Browser
+--- Source + the operator panel cannot hammer Net_Events on the game thread.
+local standings_payload_cache = { key = nil, t = -math.huge, value = nil }
+
+local function snapshot_for_guid(guid)
+  if not guid or guid == "" then
+    local ok, s = pcall(function() return LiveEvents.active_standings() end)
+    return ok and s or nil
+  end
+  local ok, events = pcall(function() return LiveEvents.list() end)
+  if not ok or type(events) ~= "table" then return nil end
+  for _, ev in ipairs(events) do
+    if ev.guid == guid and #ev.standings > 0 then
+      return {
+        event_name = ev.name, event_guid = ev.guid, state = ev.state,
+        in_countdown = ev.in_countdown, num_laps = ev.num_laps,
+        waypoint_count = ev.waypoint_count, standings = ev.standings,
+      }
+    end
+  end
+  return nil
+end
+
+local function standings_payload_json(event_guid)
+  local key = tostring(event_guid or "")
+  local now = os.clock()
+  if standings_payload_cache.key == key and now - standings_payload_cache.t < 0.25 then
+    return standings_payload_cache.value
+  end
+  local s = snapshot_for_guid(key)
+  local e = _G.RACECAM_SHOTS
+  local target = e and e.target_name or nil
+  if not target then
+    local st = engine_status()
+    target = st and st.target_name or nil
+  end
+  if type(target) ~= "string" or target == "" then target = nil end
+  local parts = {}
+  parts[#parts + 1] = '"ok":true'
+  parts[#parts + 1] = '"visible":' .. tostring(overlay_visible)
+  parts[#parts + 1] = '"target_name":' ..
+    (target and ('"' .. jstr(target) .. '"') or "null")
+  parts[#parts + 1] = '"active_shot":"' .. jstr(active_shot_id()) .. '"'
+  parts[#parts + 1] = '"event":' .. (s and standings_json(s) or "null")
+  local value = "{" .. table.concat(parts, ",") .. "}"
+  standings_payload_cache.key, standings_payload_cache.t, standings_payload_cache.value =
+    key, now, value
+  return value
+end
+
 local function state_json()
   local e = _G.RACECAM_SHOTS
   local st = engine_status()
@@ -276,6 +339,7 @@ local function state_json()
   parts[#parts + 1] = '"director_override_s":' ..
     tostring(tonumber((init and init.director_override_s) or 0) or 0)
   parts[#parts + 1] = '"hud_mode":"' .. jstr((init and init.hud_mode) or "full") .. '"'
+  parts[#parts + 1] = '"overlay_visible":' .. tostring(overlay_visible)
   local smoothing = (e and e.smoothing_mode) or (init and init.smoothing_mode) or "normal"
   if type(smoothing) ~= "string" or smoothing == "" then smoothing = "normal" end
   parts[#parts + 1] = '"smoothing":"' .. jstr(smoothing) .. '"'
@@ -507,6 +571,15 @@ local function make_response(req)
   local authed = false
   if req.method == "GET" and (req.path == "/" or req.path == "/index.html") then
     code, body, ctype = 200, PANEL, "text/html"
+  -- The standings API and OBS page are strictly read-only: no token, so the
+  -- secret never has to be pasted into an OBS Browser Source URL. Both sit
+  -- BEFORE the auth gate; every write route stays behind it.
+  elseif req.method == "GET" and
+      (req.path == "/api/standings" or req.path:match("^/api/standings%?")) then
+    code, body = 200, standings_payload_json(query_value(req.path, "event"))
+  elseif req.method == "GET" and
+      (req.path == "/overlay/standings" or req.path:match("^/overlay/standings%?")) then
+    code, body, ctype = 200, OVERLAY_HTML, "text/html; charset=utf-8"
   elseif not token or token == "" or req.headers["x-racecam-token"] ~= token then
     body = '{"error":"bad token"}'
   elseif req.method == "GET" and req.path == "/api/state" then
@@ -739,6 +812,32 @@ local function make_response(req)
         last_result = "director:" .. mode
         code, body = 200, '{"ok":true,"status":"director:' .. jstr(mode) ..
           '","director_mode":"' .. jstr(mode) .. '"}'
+        audit("command", cmd, last_result)
+      end
+      log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
+    elseif cmd == "overlay" then
+      -- Producer show/hide/fade of the OBS timing tower. Token-gated like
+      -- every other write command; the read-only standings API stays public.
+      local ok_ov = true
+      if args == "show" or args == "" then
+        overlay_visible = true
+      elseif args == "hide" then
+        overlay_visible = false
+      elseif args == "toggle" then
+        overlay_visible = not overlay_visible
+      else
+        ok_ov = false
+        code, body = 400, '{"ok":false,"error":"invalid overlay args"}'
+        last_result = "ERR invalid overlay args"
+        audit("command", cmd, last_result)
+      end
+      if ok_ov then
+        -- Drop only the serialized-string cache so /api/standings echoes the
+        -- new visibility immediately (no UObject is ever cached).
+        standings_payload_cache.t = -math.huge
+        last_result = "overlay:" .. (overlay_visible and "show" or "hide")
+        code, body = 200, '{"ok":true,"status":"' .. jstr(last_result) ..
+          '","overlay_visible":' .. tostring(overlay_visible) .. '}'
         audit("command", cmd, last_result)
       end
       log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)

@@ -578,6 +578,180 @@ print("STANDINGS_OK")
 '''
 
 
+# Fourth host harness: the read-only OBS endpoints and the token-gated overlay
+# command. Exercises visibility in /api/standings and /api/state, the 250 ms
+# serialized-string cache, and ?event= pinning against real Lua modules.
+LUA_OVERLAY_HARNESS = r'''
+local DATA_DIR = "__DATA_DIR__"
+local ROOT = "__REPO_ROOT__/ClientScripts"
+package.path = ROOT .. "/?.lua;" .. ROOT .. "/?/init.lua;" .. package.path
+
+local real_getenv = os.getenv
+os.getenv = function(k)
+  if k == "RACECAM_DIR" then return DATA_DIR end
+  return real_getenv(k)
+end
+
+RequireSafe = function() return nil end
+CreateInvalidObject = function() return { IsValid = function() return false end } end
+FindAllOf = function() return {} end
+FindFirstOf = function() return nil end
+StaticFindObject = function() return nil end
+GetCachedWorld = function() return CreateInvalidObject() end
+LogOutput = function() end
+LoopInGameThreadWithDelay = function() return true end
+LoopInGameThreadAfterFrames = function() return true end
+IsValid = function(o) return o ~= nil end
+package.preload["socket"] = function()
+  return { bind = function() error("socket.bind must not be called in this test") end }
+end
+package.loaded["JsonParser"] = (function()
+  local function encode(v)
+    if type(v) == "table" then
+      if #v > 0 then
+        local parts = {}
+        for _, x in ipairs(v) do parts[#parts + 1] = encode(x) end
+        return "[" .. table.concat(parts, ",") .. "]"
+      end
+      local keys, parts = {}, {}
+      for k in pairs(v) do keys[#keys + 1] = k end
+      table.sort(keys)
+      for _, k in ipairs(keys) do parts[#parts + 1] = '"' .. tostring(k) .. '":' .. encode(v[k]) end
+      return "{" .. table.concat(parts, ",") .. "}"
+    elseif type(v) == "string" then
+      return '"' .. v:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+    elseif type(v) == "boolean" then
+      return tostring(v)
+    end
+    return tostring(v)
+  end
+  return { stringify = encode, parse = function() return nil end, null = {} }
+end)()
+
+local function fname(s) return { ToString = function() return s end } end
+local function player(name, rank, best, last)
+  return { PlayerName = fname(name), Rank = rank,
+    Laps = 2, SectionIndex = 6, BestLapTime = best or 90,
+    LastSectionTotalTimeSeconds = last or 180,
+    bFinished = false, bDisqualified = false }
+end
+local function wp(x)
+  return { Translation = { X = x, Y = 0, Z = 0 }, Scale3D = { Y = 1.2 } }
+end
+
+local EVENTS = {
+  {
+    EventGuid = { A = 1, B = 2, C = 3, D = 4 },
+    EventName = fname("Aewol Sprint"), State = 2, bInCountdown = false,
+    Players = { player("Alice", 1, 88.2, 180), player("LocalDriver", 2, 91.5, 181.4) },
+    RaceSetup = { NumLaps = 7, Route = { RouteName = fname("Aewol"),
+      Waypoints = { wp(1), wp(2), wp(3) } } },
+  },
+  {
+    EventGuid = { A = 9, B = 8, C = 7, D = 6 },
+    EventName = fname("Quarry Rally"), State = 1, bInCountdown = true,
+    Players = { player("Bob", 1, 95, 220) },
+    RaceSetup = { NumLaps = 3, Route = { RouteName = fname("Quarry"),
+      Waypoints = { wp(7) } } },
+  },
+}
+GetMotorTownGameState = function()
+  return { IsValid = function() return true end,
+    Net_EventSystem = { IsValid = function() return true end, Net_Events = EVENTS } }
+end
+GetMyPlayerController = function()
+  return { IsValid = function() return true end,
+    PlayerState = { IsValid = function() return true end,
+      PlayerName = fname("LocalDriver") } }
+end
+
+local LiveEvents = require("RaceCam/live_events")
+local Paths = require("RaceCam/paths")
+local Http = require("RaceCam/http")
+local tok = Paths.ensure_token()
+assert(type(tok) == "string" and #tok == 64, "token setup failed")
+_G.RACECAM_SHOTS = { target_name = "LocalDriver", active = { id = "heli_follow" },
+  list_targets = function() return { "Alice", "LocalDriver" } end }
+
+local function req(method, path, token_value, request_body)
+  return Http._make_response({
+    method = method or "GET", path = path,
+    headers = token_value and { ["x-racecam-token"] = token_value } or {},
+    body = request_body or "",
+  })
+end
+local function status(resp) return tonumber(resp:match("^HTTP/1.1 (%d+)")) end
+local function body(resp) return resp:match("\r\n\r\n(.*)$") or "" end
+local function ctype(resp) return resp:match("Content%-Type: ([^\r\n]+)") or "" end
+local function has(hay, needle) return hay:find(needle, 1, true) ~= nil end
+
+-- READ-ONLY, UNAUTHENTICATED: no token, no write side effects ----------------
+local r = req("GET", "/api/standings", nil)
+local b = body(r)
+assert(status(r) == 200, "GET /api/standings must be public: " .. tostring(status(r)))
+assert(has(ctype(r), "application/json"), "standings content-type: " .. ctype(r))
+for _, needle in ipairs({ '"ok":true', '"visible":true',
+    '"target_name":"LocalDriver"', '"active_shot":"heli_follow"',
+    '"event":{"event_name":"Aewol Sprint"', '"event_guid":"00000001',
+    '"state":2', '"in_countdown":false', '"num_laps":7', '"waypoint_count":3',
+    '"standings":[{"rank":1,"name":"Alice"' }) do
+  assert(has(b, needle), "/api/standings missing " .. needle .. ": " .. b)
+end
+assert(not has(b, '"waypoints"'), "standings payload must stay compact: " .. b)
+
+-- 250 ms cache stores only the serialized string, never a UObject -----------
+EVENTS[1].EventName = fname("Changed Mid Poll")
+local cached = body(req("GET", "/api/standings", nil))
+assert(cached == b, "250 ms string cache must absorb a rapid re-poll")
+EVENTS[1].EventName = fname("Aewol Sprint")
+LiveEvents.clear_cache()
+
+-- ?event=<guid> pins a specific lobby ---------------------------------------
+local events = LiveEvents.list("LocalDriver")
+local guid2 = events[2].guid
+local pinned = body(req("GET", "/api/standings?event=" .. guid2, nil))
+assert(has(pinned, '"event_name":"Quarry Rally"') and has(pinned, '"name":"Bob"'),
+       "?event= must pin the requested lobby: " .. pinned)
+
+-- OBS Browser Source page: public, HTML, self-contained ---------------------
+local page = req("GET", "/overlay/standings", nil)
+assert(status(page) == 200 and has(ctype(page), "text/html"), "overlay page must be public HTML")
+local html = body(page)
+for _, needle in ipairs({ 'id="tower"', "/api/standings", "tabular-nums",
+    "background:transparent", "translateY(", "rcOverlay" }) do
+  assert(has(html, needle), "overlay HTML missing " .. needle)
+end
+
+-- WRITE COMMAND: token-gated, mirrored into /api/state and /api/standings ---
+local unauth = req("POST", "/api/command", nil, '{"cmd":"overlay","args":"toggle"}')
+assert(status(unauth) == 400 and has(body(unauth), "bad token"),
+       "overlay command must require a token: " .. body(unauth))
+local badargs = req("POST", "/api/command", tok, '{"cmd":"overlay","args":"banana"}')
+assert(status(badargs) == 400 and has(body(badargs), "invalid overlay args"),
+       "invalid overlay args must be rejected: " .. body(badargs))
+
+local toggled = req("POST", "/api/command", tok, '{"cmd":"overlay","args":"toggle"}')
+assert(status(toggled) == 200 and has(body(toggled), '"overlay_visible":false'),
+       "toggle must hide the overlay: " .. body(toggled))
+local hiddenStandings = body(req("GET", "/api/standings", nil))
+assert(has(hiddenStandings, '"visible":false'),
+       "/api/standings must echo hidden visibility: " .. hiddenStandings)
+local state = req("GET", "/api/state", tok)
+assert(status(state) == 200 and has(body(state), '"overlay_visible":false'),
+       "/api/state must echo overlay_visible: " .. body(state))
+local shown = req("POST", "/api/command", tok, '{"cmd":"overlay","args":"show"}')
+assert(status(shown) == 200 and has(body(shown), '"overlay_visible":true'),
+       "show must restore visibility: " .. body(shown))
+local again = body(req("GET", "/api/standings", nil))
+assert(has(again, '"visible":true'), "cache must be invalidated by a command: " .. again)
+local hidden = req("POST", "/api/command", tok, '{"cmd":"overlay","args":"hide"}')
+assert(status(hidden) == 200 and has(body(hidden), '"overlay_visible":false'),
+       "hide must hide the overlay: " .. body(hidden))
+
+print("OVERLAY_OK")
+'''
+
+
 # Shared prelude for the five Stage-1/Stage-2 smoothing harnesses. The engine's
 # clock is injected (`T`) so every test is fully deterministic under Lua 5.4.
 SMOOTHING_PRELUDE = r'''
@@ -1643,6 +1817,61 @@ class RaceCamLuaTests(unittest.TestCase):
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
+    def test_overlay_static_surface_and_packaging(self) -> None:
+        """Public read routes precede auth; the write command stays gated."""
+        src = HTTP_PATH.read_text(encoding="utf-8")
+        gate_pos = src.index('not token or token == "" or req.headers["x-racecam-token"] ~= token')
+        for needle in ('req.path == "/api/standings"', 'req.path == "/overlay/standings"'):
+            with self.subTest(public_route=needle):
+                self.assertLess(src.index(needle), gate_pos,
+                                f"{needle} must not require a token")
+        for needle in ('cmd == "overlay"', '"overlay_visible":',
+                       'standings_payload_cache', 'RaceCam/overlay_ui',
+                       'text/html; charset=utf-8'):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, src)
+        self.assertGreater(src.index('cmd == "overlay"'), gate_pos,
+                           "overlay write command must stay token-gated")
+
+        overlay = (RACECAM / "overlay_ui.lua").read_text(encoding="utf-8")
+        for needle in ("function M.html()", 'id="tower"', "tabular-nums",
+                       "background:transparent", "qnum('top'", "qs.get('mode')",
+                       "qs.get('always')", "visible!==false"):
+            with self.subTest(overlay=needle):
+                self.assertIn(needle, overlay)
+
+        # Admin packaging copies the whole RaceCam tree (so overlay_ui.lua is
+        # included); the player variant deletes RaceCam entirely.
+        flake = (REPO / "flake.nix").read_text(encoding="utf-8")
+        self.assertIn('cp -r "$LUA_SCRIPTS_DIR"/* "$PACKAGE_DIR/ue4ss/Mods/$MOD_NAME/Scripts/"', flake)
+        self.assertIn('ADMIN_ONLY="Shortcuts.lua Commands.lua OverlayBridge.lua '
+                      'VehicleManager.lua IntegrityChecker.lua RaceCam"', flake)
+        self.assertIn('for f in $ADMIN_ONLY; do rm -rf', flake)
+
+    def test_lua_overlay_endpoints_and_command(self) -> None:
+        """Real Lua 5.4 harness: public standings page + token-gated overlay cmd."""
+        tmpdir = Path(tempfile.mkdtemp(prefix="racecam_overlay_", dir=SCRATCH))
+        try:
+            harness = LUA_OVERLAY_HARNESS.replace("__DATA_DIR__", str(tmpdir)).replace(
+                "__REPO_ROOT__", str(REPO)
+            )
+            harness_path = tmpdir / "harness.lua"
+            harness_path.write_text(harness, encoding="utf-8")
+            wrapper_path = tmpdir / "run_harness.sh"
+            wrapper_path.write_text(
+                "#!/usr/bin/env bash\nset -u\n"
+                f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [str(HOSTRUN), str(wrapper_path)],
+                capture_output=True, text=True, timeout=180,
+            )
+            self.assertEqual(0, proc.returncode,
+                             f"overlay harness failed:\n{proc.stdout}\n{proc.stderr}")
+            self.assertIn("OVERLAY_OK", proc.stdout, f"{proc.stdout}\n{proc.stderr}")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def _run_smoothing_harness(self, body: str, token: str, prefix: str) -> None:
         """Run one deterministic Lua 5.4 smoothing harness on the NixOS host."""

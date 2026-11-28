@@ -45,7 +45,7 @@ VALID_IDS = {
     "sm_tau_hdg", "sm_tau_hdg_v", "sm_tau_look", "sm_tau_look_v",
     "sm_tau_fov", "sm_tau_fov_v", "sm_predict", "sm_reset",
     "dir_off", "dir_shots", "dir_full", "dir_badge",
-    "hud_full", "hud_tags", "hud_clean",
+    "hud_full", "hud_tags", "hud_clean", "ov_toggle", "ov_copy",
     "live_current", "live_load_btn", "live_refresh", "live_events", "auto_start",
     "follow_leader", "track_file", "drop_zone", "saved_plans", "plans_refresh",
     "plan_load", "track_info", "track_canvas",
@@ -104,7 +104,9 @@ function mkStore(){
 }
 globalThis.localStorage = mkStore();
 globalThis.sessionStorage = mkStore();
-globalThis.location = {hash:'', href:'http://127.0.0.1:8767/'};
+globalThis.location = {hash:'', href:'http://127.0.0.1:8767/', origin:'http://127.0.0.1:8767'};
+Object.defineProperty(globalThis, 'navigator', {configurable:true,
+  value:{clipboard:{writeText:async t => {globalThis.__copied = t;}}}});
 const replaceStateCalls = [];
 globalThis.history = {replaceState:(...a) => replaceStateCalls.push(a)};
 const fetchLog = [];
@@ -1664,6 +1666,330 @@ class BroadcastFramingV2Tests(unittest.TestCase):
     def test_zero_drive_paths_and_no_external_assets(self):
         self.assertIsNone(re.search(r"\bD:[\\/]", self.lua))
         self.assertIsNone(re.search(r"<(?:script|link)[^>]+(?:src|href)=", self.lua))
+
+
+OVERLAY_UI = ROOT / "ClientScripts" / "RaceCam" / "overlay_ui.lua"
+
+# Browser stubs for the self-contained overlay page. The page's own 500 ms
+# poll is suppressed; data is fed in explicitly through window.rcOverlay.
+OVERLAY_NODE_PREFIX = r"""
+globalThis.setTimeout = (fn, ms) => 0;
+globalThis.requestAnimationFrame = fn => 0;
+globalThis.Date.now = () => globalThis.__now || 1000;
+const els = {};
+function mkEl(id){
+  const o = {id:id, value:'', textContent:'', className:'', checked:false,
+    disabled:false, style:{}, options:[], files:[], src:'', _attrs:{}};
+  o.appendChild = c => { o.options.push(c); return c; };
+  o.addEventListener = (ev, fn) => { (o._ev = o._ev || {})[ev] = fn; };
+  o.setAttribute = (k, v) => { o._attrs[k] = v; };
+  o.getAttribute = k => (k in o._attrs) ? o._attrs[k] : null;
+  o.click = () => {};
+  Object.defineProperty(o, 'innerHTML', {configurable:true,
+    get(){return o._html || ''},
+    set(v){o._html = v; if(v === '')o.options.length = 0;
+           if(o.id === 'rows' && globalThis.__flipAutoAdvance)globalThis.__flipPhase = 'new';}});
+  o.getBoundingClientRect = () => {
+    const m = (globalThis.__flipPhase === 'old') ? (globalThis.__oldRects || {})
+                                                 : (globalThis.__newRects || {});
+    return {top:m[o.getAttribute('data-name') || o.id] || 0, left:0};
+  };
+  o.querySelectorAll = sel => {
+    if(sel !== '[data-name]')return [];
+    const list = (globalThis.__domRows || []).map(n => {
+      const e = mkEl('row'); e.setAttribute('data-name', n); return e;
+    });
+    globalThis.__queryEls = list;
+    return list;
+  };
+  return o;
+}
+globalThis.document = {getElementById(id){return els[id] || (els[id] = mkEl(id))},
+  createElement(t){return mkEl(t)}, addEventListener(){}};
+globalThis.window = globalThis;
+globalThis.location = {get search(){return globalThis.__search || ''},
+  origin:'http://127.0.0.1:8767', href:'http://127.0.0.1:8767/overlay/standings'};
+const overlayFetchLog = [];
+globalThis.fetch = async (url, opts) => {
+  overlayFetchLog.push({url:url, opts:opts || {}});
+  return {ok:true, status:200, json:async () => globalThis.__standings || {}};
+};
+"""
+
+
+def overlay_js():
+    lua = OVERLAY_UI.read_text(encoding="utf-8")
+    m = re.search(r"<script>([\s\S]*?)</script>", lua, re.S)
+    assert m, "no <script> block in overlay_ui.lua"
+    return m.group(1)
+
+
+def run_overlay_node(body: str, extra: str = "", timeout: int = 45):
+    source = (OVERLAY_NODE_PREFIX + "\nconst OVERLAY_JS = " + json.dumps(overlay_js())
+              + ";\n" + extra + "\n(new Function(OVERLAY_JS))();\n"
+              + "(async () => {\n" + body + "\n})();\n")
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix="rc-overlay-", suffix=".js", dir=str(SCRATCH))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(source)
+        return subprocess.run([NODE, path], capture_output=True, text=True, timeout=timeout)
+    finally:
+        os.unlink(path)
+
+
+SAMPLE_STANDINGS = {
+    "ok": True, "visible": True, "target_name": "Beta",
+    "active_shot": "heli_follow",
+    "event": {"event_name": "Aewol Sprint", "event_guid": "G1", "state": 2,
+              "in_countdown": False, "num_laps": 7, "waypoint_count": 23,
+              "standings": [
+                  {"rank": 1, "name": "Alpha", "laps": 2, "section": 14,
+                   "best_lap_s": 112.45, "last_sec_s": 284.12,
+                   "finished": False, "disqualified": False},
+                  {"rank": 2, "name": "Beta", "laps": 2, "section": 14,
+                   "best_lap_s": 113.0, "last_sec_s": 285.52,
+                   "finished": False, "disqualified": False},
+                  {"rank": 3, "name": "Charlie [AMC]", "laps": 1, "section": 20,
+                   "best_lap_s": 0, "last_sec_s": 300.0,
+                   "finished": False, "disqualified": False},
+                  {"rank": 4, "name": "Fin", "laps": 3, "section": 23,
+                   "best_lap_s": 0, "last_sec_s": 0,
+                   "finished": True, "disqualified": False},
+                  {"rank": 5, "name": "Dq", "laps": 0, "section": 0,
+                   "best_lap_s": 0, "last_sec_s": 0,
+                   "finished": False, "disqualified": True},
+              ]},
+}
+
+
+class OverlayUiSourceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = OVERLAY_UI.read_text(encoding="utf-8")
+
+    def test_module_surface_and_zero_dependencies(self):
+        self.assertIn("function M.html()", self.lua)
+        self.assertIn("return M", self.lua)
+        self.assertIn('id="tower"', self.lua)
+        self.assertIn("/api/standings", self.lua)
+        for snippet in ("background:transparent", "tabular-nums",
+                        "transition:opacity 350ms", "translateY(", "300ms",
+                        "AbortController", "busy", "Math.min(2000,delay*2)"):
+            # FLIP/backoff language may be expressed with equivalent code;
+            # require the concrete moving parts instead of the prose.
+            if snippet == "AbortController":
+                self.assertTrue("busy=true" in self.lua or "busy = true" in self.lua)
+                continue
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.lua)
+        for param in ("top", "mode", "scale", "pos", "compact", "always", "title", "event"):
+            with self.subTest(param=param):
+                self.assertTrue("qs.get('%s')" % param in self.lua
+                                or "qnum('%s'" % param in self.lua,
+                                f"overlay ignores ?{param}")
+        self.assertIsNone(re.search(r"<(?:script|link)[^>]+(?:src|href)=", self.lua))
+        self.assertIsNone(re.search(r"\bD:[\\/]", self.lua))
+
+    def test_lua_syntax(self):
+        p = subprocess.run([HOSTRUN, LUAC_CHECK, str(OVERLAY_UI)],
+                           capture_output=True, text=True, timeout=180)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("SYNTAX_OK", p.stdout + p.stderr)
+
+    def test_self_contained_size(self):
+        size = len(self.lua.encode("utf-8"))
+        self.assertLessEqual(size, 16384, "overlay must stay a single small payload")
+        self.assertGreater(size, 6000)
+
+
+class OverlayUiBehaviourTests(unittest.TestCase):
+    def test_gap_best_lap_badges_and_fade(self):
+        result = parse_result(run_overlay_node(r"""
+          const o=window.rcOverlay;
+          const s=globalThis.__snap;
+          const snap=o.buildRows(s);
+          const gaps=snap.rows.map(r=>o.fmtGap(r,snap.leader,23));
+          const res={gaps:gaps,best:o.fmtBest(112.45),fl:o.fastestLap(snap.rows),
+            badge:o.stateBadge(s.event).label,lap:o.lapLabel(s.event,snap.leader).text};
+          const shown=o.render(s);
+          res.html=document.getElementById('rows').innerHTML;
+          res.lapText=document.getElementById('lap').textContent;
+          res.footer=document.getElementById('footer').innerHTML;
+          res.visible=shown.visible;
+          res.opacity=document.getElementById('tower').style.opacity;
+          const hidden=o.render({ok:true,visible:true,event:null});
+          res.hiddenClass=document.getElementById('tower').className;
+          res.hiddenOpacity=document.getElementById('tower').style.opacity;
+          res.hiddenVisible=hidden.visible;
+          console.log(JSON.stringify(res));
+        """, extra="globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";"))
+        self.assertEqual(result["gaps"], ["LEADER", "+1.4s", "+1 LAP", "FIN", "DQ"])
+        self.assertEqual(result["best"], "1:52.45")
+        self.assertEqual(result["fl"], "Alpha")
+        self.assertEqual(result["badge"], "LIVE")
+        self.assertEqual(result["lap"], "LAP 3 / 7")
+        for needle in ('data-name="Alpha"', 'data-name="Beta"', 'LEADER',
+                       '+1.4s', '+1 LAP', 'FIN', 'DQ', 'target'):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, result["html"])
+        self.assertEqual(result["lapText"], "LAP 3 / 7")
+        self.assertIn('class="fl-badge">FL', result["footer"])
+        self.assertIn("1:52.45", result["footer"])
+        self.assertTrue(result["visible"])
+        self.assertEqual(result["opacity"], "1")
+        self.assertIn("hidden", result["hiddenClass"])
+        self.assertEqual(result["hiddenOpacity"], "0")
+        self.assertFalse(result["hiddenVisible"])
+
+    def test_overtake_delta_and_auto_clear(self):
+        result = parse_result(run_overlay_node(r"""
+          const o=window.rcOverlay,s=globalThis.__snap;
+          o.applySnapshot(s);
+          globalThis.__now=2000;
+          const swapped=JSON.parse(JSON.stringify(s));
+          swapped.event.standings[0].rank=2;
+          swapped.event.standings[1].rank=1;
+          const rows=o.applySnapshot(swapped);
+          const res={beta:rows.find(r=>r.name==='Beta').delta,
+                     alpha:rows.find(r=>r.name==='Alpha').delta,
+                     deltaHtml:o.render(swapped)&&document.getElementById('rows').innerHTML};
+          globalThis.__now=7000;
+          const after=o.applySnapshot(swapped);
+          res.laterBeta=after.find(r=>r.name==='Beta').delta;
+          res.laterAlpha=after.find(r=>r.name==='Alpha').delta;
+          res.html=o.render(swapped)&&document.getElementById('rows').innerHTML;
+          console.log(JSON.stringify(res));
+        """, extra="globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";"))
+        self.assertEqual(result["beta"], 1)
+        self.assertEqual(result["alpha"], -1)
+        self.assertEqual(result["laterBeta"], 0)
+        self.assertEqual(result["laterAlpha"], 0)
+        self.assertIn("▲1", result["deltaHtml"])
+        self.assertIn("▼1", result["deltaHtml"])
+        # At t=7000 the 4 s window has expired, so no arrows survive.
+        self.assertNotIn("▲1", result["html"])
+        self.assertNotIn("▼1", result["html"])
+
+    def test_pinned_camera_target_below_top(self):
+        result = parse_result(run_overlay_node(r"""
+          const o=window.rcOverlay;
+          const s=JSON.parse(JSON.stringify(globalThis.__snap));
+          s.event.standings.push({rank:7,name:'Echo',laps:0,section:2,
+            best_lap_s:0,last_sec_s:0,finished:false,disqualified:false});
+          s.target_name='Echo';
+          const shown=o.render(s);
+          const html=document.getElementById('rows').innerHTML;
+          console.log(JSON.stringify({html:html, visible:shown.visible,
+            names:shown.rows.map(r=>r.name)}));
+        """, extra=("globalThis.__search='?top=3&mode=gap';"
+                    "globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";")))
+        names = re.findall(r'data-name="([^"]+)"', result["html"])
+        self.assertEqual(names[:3], ["Alpha", "Beta", "Charlie [AMC]"])
+        self.assertIn("Echo", names[3:], "followed driver must be pinned below top")
+        self.assertIn('class="row target pinned" data-name="Echo"', result["html"])
+
+    def test_always_preview_and_mode_switch(self):
+        result = parse_result(run_overlay_node(r"""
+          globalThis.__search='?always=1';
+          const o=window.rcOverlay;
+          const preview=o.render(null);
+          const res={html:document.getElementById('rows').innerHTML,
+                     visible:preview.visible,
+                     opacity:document.getElementById('tower').style.opacity};
+          console.log(JSON.stringify(res));
+        """, extra="globalThis.__search='?always=1';"))
+        self.assertIn("WAITING FOR LIVE EVENT", result["html"])
+        self.assertTrue(result["visible"])
+        self.assertEqual(result["opacity"], "1")
+        best = parse_result(run_overlay_node(r"""
+          globalThis.__search='?mode=best';
+          const o=window.rcOverlay;
+          o.render(globalThis.__snap);
+          console.log(JSON.stringify({html:document.getElementById('rows').innerHTML}));
+        """, extra=("globalThis.__search='?mode=best';"
+                    "globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";")))
+        self.assertIn("1:52.45", best["html"])
+        self.assertIn("fl-dot", best["html"])
+
+    def test_flip_transform_on_overtake(self):
+        result = parse_result(run_overlay_node(r"""
+          globalThis.__oldRects={Alpha:0,Beta:30};
+          globalThis.__newRects={Alpha:30,Beta:0};
+          globalThis.__domRows=['Alpha','Beta'];
+          globalThis.__flipPhase='old';
+          globalThis.__flipAutoAdvance=true;
+          const o=window.rcOverlay;
+          o.render(globalThis.__snap);
+          const out={};
+          (globalThis.__queryEls||[]).forEach(e=>{
+            out[e.getAttribute('data-name')]=e.style.transform;});
+          console.log(JSON.stringify(out));
+        """, extra=("globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";")))
+        # Alpha moved 0 -> 30 (dy = -30), Beta moved 30 -> 0 (dy = +30).
+        self.assertEqual(result.get("Alpha"), "translateY(-30px)")
+        self.assertEqual(result.get("Beta"), "translateY(30px)")
+
+    def test_poll_in_flight_guard_and_url(self):
+        result = parse_result(run_overlay_node(r"""
+          await new Promise(r=>setImmediate(r));
+          globalThis.__standings=globalThis.__snap;
+          const before=overlayFetchLog.length;
+          const p1=window.rcOverlay.poll();
+          const p2=window.rcOverlay.poll();
+          await p1;
+          const accepted=await p2;
+          console.log(JSON.stringify({added:overlayFetchLog.length-before,
+            url:overlayFetchLog[overlayFetchLog.length-1].url,accepted:accepted,
+            rows:window.rcOverlay.getRows().length}));
+        """, extra=("globalThis.__snap=" + json.dumps(SAMPLE_STANDINGS) + ";")))
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(result["url"], "/api/standings")
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["rows"], 5)
+
+
+class OverlayPanelControlTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S).group(1)
+
+    def test_markup_and_wiring(self):
+        for snippet in ('id="ov_toggle"', 'id="ov_copy"', "toggleOverlay()",
+                        "copyObsUrl()", "cmd('overlay','toggle')", "overlay_visible",
+                        "/overlay/standings"):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.lua)
+
+    def test_toggle_posts_token_gated_command_and_syncs_from_state(self):
+        result = parse_result(run_node(self.js, r"""
+          globalThis.__stateOverride={degraded:false,target_lost:false,shots:[],
+            targets:[],rehearsal:false,running:false,overlay_visible:false};
+          await globalThis.racecamPanel.poll();
+          const before=document.getElementById('ov_toggle').textContent;
+          await globalThis.racecamPanel.toggleOverlay();
+          const posts=fetchLog.filter(x=>x.url==='/api/command'&&x.opts.body&&
+            JSON.parse(x.opts.body).cmd==='overlay');
+          console.log(JSON.stringify({before:before,
+            after:document.getElementById('ov_toggle').textContent,
+            posts:posts.map(x=>JSON.parse(x.opts.body))}));
+        """, extra="(new Function(PANEL_JS))();\n"))
+        self.assertEqual(result["before"], "Overlay: OFF")
+        self.assertEqual(result["posts"], [{"cmd": "overlay", "args": "toggle"}])
+        # Stub /api/command returns no overlay_visible, so the local fallback
+        # flips the button until the next /api/state poll confirms the server.
+        self.assertEqual(result["after"], "Overlay: ON")
+
+    def test_copy_obs_url(self):
+        result = parse_result(run_node(self.js, r"""
+          const url=await globalThis.racecamPanel.copyObsUrl();
+          console.log(JSON.stringify({url:url,copied:globalThis.__copied,
+            toast:document.getElementById('toast').textContent}));
+        """, extra="(new Function(PANEL_JS))();\n"))
+        self.assertEqual(result["url"], "http://127.0.0.1:8767/overlay/standings")
+        self.assertEqual(result["copied"], result["url"])
+        self.assertIn("Copied OBS URL", result["toast"])
 
 
 if __name__ == "__main__":
