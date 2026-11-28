@@ -1001,17 +1001,12 @@ function E.pawn_name(self, pawn)
   return nil
 end
 
-function E.pawns(self, force)
-  local now = self.now or (os and os.clock and os.clock()) or 0
-  if not force and self._pawns_cache and self._pawns_cache_t
-      and (now - self._pawns_cache_t) < 0.5 then
-    return self._pawns_cache
-  end
+function E.pawns(self)
+  -- Never cache raw UE4SS UObject arrays across ticks: a remote player
+  -- streaming out or disconnecting frees the C++ UObject and any subsequent
+  -- property/method call on the stale userdata triggers EXCEPTION_ACCESS_VIOLATION.
   local ok, found = pcall(function() return FindAllOf("MTPlayerCharacter_C") end)
-  local res = (ok and type(found) == "table") and found or {}
-  self._pawns_cache = res
-  self._pawns_cache_t = now
-  return res
+  return (ok and type(found) == "table") and found or {}
 end
 
 function E.ps_name(self, ps)
@@ -1028,33 +1023,21 @@ function E.ps_name(self, ps)
   return nil
 end
 
-function E.player_states(self, force)
-  local now = self.now or (os and os.clock and os.clock()) or 0
-  if not force and self._ps_cache and self._ps_cache_t
-      and (now - self._ps_cache_t) < 0.5 then
-    return self._ps_cache
-  end
+function E.player_states(self)
+  -- Fresh lookup only (never cache raw GameState or PlayerState UObjects
+  -- across ticks to avoid UAF access violations on map/player transitions).
   local out = {}
-  local gs = self._gs_cache
-  if gs then
-    local ok_v, valid = pcall(function() return (not gs.IsValid) or gs:IsValid() end)
-    if not ok_v or not valid then gs = nil; self._gs_cache = nil end
-  end
-  if not gs then
-    local ok_gs, found_gs = pcall(function()
-      if FindFirstOf then
-        local g = FindFirstOf("MotorTownGameState")
-        if g and (not g.IsValid or g:IsValid()) then return g end
-        g = FindFirstOf("GameStateBase")
-        if g and (not g.IsValid or g:IsValid()) then return g end
-      end
-      return nil
-    end)
-    if ok_gs and found_gs then
-      gs = found_gs
-      self._gs_cache = gs
+  local gs = nil
+  local ok_gs, found_gs = pcall(function()
+    if FindFirstOf then
+      local g = FindFirstOf("MotorTownGameState")
+      if g and (not g.IsValid or g:IsValid()) then return g end
+      g = FindFirstOf("GameStateBase")
+      if g and (not g.IsValid or g:IsValid()) then return g end
     end
-  end
+    return nil
+  end)
+  if ok_gs and found_gs then gs = found_gs end
   if gs then
     local ok_arr, arr = pcall(function() return gs.PlayerArray end)
     if ok_arr and arr then
@@ -1088,8 +1071,6 @@ function E.player_states(self, force)
       end
     end
   end
-  self._ps_cache = out
-  self._ps_cache_t = now
   return out
 end
 
