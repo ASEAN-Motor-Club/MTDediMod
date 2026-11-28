@@ -271,6 +271,10 @@ local function state_json()
   local init = get_init()
   parts[#parts + 1] = '"auto_start":' .. tostring(init and init.auto_start and true or false)
   parts[#parts + 1] = '"follow_leader":' .. tostring(init and init.follow_leader and true or false)
+  parts[#parts + 1] = '"director_mode":"' .. jstr((init and init.director_mode) or "off") .. '"'
+  parts[#parts + 1] = '"director_reason":"' .. jstr((init and init.director_reason) or "") .. '"'
+  parts[#parts + 1] = '"director_override_s":' ..
+    tostring(tonumber((init and init.director_override_s) or 0) or 0)
   local smoothing = (e and e.smoothing_mode) or (init and init.smoothing_mode) or "normal"
   if type(smoothing) ~= "string" or smoothing == "" then smoothing = "normal" end
   parts[#parts + 1] = '"smoothing":"' .. jstr(smoothing) .. '"'
@@ -360,7 +364,7 @@ local function dispatch(item)
     core.rehearsal = (args == "on" or args == "true" or args == "1")
     e:log("REHEARSAL " .. (core.rehearsal and "on" or "off"))
     return core.rehearsal and "rehearsal on" or "rehearsal off"
-  elseif cmd == "trigger" then return e:manual(args)
+  elseif cmd == "trigger" or cmd == "shot" or cmd == "cue" then return e:manual(args)
   elseif cmd == "select" then
     local name_err = "no target API"
     if type(e.set_target_by_name) == "function" then
@@ -641,8 +645,35 @@ local function make_response(req)
         log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
         audit("command", cmd, last_result)
       end
+    elseif cmd == "director" then
+      -- Off | Shots | Full. init validates case-insensitively; anything else
+      -- is rejected here so the operator can never leave a stale mode behind.
+      local init = get_init()
+      local mode = nil
+      if init and type(init.set_director_mode) == "function" then
+        local ok, applied = pcall(function() return init.set_director_mode(args) end)
+        if ok then mode = applied end
+      end
+      if not mode then
+        code, body = 400, '{"ok":false,"error":"invalid mode"}'
+        last_result = "ERR invalid mode"
+        audit("command", cmd, last_result)
+      else
+        last_result = "director:" .. mode
+        code, body = 200, '{"ok":true,"status":"director:' .. jstr(mode) ..
+          '","director_mode":"' .. jstr(mode) .. '"}'
+        audit("command", cmd, last_result)
+      end
+      log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
     else
+      local manual_shot = (cmd == "trigger" or cmd == "shot" or cmd == "cue" or cmd == "next")
       local ok, result = pcall(dispatch, { cmd = cmd, args = args })
+      if manual_shot then
+        local init = get_init()
+        if init and type(init.note_manual_shot) == "function" then
+          pcall(function() init.note_manual_shot() end)
+        end
+      end
       last_result = ok and tostring(result) or ("ERR " .. tostring(result))
       log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
       audit("command", cmd, last_result)
@@ -669,6 +700,10 @@ local function make_response(req)
         local init = get_init()
         if init and type(init.disengage_follow_leader) == "function" then
           pcall(function() init.disengage_follow_leader() end)
+        end
+        -- A manual contestant click pauses Auto Director target switching.
+        if init and type(init.note_manual_target) == "function" then
+          pcall(function() init.note_manual_target() end)
         end
         audit("target", name, "manual target; follow_leader disengaged")
       else

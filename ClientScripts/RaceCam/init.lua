@@ -15,6 +15,11 @@ local Engine = require("RaceCam/shot_engine")
 local Http = require("RaceCam/http")
 local LiveEvents = require("RaceCam/live_events")
 
+-- Auto Director is optional: the panel and the rest of RaceCam must keep
+-- working when director.lua is not installed (e.g. in isolated unit tests).
+local okdir, DirectorLib = pcall(require, "RaceCam/director")
+local Director = (okdir and type(DirectorLib) == "table" and DirectorLib) or nil
+
 local okj, JsonLib = pcall(require, "JsonParser")
 local Json = (okj and type(JsonLib) == "table" and JsonLib) or nil
 
@@ -26,6 +31,13 @@ local M = {
     -- Operator camera-smoothing preset. Persisted on M (not just the engine)
     -- so a plan reload or a re-arm keeps the producer's chosen feel.
     smoothing_mode = "normal",
+    -- Auto Director state. Persisted on M so /api/state can report it and a
+    -- re-arm never silently drops the producer's chosen mode.
+    director_mode = "off",
+    director_reason = "",
+    director_override_s = 0,
+    director = nil,          -- created lazily via Director.new()
+    armed = false,           -- M.tick() also observes Core.running
 }
 _G.RACECAM_INIT = M
 
@@ -81,6 +93,60 @@ function M.set_smoothing_mode(mode)
     M.smoothing_mode = mode
     apply_smoothing_mode(M.engine)
     return true, mode
+end
+
+--- Valid Auto Director modes. Off = hands on the operator; Shots = camera
+--- angles only; Full = contestant AND angle selection.
+local DIRECTOR_MODES = { off = true, shots = true, full = true }
+
+local function clock_s()
+    local ok, t = pcall(os.clock)
+    local v = ok and tonumber(t) or 0
+    return v == v and v or 0   -- NaN guard
+end
+
+--- Lazy constructor: never created until the operator enables the director,
+--- and never fatal when director.lua is missing from the client mod.
+local function director_instance()
+    if M.director then return M.director end
+    if not Director or type(Director.new) ~= "function" then return nil end
+    local ok, d = pcall(function() return Director.new({}) end)
+    if ok and type(d) == "table" then M.director = d end
+    return M.director
+end
+
+--- Operator API used by POST /api/command {"cmd":"director","args":"..."}.
+--- Case-insensitive; returns the normalized mode or nil plus an error string.
+---@param mode string
+---@return string? mode
+---@return string? error
+function M.set_director_mode(mode)
+    if type(mode) ~= "string" then return nil, "invalid mode" end
+    local normalized = string.lower(mode)
+    if not DIRECTOR_MODES[normalized] then return nil, "invalid mode" end
+    M.director_mode = normalized
+    if normalized == "off" then
+        M.director_reason = ""
+        M.director_override_s = 0
+        if M.director and type(M.director.reset) == "function" then
+            pcall(function() M.director:reset() end)
+        end
+    end
+    return normalized
+end
+
+--- Manual operator actions pause the corresponding director decisions.
+--- Safe no-ops when the director has not been instantiated yet.
+function M.note_manual_shot()
+    if M.director and type(M.director.note_manual_shot) == "function" then
+        pcall(function() M.director:note_manual_shot(clock_s()) end)
+    end
+end
+
+function M.note_manual_target()
+    if M.director and type(M.director.note_manual_target) == "function" then
+        pcall(function() M.director:note_manual_target(clock_s()) end)
+    end
 end
 
 local automation = {
@@ -284,8 +350,220 @@ local function automation_tick()
     automation.last_cd, automation.last_state = ev.in_countdown, ev.state
 end
 
-M.apply = function(core)
+-- Auto Director snapshot helpers. Every UE4SS read is pcall-guarded: a stale
+-- pawn or a missing field must never break the HTTP/operator tick.
+-- Note: UE4SS returns FVector as userdata (not table), so accept both.
+local function vec_xyz(v)
+    if not v then return nil end
+    local tv = type(v)
+    if tv ~= "table" and tv ~= "userdata" then return nil end
+    local ok, x, y, z = pcall(function()
+        return tonumber(v.X or v.x or v[1]),
+               tonumber(v.Y or v.y or v[2]),
+               tonumber(v.Z or v.z or v[3])
+    end)
+    if not ok or not x or not y or not z then return nil end
+    return { x = x, y = y, z = z }
+end
+
+local function actor_pos(obj)
+    if not obj then return nil end
+    local ok, v = pcall(function()
+        if type(obj.K2_GetActorLocation) == "function" then return obj:K2_GetActorLocation() end
+        if type(obj.GetActorLocation) == "function" then return obj:GetActorLocation() end
+        if obj.Location ~= nil then return obj.Location end
+        return nil
+    end)
+    if ok then return vec_xyz(v) end
+    return nil
+end
+
+local function actor_speed(obj)
+    if not obj then return 0 end
+    local ok, v = pcall(function()
+        if type(obj.GetVelocity) == "function" then return obj:GetVelocity() end
+        return obj.Velocity
+    end)
+    local vel = ok and vec_xyz(v) or nil
+    if not vel then return 0 end
+    return math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
+end
+
+local prev_car_pos = {}
+
+local function sample_cars(e, now)
+    local cars, seen = {}, {}
+    local function add(obj, streamed_in)
+        if not obj then return end
+        local name = nil
+        local ok, n = pcall(function()
+            if streamed_in and type(e.pawn_name) == "function" then return e:pawn_name(obj) end
+            if type(e.ps_name) == "function" then return e:ps_name(obj) end
+            return nil
+        end)
+        if ok and type(n) == "string" and n ~= "" then name = n end
+        if not name or seen[name] then return end
+        seen[name] = true
+        -- Prefer the seated vehicle actor so both position and velocity reflect
+        -- the moving car rather than an attached driver capsule.
+        local pose_obj = obj
+        if streamed_in and type(e.seated_vehicle) == "function" then
+            local okv, veh = pcall(function() return e.seated_vehicle(obj) end)
+            if okv and veh then pose_obj = veh end
+        end
+        local pos = actor_pos(pose_obj) or actor_pos(obj)
+        local spd = actor_speed(pose_obj)
+        if spd < 1.0 and pos and now then
+            local prev = prev_car_pos[name]
+            if prev and prev.pos and now > prev.t then
+                local dt = now - prev.t
+                if dt >= 0.05 and dt <= 5.0 then
+                    local dx = pos.x - prev.pos.x
+                    local dy = pos.y - prev.pos.y
+                    local dz = pos.z - prev.pos.z
+                    spd = math.sqrt(dx * dx + dy * dy + dz * dz) / dt
+                end
+            end
+        end
+        if pos and now then prev_car_pos[name] = { pos = pos, t = now } end
+        cars[name] = {
+            pos = pos,
+            streamed_in = streamed_in and true or false,
+            spd_cm_s = spd,
+            speed = spd,   -- alias: both spellings are consumed by the director
+        }
+    end
+    local ok_p, pawns = pcall(function() return e:pawns() end)
+    if ok_p and type(pawns) == "table" then
+        for _, p in ipairs(pawns) do add(p, true) end
+    end
+    local ok_s, pss = pcall(function() return e:player_states() end)
+    if ok_s and type(pss) == "table" then
+        for _, ps in ipairs(pss) do add(ps, false) end
+    end
+    return cars
+end
+
+local function director_phase(ev, sd)
+    if (sd and sd.in_countdown) or (ev and ev.in_countdown) then return "COUNTDOWN" end
+    local st = (sd and tonumber(sd.state)) or (ev and tonumber(ev.state)) or 0
+    if st >= 3 then return "FINISHED" end
+    if st >= 2 then return "RACING" end
+    if st >= 1 then return "COUNTDOWN" end
+    return "LOBBY"
+end
+
+local function director_standings(sd)
+    local rows = {}
+    if not sd or type(sd.standings) ~= "table" then return rows end
+    for _, r in ipairs(sd.standings) do
+        if type(r) == "table" and r.name then
+            rows[#rows + 1] = {
+                name = tostring(r.name),
+                rank = tonumber(r.rank) or 0,
+                laps = tonumber(r.laps) or 0,
+                section = tonumber(r.section) or 0,
+                split_s = tonumber(r.split_s or r.last_sec_s or r.best_lap_s) or 0,
+                finished = r.finished and true or false,
+                dq = (r.dq or r.disqualified) and true or false,
+            }
+        end
+    end
+    return rows
+end
+
+local function available_shots(e)
+    local set = {}
+    if not e or type(e.plan) ~= "table" or type(e.plan.shots) ~= "table" then return set end
+    for _, s in ipairs(e.plan.shots) do
+        local id = (type(s) == "table" and s.id) or s
+        if type(id) == "string" and id ~= "" then set[id] = true end
+    end
+    return set
+end
+
+local function finish_pos(e)
+    if not e or type(e.route) ~= "table" then return nil end
+    local route = e.route
+    local wp = (type(route.waypoints) == "table" and route.waypoints[1])
+        or (type(route.samples) == "table" and route.samples[1])
+        or route[1]
+    return vec_xyz(wp)
+end
+
+local function current_shot_id(e)
+    if not e then return nil end
+    if e.active_id then return e.active_id end
+    if type(e.active) == "table" then return e.active.id end
+    return nil
+end
+
+--- One director decision. Builds a compact snapshot from live standings and
+--- engine state, then applies the returned target/shot if they changed.
+function M.step_director()
+    local e = M.engine
+    if not e then return nil end
+    local d = director_instance()
+    if not d or type(d.step) ~= "function" then return nil end
+
+    local ok_sd, sd = pcall(function() return LiveEvents.active_standings() end)
+    if not ok_sd then sd = nil end
+    local ok_ev, ev = pcall(function() return LiveEvents.current_event() end)
+    if not ok_ev then ev = nil end
+
+    local now = clock_s()
+    local snap = {
+        now = now,
+        mode = M.director_mode,
+        event_state = director_phase(ev, sd),
+        num_laps = tonumber((sd and sd.num_laps) or (ev and ev.num_laps)) or 0,
+        standings = director_standings(sd),
+        cars = sample_cars(e, now),
+        available_shots = available_shots(e),
+        finish_pos = finish_pos(e),
+        current_target = e.target_name,
+        current_shot = current_shot_id(e),
+    }
+    local ok, res = pcall(function() return d:step(snap) end)
+    if not ok or type(res) ~= "table" then
+        if LogOutput then LogOutput("WARN", "RaceCam director step failed: %s", tostring(res)) end
+        return nil
+    end
+    M.director_reason = res.reason or ""
+    M.director_override_s = tonumber(res.override_s) or 0
+
+    if res.target and res.target ~= e.target_name and type(e.set_target_by_name) == "function" then
+        pcall(function() e:set_target_by_name(res.target) end)
+    end
+    if res.shot and res.shot ~= current_shot_id(e) and type(e.activate) == "function" then
+        local spec = res.shot
+        -- Real shot_engine.activate expects a plan shot spec; mocks that do not
+        -- expose find_shot receive the raw id exactly as requested.
+        if type(spec) == "string" and type(e.find_shot) == "function" then
+            local ok_f, found = pcall(function() return e:find_shot(spec) end)
+            if ok_f and found then spec = found end
+        end
+        pcall(function() return e:activate(spec, "director") end)
+    end
+    return res
+end
+
+local director_tick = { last = -math.huge }
+
+--- Per-frame entry point. Engine-only director decisions are throttled to
+--- 0.5 s; the pure-Lua director itself stays deterministic for unit tests.
+function M.tick()
     automation_tick()
+    local armed = (M.armed == true) or (Core and Core.running == true)
+    if not armed or not M.engine or M.director_mode == "off" then return nil end
+    local now = clock_s()
+    if now - director_tick.last < 0.5 then return nil end
+    director_tick.last = now
+    return M.step_director()
+end
+
+M.apply = function(core)
+    M.tick()
     if not M.engine then M.init(core) end
     local ok, err = pcall(function() M.engine:update() end)
     if not ok then

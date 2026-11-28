@@ -89,6 +89,8 @@ pre{background:#080b0f;border:1px solid var(--line);padding:8px;max-height:200px
 .scene-pad.pgm{border-color:var(--prog);box-shadow:0 0 0 2px rgba(229,57,53,.35)}
 .head-toggles{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.tog{font-size:10px;padding:4px 7px}
 .tog.on{background:#1b6b43;border-color:var(--prev)}
+.dir-ctl{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
+#dir_badge{font-size:10px;max-width:290px;overflow:hidden;text-overflow:ellipsis}
 /* Contestants / live leaderboard (click-safe button deck). */
 .roster{display:flex;flex-direction:column;gap:3px;margin-top:5px;max-height:300px;overflow:auto}
 .roster.standalone{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
@@ -138,6 +140,7 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
   <button id="arm_pill" class="pill standby" onclick="cmd('arm')">STANDBY</button>
   <span id="pgm" class="badge tally-off">PROGRAM —</span>
   <span id="prv" class="badge tally-off">PREVIEW —</span>
+  <span id="dir_badge" class="badge tally-off" style="display:none">AUTO —</span>
   <span class="onair-wrap">ON AIR <input id="tgt_name" size="12" placeholder="driver name"><button class="mini" onclick="lockTyped()">Lock</button></span>
   <span class="cd-wrap">COUNTDOWN <b id="cd">—</b></span>
   <span id="keys_pill" class="pill keys-on">KEYS ACTIVE</span>
@@ -200,6 +203,12 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
           <label class="tog" title="Auto-Start on Green Light"><input id="auto_start" type="checkbox" onchange="postAutoFlags()"> Auto-Start on Green Light</label>
           <button id="auto_follow" class="tog" title="Follow Race Leader" onclick="toggleFollow()">Follow Leader</button>
           <input id="follow_leader" type="checkbox" onchange="postAutoFlags()" style="display:none">
+          <span class="dir-ctl" title="Auto Director: hands-off camera / contestant selection">
+            <span class="muted">Auto:</span>
+            <button id="dir_off" class="sm-btn on" onclick="setDirector('off')">Off</button>
+            <button id="dir_shots" class="sm-btn" onclick="setDirector('shots')">Auto Shots</button>
+            <button id="dir_full" class="sm-btn" onclick="setDirector('full')">Auto Full</button>
+          </span>
         </span>
       </div>
       <div id="contestants" class="roster"></div>
@@ -345,6 +354,32 @@ async function setSmoothing(mode){
   if(SMOOTHING_MODES.indexOf(mode)<0)return null;
   smoothingMode=mode;highlightSmoothing(mode);
   return cmd('smoothing',mode);
+}
+
+/* ---- Auto Director: Off / Auto Shots / Auto Full ----
+   Lua owns every decision; the panel only sends the chosen mode and mirrors
+   the live reason / manual-override countdown from /api/state. */
+const DIRECTOR_MODES=['off','shots','full'];
+let directorMode='off',directorReason='',directorOverrideS=0;
+function highlightDirector(mode){
+  DIRECTOR_MODES.forEach(m=>{const el=$('dir_'+m);if(el)el.className='sm-btn'+(m===mode?' on':'')});
+}
+function renderDirBadge(){
+  const b=$('dir_badge');if(!b)return;
+  if(directorMode==='off'){
+    b.style.display='none';b.textContent='';b.className='badge tally-off';return;
+  }
+  b.style.display='';
+  const secs=Math.max(0,Math.round(Number(directorOverrideS)||0));
+  if(secs>0){b.textContent='OVERRIDE ('+secs+'s)';b.className='badge tally-on-prev';return}
+  const reason=String(directorReason||'');
+  b.textContent='AUTO: '+(reason||'idle');
+  b.className='badge '+(reason?'tally-on-prog':'tally-off');
+}
+async function setDirector(mode){
+  if(DIRECTOR_MODES.indexOf(mode)<0)return null;
+  directorMode=mode;highlightDirector(mode);renderDirBadge();
+  return cmd('director',mode);
 }
 
 /* ---- Broadcast Desk v2: tally, camera pads, preview→take, focus keys ----
@@ -679,6 +714,10 @@ async function poll(){
     windowTargetLost=!!s.target_lost;
     const sMode=SMOOTHING_MODES.indexOf(s.smoothing)>=0?s.smoothing:'normal';
     smoothingMode=sMode;highlightSmoothing(sMode);
+    directorMode=DIRECTOR_MODES.indexOf(s.director_mode)>=0?s.director_mode:'off';
+    directorReason=String(s.director_reason||'');
+    directorOverrideS=Number(s.director_override_s)||0;
+    highlightDirector(directorMode);renderDirBadge();
     if(s.rehearsal!=null&&s.rehearsal!==rehearsal){rehearsal=!!s.rehearsal;$('rehb').textContent=rehearsal?'ON':'OFF'}
     banner();
     const cur=s.current||s.active_shot||'none';
@@ -1620,6 +1659,9 @@ window.racecamPanel={cmd:cmd,trigger:trigger,enqueue:enqueue,undo:undo,toggleReh
   renderContestants:renderContestants,setTargetByName:setTargetByName,lockTyped:lockTyped,
   setSmoothing:setSmoothing,highlightSmoothing:highlightSmoothing,poll:poll,
   getSmoothingMode:()=>smoothingMode,
+  setDirector:setDirector,highlightDirector:highlightDirector,renderDirBadge:renderDirBadge,
+  getDirectorMode:()=>directorMode,
+  getDirectorState:()=>({mode:directorMode,reason:directorReason,override_s:directorOverrideS}),
   getRosterNames:()=>rosterNames.slice(),getRosterSig:()=>lastRosterSig,
   renderShotDeck:renderShotDeck,renderCues:renderCues,stageShot:stageShot,takeShot:takeShot,
   toggleMode:toggleMode,toggleFollow:toggleFollow,toggleRec:toggleRec,isTakeMode:isTakeMode,

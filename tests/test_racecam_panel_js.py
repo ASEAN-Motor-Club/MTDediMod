@@ -41,6 +41,7 @@ VALID_IDS = {
     "banner", "tok", "rehb", "prog", "prv", "shot", "fov", "plan", "cd", "hb", "run",
     "queue", "qat", "sid", "tgt_name", "standings_hdr", "contestants",
     "sm_tight", "sm_normal", "sm_cinematic",
+    "dir_off", "dir_shots", "dir_full", "dir_badge",
     "live_current", "live_load_btn", "live_refresh", "live_events", "auto_start",
     "follow_leader", "track_file", "drop_zone", "saved_plans", "plans_refresh",
     "plan_load", "track_info", "track_canvas",
@@ -1054,6 +1055,132 @@ class SmoothingControlTests(unittest.TestCase):
         self.assertEqual(result["normal"]["mode"], "normal")
 
 
+
+
+class AutoDirectorControlTests(unittest.TestCase):
+    """Auto Director 3-way control and live reason/override badge."""
+    MODES = ("off", "shots", "full")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js_match = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S)
+        assert cls.js_match, "no <script> block in panel_ui.lua"
+        cls.js = cls.js_match.group(1)
+        cls.handlers = {}
+        for mode in cls.MODES:
+            m = re.search(r'id="dir_%s"[^>]*onclick="([^"]+)"' % mode, cls.lua)
+            assert m, "missing onclick handler for dir_%s" % mode
+            cls.handlers[mode] = m.group(1)
+        # Zero Windows drive-letter paths (still holds with the new controls).
+        assert re.search(r"\bD:[\\/]", cls.lua) is None
+
+    @staticmethod
+    def _state(mode="off", reason="", override=0.0):
+        return {"degraded": False, "target_lost": False, "shots": ["start_line"],
+                "targets": ["Driver"], "rehearsal": False, "running": False,
+                "director_mode": mode, "director_reason": reason,
+                "director_override_s": override}
+
+    def _click(self, mode):
+        """Fire the real inline onclick string from the HTML on a live panel."""
+        extra = ("globalThis.__stateOverride = " + json.dumps(self._state()) + ";\n"
+                 "(new Function(PANEL_JS))();\n"
+                 "const CLICK = " + json.dumps(self.handlers[mode]) + ";\n")
+        return parse_result(run_node(self.js, r"""
+          await sleep(20);                       // let boot's first poll settle
+          const p = globalThis.racecamPanel;
+          (new Function('setDirector', CLICK))(p.setDirector);
+          await sleep(20);
+          const cls = ['off','shots','full'].map(m =>
+            document.getElementById('dir_'+m).className);
+          const b = document.getElementById('dir_badge');
+          console.log(JSON.stringify({
+            posts: fetchLog.filter(x => x.url === '/api/command')
+                           .map(x => JSON.parse(x.opts.body)),
+            classes: cls, mode: p.getDirectorMode(),
+            badge: {text:b.textContent, hidden:b.style.display === 'none', cls:b.className}
+          }));
+        """, extra=extra))
+
+    def test_markup_and_handler_wiring(self):
+        for mode in self.MODES:
+            with self.subTest(mode=mode):
+                self.assertIn('id="dir_%s"' % mode, self.lua)
+                self.assertEqual(self.handlers[mode],
+                                 "setDirector('%s')" % mode)
+        for snippet in ['id="dir_badge"']:
+            with self.subTest(markup=snippet):
+                self.assertIn(snippet, self.lua)
+        for snippet in ["const DIRECTOR_MODES=['off','shots','full']",
+                        "return cmd('director',mode)",
+                        "highlightDirector(directorMode)",
+                        "s.director_mode", "s.director_reason",
+                        "s.director_override_s", "'OVERRIDE ('+secs+'s)'",
+                        "'AUTO: '+(reason||'idle')"]:
+            with self.subTest(js=snippet):
+                self.assertIn(snippet, self.js)
+        self.assertIsNone(re.search(r"\bD:[\\/]", self.lua))
+
+    def test_click_posts_director_command_and_highlights(self):
+        for mode in self.MODES:
+            with self.subTest(mode=mode):
+                result = self._click(mode)
+                self.assertIn({"cmd": "director", "args": mode}, result["posts"])
+                self.assertEqual(result["mode"], mode)
+                self.assertEqual(result["classes"],
+                                 ["sm-btn" + (" on" if m == mode else "")
+                                  for m in self.MODES])
+                self.assertEqual(result["badge"]["hidden"], mode == "off")
+                if mode != "off":
+                    self.assertEqual(result["badge"]["text"], "AUTO: idle")
+
+    def test_poll_syncs_mode_reason_and_override_into_badge(self):
+        shots_state = self._state("shots", "P1-P2 battle (18m) · pack_battle", 0)
+        full_state = self._state("full", "finish sprint", 12.4)
+        off_state = self._state("off", "stale reason", 8)
+        extra = ("globalThis.__stateOverride = " + json.dumps(shots_state) + ";\n"
+                 "(new Function(PANEL_JS))();\n"
+                 "const FULL = " + json.dumps(full_state) + ";\n"
+                 "const OFF = " + json.dumps(off_state) + ";\n")
+        result = parse_result(run_node(self.js, r"""
+          await sleep(20);
+          const p = globalThis.racecamPanel;
+          const read = () => ({
+            mode: p.getDirectorMode(), state: p.getDirectorState(),
+            cls: ['off','shots','full'].map(m =>
+              document.getElementById('dir_'+m).className),
+            badge: (() => { const b = document.getElementById('dir_badge');
+              return {text:b.textContent, hidden:b.style.display === 'none', cls:b.className}; })()
+          });
+          const shots = read();
+          globalThis.__stateOverride = FULL;
+          await p.poll(); await sleep(10);
+          const full = read();
+          globalThis.__stateOverride = OFF;
+          await p.poll(); await sleep(10);
+          const off = read();
+          console.log(JSON.stringify({shots:shots, full:full, off:off}));
+        """, extra=extra))
+        self.assertEqual(result["shots"]["mode"], "shots")
+        self.assertEqual(result["shots"]["cls"],
+                         ["sm-btn", "sm-btn on", "sm-btn"])
+        self.assertFalse(result["shots"]["badge"]["hidden"])
+        self.assertEqual(result["shots"]["badge"]["text"],
+                         "AUTO: P1-P2 battle (18m) · pack_battle")
+
+        self.assertEqual(result["full"]["mode"], "full")
+        self.assertEqual(result["full"]["state"]["override_s"], 12.4)
+        self.assertEqual(result["full"]["cls"],
+                         ["sm-btn", "sm-btn", "sm-btn on"])
+        self.assertEqual(result["full"]["badge"]["text"], "OVERRIDE (12s)")
+        self.assertFalse(result["full"]["badge"]["hidden"])
+
+        self.assertEqual(result["off"]["mode"], "off")
+        self.assertEqual(result["off"]["cls"],
+                         ["sm-btn on", "sm-btn", "sm-btn"])
+        self.assertTrue(result["off"]["badge"]["hidden"])
+        self.assertEqual(result["off"]["badge"]["text"], "")
 
 
 class BroadcastDeskTests(unittest.TestCase):

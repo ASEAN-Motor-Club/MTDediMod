@@ -1060,6 +1060,277 @@ assert(p3 and math.abs(p3.pos[1] + 750.0) < 1.0, "throwing GetVehicle broke the 
 print(string.format("VEHICLE_OK seated=%.0f,%.0f fallback=%.0f", p.pos[1], p.pos[2], p3.pos[1]))
 '''
 
+# Auto Director prelude: director.lua is pure Lua, so no UE4SS stubs or temp
+# data dir are needed -- only the module path and a few snapshot builders.
+AUTO_DIRECTOR_PRELUDE = r'''
+local DATA_DIR = "__DATA_DIR__"
+local ROOT = "__REPO_ROOT__/ClientScripts"
+package.path = ROOT .. "/?.lua;" .. ROOT .. "/?/init.lua;" .. package.path
+
+local D = require("RaceCam/director")
+
+local ALL = {}
+for _, id in ipairs({
+  "pack_battle", "front_chase", "rear_battle", "heli_follow", "auto_trackside",
+  "onboard_tcam", "side_tracking", "chase_close", "chase_wide", "follow_focus",
+  "start_line", "orbit_hero", "start_crane", "finish_line",
+}) do ALL[id] = true end
+
+local function row(name, rank, laps, section, split, finished, dq)
+  return { name = name, rank = rank, laps = laps or 2, section = section or 5,
+           split_s = split, finished = finished or false, dq = dq or false }
+end
+local function car(x, spd, streamed)
+  return { pos = { x = x, y = 0, z = 0 }, spd_cm_s = spd, streamed_in = streamed }
+end
+local function mk_snap(over)
+  local s = {
+    now = 0, mode = "full", event_state = "RACING", num_laps = 5,
+    standings = {}, cars = {}, available_shots = ALL,
+    finish_pos = { x = 90000, y = 0, z = 0 },
+    current_target = nil, current_shot = nil,
+  }
+  for k, v in pairs(over or {}) do s[k] = v end
+  return s
+end
+local function contains(s, needle) return s:find(needle, 1, true) ~= nil end
+'''
+
+# Scenario 1: a close midfield battle outscores a lonely (air-time-decayed)
+# leader, and cars stationary for >4 s are never selected during RACING.
+AUTO_DIRECTOR_BATTLE_HARNESS = r'''
+local d = D.new()
+local snap = mk_snap{
+  standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, 30),
+                row("P3", 3, 2, 5, 0.8), row("P4", 4, 2, 4, 40),
+                row("P5", 5, 2, 4, 50) },
+  cars = { P1 = car(0, 3000), P2 = car(5000, 3000), P3 = car(5100, 3000),
+           P4 = car(10000, 40), P5 = car(11000, 30) },
+  current_target = "P1",
+}
+local dead_seen, battle_seen, battle_reason = false, false, false
+for t = 0, 20 do
+  snap.now = t
+  local r = d:step(snap)
+  if r.target == "P4" or r.target == "P5" then dead_seen = true end
+  if r.target == "P2" or r.target == "P3" then battle_seen = true end
+  if r.target and contains(r.reason, "battle") then battle_reason = true end
+  assert(r.next_cut_in >= 0 and r.next_cut_in <= 7.001,
+         "next_cut_in out of range at " .. t .. ": " .. tostring(r.next_cut_in))
+  snap.current_target = r.target or snap.current_target
+end
+assert(not dead_seen, "dead/stopped car must never be selected during RACING")
+assert(battle_seen, "close battle never became the target")
+assert(battle_reason, "close-battle reason missing from step() output")
+assert(snap.current_target == "P2" or snap.current_target == "P3",
+       "final target not in the close battle: " .. tostring(snap.current_target))
+
+-- A long-watched solo leader must rotate to a fresh rival once air-time decay
+-- overcomes the +25% stickiness (12 s grace, 2.5/s, capped at -45).
+local d2 = D.new()
+local s2 = mk_snap{
+  standings = { row("P1", 1, 2, 5, nil), row("P6", 2, 2, 5, 30) },
+  cars = { P1 = car(0, 3000), P6 = car(50000, 3000) },
+  current_target = "P1",
+}
+local switched = nil
+for t = 0, 30 do
+  s2.now = t
+  local r = d2:step(s2)
+  s2.current_target = r.target or s2.current_target
+  if switched == nil and s2.current_target == "P6" then switched = t end
+end
+assert(switched ~= nil and switched > 12,
+       "air-time decay did not rotate the lonely leader: " .. tostring(switched))
+print("AUTO_DIRECTOR_BATTLE_OK battle=" .. tostring(battle_seen)
+      .. " dead=" .. tostring(dead_seen) .. " rotate_at=" .. tostring(switched))
+'''
+
+# Scenario 2: rank swap cuts immediately; final-lap finish sprint locks
+# finish_line (and falls back to start_crane when finish_line is not loaded).
+AUTO_DIRECTOR_SPRINT_HARNESS = r'''
+local d = D.new()
+local snap = mk_snap{
+  num_laps = 3,
+  standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, 20) },
+  cars = { P1 = car(0, 3000), P2 = car(50000, 3000) },
+  current_target = "P1",
+}
+local r = d:step(snap)
+assert(r.shot ~= nil, "no opening shot produced")
+snap.now = 1
+snap.standings = { row("P2", 1, 2, 5, nil), row("P1", 2, 2, 5, 20) }
+snap.current_target = r.target or "P1"
+r = d:step(snap)
+assert(r.target == "P2", "rank swap must cut the target immediately: " .. tostring(r.target))
+assert(contains(r.reason, "overtake"), "overtake reason missing: " .. r.reason)
+snap.now = 2
+snap.cars.P2 = car(89500, 3000)  -- 500 cm from finish, inside 250 m sprint zone
+snap.current_target = r.target or snap.current_target
+r = d:step(snap)
+assert(r.shot == "finish_line", "final lap must lock finish_line: " .. tostring(r.shot))
+assert(contains(r.reason, "finish_line"), "finish reason missing: " .. r.reason)
+
+local limited = {}
+for k, v in pairs(ALL) do limited[k] = v end
+limited.finish_line = nil
+local d2 = D.new()
+local s2 = mk_snap{
+  num_laps = 3,
+  standings = { row("P1", 1, 2, 5, nil) },
+  cars = { P1 = car(89500, 3000) },
+  available_shots = limited, current_target = "P1",
+}
+r = d2:step(s2)
+assert(r.shot == "start_crane",
+       "finish_line fallback must be start_crane: " .. tostring(r.shot))
+print("AUTO_DIRECTOR_SPRINT_OK overtake_target=P2 shot=" .. tostring(r.shot))
+'''
+
+# Scenario 3: alternating advantages between two equal battles must not
+# ping-pong the target; min_shot_hold (4.5 s) spaces shot cuts.
+AUTO_DIRECTOR_HOLD_HARNESS = r'''
+local d = D.new()
+local ct = "P1"
+local switches, cuts = 0, {}
+for t = 0, 30 do
+  local sa = (t % 2 == 0) and 0.8 or 3.0
+  local sb = (t % 2 == 0) and 3.0 or 0.8
+  local snap = mk_snap{
+    now = t,
+    standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, sa),
+                  row("P3", 3, 2, 5, nil), row("P4", 4, 2, 5, sb) },
+    cars = { P1 = car(0, 3000), P2 = car(500, 3000),
+             P3 = car(20000, 3000), P4 = car(20500, 3000) },
+    current_target = ct,
+    current_shot = (#cuts > 0) and cuts[#cuts].id or nil,
+  }
+  local r = d:step(snap)
+  if r.target and r.target ~= ct then switches = switches + 1; ct = r.target end
+  if r.shot then
+    if #cuts > 0 then
+      assert(t - cuts[#cuts].t >= 4.499,
+             "min_shot_hold violated: cut at " .. cuts[#cuts].t .. " then " .. t)
+    end
+    cuts[#cuts + 1] = { t = t, id = r.shot }
+  end
+  assert(r.next_cut_in >= 0 and r.next_cut_in <= 7.001)
+end
+assert(switches <= 1, "target ping-ponged between equal battles: " .. tostring(switches))
+assert(#cuts >= 4, "too few shot cuts over 30 s: " .. tostring(#cuts))
+for i = 2, #cuts do
+  assert(cuts[i].id ~= cuts[i - 1].id, "same shot repeated back-to-back")
+end
+print("AUTO_DIRECTOR_HOLD_OK switches=" .. tostring(switches) .. " cuts=" .. tostring(#cuts))
+'''
+
+# Scenario 4: a manual shot/target click pauses only that axis of the Auto
+# Director for the 15 s cooldown, without fighting the operator.
+AUTO_DIRECTOR_OVERRIDE_HARNESS = r'''
+local d = D.new()
+local snap = mk_snap{
+  standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, 20) },
+  cars = { P1 = car(0, 3000), P2 = car(50000, 3000) },
+  current_target = "P1",
+}
+local opening = d:step(snap)
+assert(opening.target ~= nil or opening.shot ~= nil, "director must be active before override")
+d:note_manual_shot(1)
+d:note_manual_target(1)
+for t = 2, 15 do
+  snap.now = t
+  local r = d:step(snap)
+  assert(r.target == nil and r.shot == nil,
+         "director fought the override at t=" .. t .. ": " .. r.reason)
+  assert(contains(r.reason, "override"), "override reason missing: " .. r.reason)
+  assert(math.abs(r.override_s - d:override_remaining(t)) < 1e-9,
+         "override_s disagrees with override_remaining()")
+end
+assert(d:override_remaining(16) == 0, "15 s cooldown did not expire")
+snap.now = 16
+local after = d:step(snap)
+assert(not contains(after.reason, "override"), "override still reported after cooldown")
+
+-- Shot-only override must leave target selection automatic.
+local d2 = D.new()
+d2:note_manual_shot(5)
+snap.current_target = nil
+local got_target = false
+for t = 5, 19 do
+  snap.now = t
+  local r = d2:step(snap)
+  assert(r.shot == nil, "shot override leaked at t=" .. t)
+  if r.target then got_target = true end
+end
+assert(got_target, "target selection must stay automatic during a shot-only override")
+print("AUTO_DIRECTOR_OVERRIDE_OK cooldown=15 target_still_auto=" .. tostring(got_target))
+'''
+
+# Scenario 5: a remote (not streamed-in) target is restricted to angles that
+# work on PlayerState location; streamed-in targets get the full solo pool.
+AUTO_DIRECTOR_REMOTE_HARNESS = r'''
+local d = D.new()
+local snap = mk_snap{
+  mode = "shots",
+  standings = { row("P1", 1, 2, 5, nil) },
+  cars = { P1 = car(0, 3000, false) },
+  current_target = "P1",
+}
+local shots = {}
+for i = 0, 14 do
+  snap.now = i * 5
+  local r = d:step(snap)
+  if r.shot then shots[#shots + 1] = r.shot; snap.current_shot = r.shot end
+end
+assert(#shots >= 10, "too few remote shot cuts: " .. tostring(#shots))
+local allowed = { auto_trackside = true, heli_follow = true,
+                  chase_wide = true, follow_focus = true }
+for i, s in ipairs(shots) do
+  assert(allowed[s], "remote target got disallowed shot " .. tostring(s))
+  assert(s ~= "onboard_tcam" and s ~= "side_tracking",
+         "remote target must never use onboard_tcam/side_tracking: " .. s)
+  if i > 1 then assert(s ~= shots[i - 1], "back-to-back shot repeat") end
+end
+
+-- Remote stays restricted even when it is part of a close battle.
+local d2 = D.new()
+local s2 = mk_snap{
+  mode = "shots",
+  standings = { row("P1", 1, 2, 5, nil), row("P2", 2, 2, 5, 0.5) },
+  cars = { P1 = car(0, 3000, false), P2 = car(500, 3000, true) },
+  current_target = "P1",
+}
+for i = 0, 9 do
+  s2.now = i * 5
+  local r = d2:step(s2)
+  if r.shot then
+    assert(allowed[r.shot], "remote battle got disallowed shot " .. tostring(r.shot))
+    s2.current_shot = r.shot
+  end
+end
+
+-- A streamed-in solo target may use onboard_tcam and side_tracking.
+local d3 = D.new()
+local s3 = mk_snap{
+  mode = "shots",
+  standings = { row("P1", 1, 2, 5, nil) },
+  cars = { P1 = car(0, 3000, true) },
+  current_target = "P1",
+}
+local onboard, side = false, false
+for i = 0, 14 do
+  s3.now = i * 5
+  local r = d3:step(s3)
+  if r.shot then
+    s3.current_shot = r.shot
+    if r.shot == "onboard_tcam" then onboard = true end
+    if r.shot == "side_tracking" then side = true end
+  end
+end
+assert(onboard and side, "streamed-in target never got onboard_tcam/side_tracking")
+print("AUTO_DIRECTOR_REMOTE_OK remote_shots=" .. table.concat(shots, ","))
+'''
+
 class RaceCamLuaTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1455,6 +1726,91 @@ assert(pose2 and e.target == far_pawn and e.target_ps == nil and not e.target_lo
 print("PLAYER_ARRAY_ROSTER_OK count=3 upgraded=true")
 '''
         self._run_smoothing_harness(harness, "PLAYER_ARRAY_ROSTER_OK", "roster")
+
+
+    # ----- Auto Director: pure-Lua state machine -----------------------------
+
+    def _run_director_harness(self, body: str, token: str, prefix: str) -> None:
+        """Run one deterministic Lua 5.4 Auto Director harness on the host."""
+        tmpdir = Path(tempfile.mkdtemp(prefix=f"racecam_director_{prefix}_", dir=SCRATCH))
+        try:
+            harness = (AUTO_DIRECTOR_PRELUDE + body).replace("__DATA_DIR__", str(tmpdir)).replace(
+                "__REPO_ROOT__", str(REPO)
+            )
+            harness_path = tmpdir / "harness.lua"
+            harness_path.write_text(harness, encoding="utf-8")
+            wrapper_path = tmpdir / "run_harness.sh"
+            wrapper_path.write_text(
+                "#!/usr/bin/env bash\nset -u\n"
+                f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [str(HOSTRUN), str(wrapper_path)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            self.assertEqual(
+                0,
+                proc.returncode,
+                f"{prefix} harness failed:\n{proc.stdout}\n{proc.stderr}",
+            )
+            self.assertIn(token, proc.stdout, f"{proc.stdout}\n{proc.stderr}")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_director_static_surface(self) -> None:
+        """director.lua is pure Lua and exports the agreed wiring contract."""
+        src = (RACECAM / "director.lua").read_text(encoding="utf-8")
+        for needle in (
+            "D.MODES = { off = true, shots = true, full = true }",
+            "function D.normalize_mode(",
+            "function D.new(",
+            "function D:reset()",
+            "function D:note_manual_shot(now)",
+            "function D:note_manual_target(now)",
+            "function D:override_remaining(now)",
+            "function D:step(snap)",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, src, f"director.lua missing {needle}")
+        for forbidden in (
+            "FindAllOf", "FindFirstOf", "StaticFindObject", "GetCachedWorld",
+            "LoopInGameThread", "os.getenv", "io.open", "require(",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, src, f"director.lua must not use {forbidden}")
+
+    def test_lua_director_close_battle_beats_lonely_leader(self) -> None:
+        """Close battle + air-time decay win; stopped cars are filtered out."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_BATTLE_HARNESS, "AUTO_DIRECTOR_BATTLE_OK", "autobattle"
+        )
+
+    def test_lua_director_overtake_and_finish_sprint(self) -> None:
+        """Rank swap cuts instantly; final lap locks finish_line (or fallback)."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_SPRINT_HARNESS, "AUTO_DIRECTOR_SPRINT_OK", "autosprint"
+        )
+
+    def test_lua_director_hold_and_hysteresis(self) -> None:
+        """Equal alternating battles never ping-pong; shot cuts respect 4.5 s."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_HOLD_HARNESS, "AUTO_DIRECTOR_HOLD_OK", "autohold"
+        )
+
+    def test_lua_director_manual_override_pauses(self) -> None:
+        """Manual shot/target clicks pause the director for 15 s, no fighting."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_OVERRIDE_HARNESS, "AUTO_DIRECTOR_OVERRIDE_OK", "autooverride"
+        )
+
+    def test_lua_director_remote_target_shot_pool(self) -> None:
+        """Remote targets avoid onboard_tcam/side_tracking; streamed ones may use them."""
+        self._run_director_harness(
+            AUTO_DIRECTOR_REMOTE_HARNESS, "AUTO_DIRECTOR_REMOTE_OK", "autoremote"
+        )
 
 
 if __name__ == "__main__":
