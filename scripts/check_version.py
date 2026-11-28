@@ -2,10 +2,11 @@
 """Validate MTDediMod version files and release tags.
 
 Policy:
-  * VERSION and SERVER_VERSION are plain MAJOR.MINOR.PATCH - no rc suffix.
+  * VERSION and SERVER_VERSION are plain MAJOR.MINOR.PATCH — no prerelease suffix.
   * A stable release tag is client/v<VERSION> or server/v<SERVER_VERSION>.
-  * A prerelease tag is that stable tag plus -rcN (N >= 1). RC tags are
-    deliberate previews, not the normal way to ship a change.
+  * A prerelease tag is client/vX.Y.Z-rcN, -rc.N, or -exp.<name>.<N> (N >= 1).
+    Prerelease tags are manual branch previews, never the default release path,
+    and may target a next version not yet bumped in VERSION / SERVER_VERSION.
 
 Usage:
   python3 scripts/check_version.py [--root DIR] [--tag TAG ...]
@@ -16,7 +17,10 @@ import sys
 from pathlib import Path
 
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-TAG = re.compile(r"^(client|server)/v([0-9]+\.[0-9]+\.[0-9]+)(?:-rc([1-9][0-9]*))?$")
+TAG = re.compile(
+    r"^(client|server)/v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))"
+    r"(?:-((?:rc\.?[1-9][0-9]*)|(?:exp\.[a-z0-9][a-z0-9-]*\.[1-9][0-9]*)))?$"
+)
 VERSION_FILES = {"client": "VERSION", "server": "SERVER_VERSION"}
 
 
@@ -34,12 +38,22 @@ def read_versions(root: Path) -> dict:
 def check_tag(tag: str, versions: dict) -> dict:
     match = TAG.fullmatch(tag)
     if not match:
-        raise ValueError(f"{tag}: expected client/vX.Y.Z or server/vX.Y.Z[-rcN]")
-    kind, base, rc = match.groups()
+        raise ValueError(
+            f"{tag}: expected (client|server)/vX.Y.Z or -rc[.N] / -exp.<name>.<N>"
+        )
+    kind, base, pre = match.groups()
+    prerelease = pre is not None
     expected = versions[kind]
-    if base != expected:
-        raise ValueError(f"{tag}: base version {base} != {kind} version file {expected}")
-    return {"kind": kind, "version": base, "prerelease": rc is not None}
+    if not prerelease and base != expected:
+        raise ValueError(
+            f"{tag}: stable tag version {base} != {kind} version file {expected}"
+        )
+    return {
+        "kind": kind,
+        "version": f"{base}-{pre}" if prerelease else base,
+        "base": base,
+        "prerelease": prerelease,
+    }
 
 
 def main(argv=None) -> int:
