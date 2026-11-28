@@ -328,6 +328,10 @@ local function seated_vehicle(p)
   local ok, candidates = pcall(function()
     local out = {}
     if p.GetVehicle then out[#out + 1] = p:GetVehicle() end
+    if p.Net_Seat and is_live(p.Net_Seat) and p.Net_Seat.GetOwner then
+      local own = p.Net_Seat:GetOwner()
+      if own then out[#out + 1] = own end
+    end
     local parent = nil
     if p.GetAttachParentActor then parent = p:GetAttachParentActor() end
     if not is_live(parent) and p.AttachParent then parent = p.AttachParent end
@@ -513,7 +517,7 @@ local function target_state(self, s, preset)
     -- real multiplayer cars track braking/accel cleanly even at high tau_pos.
     if p then
       local ok_v, rv = pcall(function()
-        local src = self:seated_vehicle(p) or p
+        local src = seated_vehicle(p) or p
         if src and src.GetVelocity then return src:GetVelocity() end
         return nil
       end)
@@ -547,7 +551,35 @@ local function target_state(self, s, preset)
   local hy = f.fwd[2] + (ny - f.fwd[2]) * kh
   f.fwd[1], f.fwd[2] = norm_xy(hx, hy, f.fwd[1], f.fwd[2])
   f.t = now
+  -- Lightweight 30-frame ring buffer for live smoothing diagnostics (/api/debug_smooth).
+  local ring = self._smooth_ring
+  if not ring then ring = {}; self._smooth_ring = ring end
+  local idx = (self._smooth_ring_i or 0) % 30 + 1
+  self._smooth_ring_i = idx
+  ring[idx] = {
+    dt = dt,
+    raw = { raw[1], raw[2], raw[3] },
+    fpos = { f.pos[1], f.pos[2], f.pos[3] },
+    fvel = { f.vel[1], f.vel[2], f.vel[3] },
+    err = err,
+    coast = coasting and true or false,
+    stale = f.stale_t or 0.0,
+    veh = (p and seated_vehicle(p) ~= nil) and true or false,
+  }
   return f
+end
+
+function E.debug_smooth(self)
+  local ring = self._smooth_ring
+  if not ring then return {} end
+  local out = {}
+  local n = #ring
+  local head = self._smooth_ring_i or 0
+  for k = 1, n do
+    local i = ((head - n + k - 1) % n) + 1
+    if ring[i] then out[#out + 1] = ring[i] end
+  end
+  return out
 end
 
 -- Pack-battle rival search ---------------------------------------------------

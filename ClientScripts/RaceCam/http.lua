@@ -630,6 +630,20 @@ local function make_response(req)
         code, body = 400, '{"error":"' .. jstr(tostring(flags)) .. '"}'
       end
     end
+  elseif req.method == "GET" and req.path == "/api/debug_smooth" then
+    authed = true
+    local init = get_init()
+    local e = init and init.engine
+    local rows = (e and type(e.debug_smooth) == "function") and e:debug_smooth() or {}
+    local lines = {}
+    for _, r in ipairs(rows) do
+      lines[#lines + 1] = string.format(
+        '{"dt":%.4f,"raw":[%.0f,%.0f,%.0f],"fpos":[%.0f,%.0f,%.0f],"fvel":[%.0f,%.0f,%.0f],"err":%.1f,"coast":%s,"stale":%.3f,"veh":%s}',
+        r.dt or 0, r.raw[1], r.raw[2], r.raw[3], r.fpos[1], r.fpos[2], r.fpos[3],
+        r.fvel[1], r.fvel[2], r.fvel[3], r.err or 0, r.coast and "true" or "false",
+        r.stale or 0, r.veh and "true" or "false")
+    end
+    code, body = 200, '{"ok":true,"frames":[' .. table.concat(lines, ",") .. ']}'
   elseif req.method == "POST" and req.path == "/api/smoothing" then
     authed = true
     touch()
