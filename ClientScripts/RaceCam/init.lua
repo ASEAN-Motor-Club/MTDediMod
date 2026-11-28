@@ -596,65 +596,77 @@ end
 
 local HUD_MODES = { full = true, tags_only = true, clean = true }
 local hud_pc_cache = nil
-local hud_orig_vis = nil
+local hud_minimap_orig_vis = nil
+
+local function is_nametag_widget(w)
+    local ok, cls = pcall(function() return w:GetClass():GetFName():ToString() end)
+    return ok and type(cls) == "string" and cls:find("NameTag", 1, true) ~= nil
+end
 
 local function apply_hud_mode(mode)
     pcall(function()
         local pc = (Core and Core.pc) or hud_pc_cache
-        if pc and pc.IsValid and not pc:IsValid() then pc = nil; hud_pc_cache = nil end
-        if not pc and FindFirstOf then
+        if pc and pc.IsValid and not pc:IsValid() then pc = nil end
+        if not pc then
             pc = FindFirstOf("MotorTownPlayerController")
-            if pc and (not pc.IsValid or pc:IsValid()) then hud_pc_cache = pc end
+            hud_pc_cache = pc
         end
-        if not pc or (pc.IsValid and not pc:IsValid()) or not pc.GetHUD then return end
+        if not pc or not pc:IsValid() then return end
         local hud = pc:GetHUD()
-        if not hud or (hud.IsValid and not hud:IsValid()) then return end
-        local hide_hud = (mode ~= "full")
+        if not hud or not hud:IsValid() then return end
+        local hide_hud = (mode == "tags_only" or mode == "clean")
         local hide_tags = (mode == "clean")
-        local hud_op = hide_hud and 0.0 or 1.0
-        local tag_op = hide_tags and 0.0 or 1.0
         local hw = hud.HUDWidget
-        if hw and (not hw.IsValid or hw:IsValid()) then
-            if hw.SetRenderOpacity then hw:SetRenderOpacity(hud_op) end
-            -- Also toggle ESlateVisibility (1=Collapsed, 4=SelfHitTestInvisible)
-            -- because widgets like MinimapWidget ignore parent render opacity.
+        if hw and hw:IsValid() then
+            -- Keep HUDWidget itself visible so NameTagWidgets (which live inside
+            -- RootCanvasPanel!) are never masked out by their parent.
+            if hw.SetRenderOpacity then hw:SetRenderOpacity(1.0) end
             if hw.SetVisibility then
-                if hide_hud then
-                    if hud_orig_vis == nil and hw.GetVisibility then
-                        local ok_v, v = pcall(function() return hw:GetVisibility() end)
-                        if ok_v and type(v) == "number" then hud_orig_vis = v end
+                local okv, curv = pcall(function() return hw:GetVisibility() end)
+                if okv and curv == 1 then hw:SetVisibility(4) end
+            end
+            local root = hw.RootCanvasPanel
+            if root and root:IsValid() and root.GetChildrenCount then
+                local n = root:GetChildrenCount()
+                for i = 0, n - 1 do
+                    local c = root:GetChildAt(i)
+                    if c and c:IsValid() then
+                        local is_tag = is_nametag_widget(c)
+                        local want_hide = is_tag and hide_tags or (not is_tag and hide_hud)
+                        if c.SetRenderOpacity then
+                            c:SetRenderOpacity(want_hide and 0.0 or 1.0)
+                        end
+                        -- Minimap render-target ignores parent opacity; toggle visibility too.
+                        if not is_tag then
+                            local okn, nm = pcall(function() return c:GetFName():ToString() end)
+                            if okn and type(nm) == "string" and nm:find("Minimap", 1, true) then
+                                if want_hide then
+                                    if hud_minimap_orig_vis == nil and c.GetVisibility then
+                                        local okv, v = pcall(function() return c:GetVisibility() end)
+                                        if okv and type(v) == "number" and v ~= 1 then hud_minimap_orig_vis = v end
+                                    end
+                                    if c.SetVisibility then c:SetVisibility(1) end
+                                else
+                                    if c.SetVisibility then c:SetVisibility(hud_minimap_orig_vis or 4) end
+                                end
+                            end
+                        end
                     end
-                    pcall(function() hw:SetVisibility(1) end)
-                else
-                    pcall(function() hw:SetVisibility(hud_orig_vis or 4) end)
                 end
             end
         end
-        local tags = hud.NameTagWidgets
-        if tags then
-            local function set_tag(w)
-                if w and (not w.IsValid or w:IsValid()) then
-                    if w.SetRenderOpacity then w:SetRenderOpacity(tag_op) end
-                    if w.SetVisibility then
-                        pcall(function() w:SetVisibility(hide_tags and 1 or 4) end)
+        -- Also touch hud.NameTagWidgets directly in case any tag is parented outside RootCanvasPanel.
+        local nts = hud.NameTagWidgets
+        if nts and nts.ForEach then
+            local tag_op = hide_tags and 0.0 or 1.0
+            nts:ForEach(function(_, elem)
+                pcall(function()
+                    local w = elem:get()
+                    if w and w:IsValid() and w.SetRenderOpacity then
+                        w:SetRenderOpacity(tag_op)
                     end
-                end
-            end
-            if type(tags) == "table" then
-                for i = 1, #tags do set_tag(tags[i]) end
-            else
-                local ok_fe = pcall(function()
-                    tags:ForEach(function(_, elem)
-                        local w = elem and elem.get and elem:get() or elem
-                        set_tag(w)
-                    end)
                 end)
-                if not ok_fe then
-                    pcall(function()
-                        for i = 1, #tags do set_tag(tags[i]) end
-                    end)
-                end
-            end
+            end)
         end
     end)
 end
