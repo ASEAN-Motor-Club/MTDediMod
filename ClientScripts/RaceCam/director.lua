@@ -51,7 +51,7 @@ local BATTLE_POOL = {
 local SOLO_POOL = {
   "auto_trackside", "onboard_tcam",
   "auto_trackside", "side_tracking",
-  "auto_trackside", "chase_close",
+  "auto_trackside", "follow_focus",
   "auto_trackside", "heli_follow",
   "auto_trackside", "chase_close",
   "onboard_tcam",
@@ -307,6 +307,7 @@ function D:_choose_target(snap, now)
       local cb = cars and cars[b.name]
       local d = dist3(ca and ca.pos, cb and cb.pos)
       local gap = num(b.split_s, nil)
+      if gap and gap <= 0.0 then gap = nil end
       local close = (d and d < CLOSE_CM) or (gap and gap < CLOSE_GAP_S)
       if close then
         in_battle[a.name] = true
@@ -546,15 +547,25 @@ function D:step(snap)
 
   -- WHICH ANGLE --------------------------------------------------------------
   local shot_out, shot_reason = nil, nil
+  local active_target = target_out or snap.current_target or self.target
+  local cur_shot = snap.current_shot or self.shot
+  local hold_cap = (cur_shot == "auto_trackside")
+                   and self.trackside_hold_s or self.max_shot_hold_s
   if (mode == "shots" or mode == "full") and shot_rem <= 0.0 then
     local force = phase_changed
                   or (target_meta and (target_meta.finish_sprint or target_meta.incident))
-    local held = self.shot_since and (now - self.shot_since) or self.min_shot_hold_s
-    if force or held >= self.min_shot_hold_s then
-      local wanted, reason = self:_choose_shot(snap, now, snap.current_target or self.target,
-                                               target_meta)
+    local held = self.shot_since and (now - self.shot_since) or hold_cap
+    -- Cut immediately on phase/finish/incident; cut on target switch once
+    -- min_shot_hold_s has elapsed; otherwise hold until hold_cap (16 s for
+    -- auto_trackside, 12 s for rig shots) instead of rapid-cutting every 4.5 s.
+    local want_cut = force
+                     or (cur_shot == nil)
+                     or (target_out ~= nil and held >= self.min_shot_hold_s)
+                     or (held >= hold_cap)
+    if want_cut then
+      local wanted, reason = self:_choose_shot(snap, now, active_target, target_meta)
       shot_reason = reason
-      if wanted and wanted ~= (snap.current_shot or self.shot) then
+      if wanted and wanted ~= cur_shot then
         self.shot = wanted
         self.shot_since = now
         shot_out = wanted
@@ -573,7 +584,7 @@ function D:step(snap)
   if reason == "" then reason = "holding" end
 
   local target_wait = math.max(0.0, (self.target_since or now) + self.min_target_hold_s - now)
-  local shot_wait = math.max(0.0, (self.shot_since or now) + self.min_shot_hold_s - now)
+  local shot_wait = math.max(0.0, (self.shot_since or now) + hold_cap - now)
   local next_cut_in = math.max(target_wait, shot_wait, override_s)
 
   return {

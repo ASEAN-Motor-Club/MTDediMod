@@ -1115,7 +1115,7 @@ for t = 0, 20 do
   if r.target == "P4" or r.target == "P5" then dead_seen = true end
   if r.target == "P2" or r.target == "P3" then battle_seen = true end
   if r.target and contains(r.reason, "battle") then battle_reason = true end
-  assert(r.next_cut_in >= 0 and r.next_cut_in <= 7.001,
+  assert(r.next_cut_in >= 0 and r.next_cut_in <= 16.001,
          "next_cut_in out of range at " .. t .. ": " .. tostring(r.next_cut_in))
   snap.current_target = r.target or snap.current_target
 end
@@ -1124,6 +1124,15 @@ assert(battle_seen, "close battle never became the target")
 assert(battle_reason, "close-battle reason missing from step() output")
 assert(snap.current_target == "P2" or snap.current_target == "P3",
        "final target not in the close battle: " .. tostring(snap.current_target))
+
+-- Zero split_s (missing/pre-gate timing) must NOT fabricate a close battle.
+local dz = D.new()
+local rz = dz:step(mk_snap{
+  standings = { row("P1", 1, 0, 0, 0), row("P2", 2, 0, 0, 0) },
+  cars = { P1 = car(0, 3000), P2 = car(50000, 3000) },
+  current_target = "P1",
+})
+assert(not contains(rz.reason, "battle"), "zero split_s fabricated a fake battle: " .. rz.reason)
 
 -- A long-watched solo leader must rotate to a fresh rival once air-time decay
 -- overcomes the +25% stickiness (12 s grace, 2.5/s, capped at -45).
@@ -1193,7 +1202,7 @@ AUTO_DIRECTOR_HOLD_HARNESS = r'''
 local d = D.new()
 local ct = "P1"
 local switches, cuts = 0, {}
-for t = 0, 30 do
+for t = 0, 50 do
   local sa = (t % 2 == 0) and 0.8 or 3.0
   local sb = (t % 2 == 0) and 3.0 or 0.8
   local snap = mk_snap{
@@ -1214,10 +1223,10 @@ for t = 0, 30 do
     end
     cuts[#cuts + 1] = { t = t, id = r.shot }
   end
-  assert(r.next_cut_in >= 0 and r.next_cut_in <= 7.001)
+  assert(r.next_cut_in >= 0 and r.next_cut_in <= 16.001)
 end
 assert(switches <= 1, "target ping-ponged between equal battles: " .. tostring(switches))
-assert(#cuts >= 4, "too few shot cuts over 30 s: " .. tostring(#cuts))
+assert(#cuts >= 4, "too few shot cuts over 50 s: " .. tostring(#cuts))
 for i = 2, #cuts do
   assert(cuts[i].id ~= cuts[i - 1].id, "same shot repeated back-to-back")
 end
@@ -1277,8 +1286,8 @@ local snap = mk_snap{
   current_target = "P1",
 }
 local shots = {}
-for i = 0, 14 do
-  snap.now = i * 5
+for i = 0, 20 do
+  snap.now = i * 16
   local r = d:step(snap)
   if r.shot then shots[#shots + 1] = r.shot; snap.current_shot = r.shot end
 end
@@ -1309,7 +1318,7 @@ for i = 0, 9 do
   end
 end
 
--- A streamed-in solo target may use onboard_tcam and side_tracking.
+-- A streamed-in solo target may use onboard_tcam, side_tracking, and follow_focus.
 local d3 = D.new()
 local s3 = mk_snap{
   mode = "shots",
@@ -1317,17 +1326,39 @@ local s3 = mk_snap{
   cars = { P1 = car(0, 3000, true) },
   current_target = "P1",
 }
-local onboard, side = false, false
+local onboard, side, follow_focus = false, false, false
 for i = 0, 14 do
-  s3.now = i * 5
+  s3.now = i * 16
   local r = d3:step(s3)
   if r.shot then
     s3.current_shot = r.shot
     if r.shot == "onboard_tcam" then onboard = true end
     if r.shot == "side_tracking" then side = true end
+    if r.shot == "follow_focus" then follow_focus = true end
   end
 end
-assert(onboard and side, "streamed-in target never got onboard_tcam/side_tracking")
+assert(onboard and side and follow_focus,
+       "streamed-in target missing expected solo shots: onboard=" .. tostring(onboard)
+       .. " side=" .. tostring(side) .. " follow_focus=" .. tostring(follow_focus))
+
+-- Switching from a streamed-in target to a remote target on the SAME tick must
+-- check remoteness against the NEW target (never pick onboard_tcam).
+local d4 = D.new()
+local s4 = mk_snap{
+  mode = "full",
+  standings = { row("Near", 1, 2, 5, nil), row("Far", 2, 2, 5, 20) },
+  cars = { Near = car(0, 3000, true), Far = car(90000, 3000, false) },
+  current_target = "Near",
+  current_shot = "auto_trackside",
+}
+d4:step(s4)
+s4.now = 5
+s4.standings = { row("Far", 1, 2, 5, nil), row("Near", 2, 2, 5, 20) } -- rank swap to remote
+local r4 = d4:step(s4)
+assert(r4.target == "Far", "expected switch to Far: " .. tostring(r4.target))
+if r4.shot then
+  assert(allowed[r4.shot], "same-tick switch to remote picked disallowed shot: " .. tostring(r4.shot))
+end
 print("AUTO_DIRECTOR_REMOTE_OK remote_shots=" .. table.concat(shots, ","))
 '''
 

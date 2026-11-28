@@ -125,7 +125,11 @@ function M.set_director_mode(mode)
     local normalized = string.lower(mode)
     if not DIRECTOR_MODES[normalized] then return nil, "invalid mode" end
     M.director_mode = normalized
-    if normalized == "off" then
+    if normalized == "full" then
+        -- Auto Full owns target selection; disengage Follow Leader so
+        -- automation_tick() does not fight the director for P1.
+        M.follow_leader = false
+    elseif normalized == "off" then
         M.director_reason = ""
         M.director_override_s = 0
         if M.director and type(M.director.reset) == "function" then
@@ -456,17 +460,31 @@ end
 local function director_standings(sd)
     local rows = {}
     if not sd or type(sd.standings) ~= "table" then return rows end
+    local prev = nil
     for _, r in ipairs(sd.standings) do
         if type(r) == "table" and r.name then
+            local laps = tonumber(r.laps) or 0
+            local section = tonumber(r.section) or 0
+            local sec_t = tonumber(r.last_sec_s) or 0
+            -- Compute real inter-car gap only when adjacent rows share lap &
+            -- section with valid positive split timestamps; otherwise nil so
+            -- missing/zero timing never fabricates fake close battles.
+            local gap = tonumber(r.gap_s)
+            if not gap and prev and prev.laps == laps and prev.section == section
+               and prev.sec_t > 0 and sec_t > 0 then
+                gap = math.abs(sec_t - prev.sec_t)
+            end
+            if gap and gap <= 0 then gap = nil end
             rows[#rows + 1] = {
                 name = tostring(r.name),
                 rank = tonumber(r.rank) or 0,
-                laps = tonumber(r.laps) or 0,
-                section = tonumber(r.section) or 0,
-                split_s = tonumber(r.split_s or r.last_sec_s or r.best_lap_s) or 0,
+                laps = laps,
+                section = section,
+                split_s = gap,
                 finished = r.finished and true or false,
                 dq = (r.dq or r.disqualified) and true or false,
             }
+            prev = { laps = laps, section = section, sec_t = sec_t }
         end
     end
     return rows
