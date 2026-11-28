@@ -65,6 +65,10 @@ VALID_IDS = {
     # Broadcast Desk v2 — collapsible drawers + aliased OBS fields
     "drawer_setup", "drawer_conn", "drawer_log",
     "obs_url", "obs_pw", "obs_rem", "obs_sc",
+    # Event Control (live Motor Town event lifecycle)
+    "ev_ctrl_select", "ev_ctrl_state", "ev_ctrl_owner",
+    "ev_btn_lobby", "ev_btn_ready", "ev_btn_start", "ev_btn_finish",
+    "ev_btn_join", "ev_btn_leave", "ev_btn_close", "ev_auto_cam",
 }
 
 
@@ -105,8 +109,14 @@ function mkStore(){
 globalThis.localStorage = mkStore();
 globalThis.sessionStorage = mkStore();
 globalThis.location = {hash:'', href:'http://127.0.0.1:8767/', origin:'http://127.0.0.1:8767'};
-Object.defineProperty(globalThis, 'navigator', {configurable:true,
-  value:{clipboard:{writeText:async t => {globalThis.__copied = t;}}}});
+try{
+  if(!globalThis.navigator){
+    Object.defineProperty(globalThis, 'navigator', {configurable:true,
+      value:{clipboard:{writeText:async t => {globalThis.__copied = t;}}}});
+  }else if(!globalThis.navigator.clipboard){
+    globalThis.navigator.clipboard = {writeText:async t => {globalThis.__copied = t;}};
+  }
+}catch(e){}
 const replaceStateCalls = [];
 globalThis.history = {replaceState:(...a) => replaceStateCalls.push(a)};
 const fetchLog = [];
@@ -115,14 +125,22 @@ globalThis.fetch = async (url, opts) => {
   let j = {};
   if (url === '/api/state') j = globalThis.__stateOverride || {degraded:false, target_lost:false, shots:['start_line','corner_01_pan'],
                                  targets:['Driver'], rehearsal:false, running:false};
-  else if (url === '/api/live_events') j = globalThis.__noLiveEvents ? {events:[]} : {events:[{name:'Current Trial', is_member:true,
-    waypoints:[{x:0,y:0,z:0,gate_m:18},{x:4000,y:0,z:0,gate_m:18},{x:8000,y:0,z:0,gate_m:18}]}]};
+  else if (url === '/api/live_events') j = globalThis.__liveEventsOverride !== undefined
+    ? globalThis.__liveEventsOverride
+    : (globalThis.__noLiveEvents ? {events:[]} : {events:[{name:'Current Trial', is_member:true,
+    waypoints:[{x:0,y:0,z:0,gate_m:18},{x:4000,y:0,z:0,gate_m:18},{x:8000,y:0,z:0,gate_m:18}]}]});
   else if (url === '/api/plans') j = {plans:[]};
   else if (url === '/api/inbox') j = {has_drop_file:true, files:['event.json','route.txt']};
   else if (url && url.indexOf('/api/inbox_file?') === 0) j = globalThis.__inboxContent || '{}';
   else if (url === '/api/my_pos') {
     const i = (globalThis.__pinSeq = (globalThis.__pinSeq || 0) + 1);
     j = {x:i*1800.0, y:(i%2)*900.0, z:0, yaw:0};
+  }
+  else if (url && url.indexOf('/api/event/') === 0) {
+    let sent = {};
+    try { sent = JSON.parse((opts && opts.body) || '{}'); } catch(e) {}
+    j = Object.assign({ok:true, event_guid:sent.event_guid || ''},
+                      globalThis.__eventResponse || {});
   }
   return {json: async () => j,
           text: async () => (typeof j === 'string' ? j : JSON.stringify(j))};
@@ -1990,6 +2008,176 @@ class OverlayPanelControlTests(unittest.TestCase):
         self.assertEqual(result["url"], "http://127.0.0.1:8767/overlay/standings")
         self.assertEqual(result["copied"], result["url"])
         self.assertIn("Copied OBS URL", result["toast"])
+
+
+class EventControlTests(unittest.TestCase):
+    """Operator-panel Event Control bar: 2-step confirm, host badge, RPC toast."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S).group(1)
+
+    # Exposes the module-scoped liveEvents list to the test without changing
+    # production code: the appended code runs inside the same Function body.
+    PRELUDE = r"""
+      (new Function(PANEL_JS + "\n;globalThis.__evt={refresh:refreshLiveEvents};"))();
+      globalThis.__liveEventsOverride = {events:[{name:'AMC Duro', guid:'G1',
+        is_member:true, waypoints:[{x:0,y:0,z:0,gate_m:18},{x:1,y:1,z:1,gate_m:18}],
+        state:0, owner_guid:'', is_owner:true, player_count:2, waypoint_count:2}]};
+      await globalThis.__evt.refresh();
+    """
+
+    def test_markup_and_wiring(self):
+        for snippet in (
+            'id="ev_ctrl_select"', 'id="ev_ctrl_state"', 'id="ev_ctrl_owner"',
+            'id="ev_btn_lobby"', 'id="ev_btn_ready"', 'id="ev_btn_start"',
+            'id="ev_btn_finish"', 'id="ev_btn_join"', 'id="ev_btn_leave"',
+            'id="ev_btn_close"', 'id="ev_auto_cam"',
+            "eventCtrlState('lobby')", "eventCtrlState('ready')",
+            "eventCtrlState('start')", "eventCtrlFinish()",
+            "eventCtrlClose()", "eventCtrlJoinLeave('join')",
+            "eventCtrlJoinLeave('leave')", "verifyEventCtrl(s)",
+            "Date.now()-evCtrlArm.t<=4000", "Date.now()-p.t>2500",
+            "{confirm:true}", "'/api/event/state'", "'/api/event/close'",
+            "'/api/event/join'", "'/api/event/leave'", "Host: None (Claim)",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.lua)
+
+    def test_finish_two_step_confirm_expires_after_four_seconds(self):
+        result = parse_result(run_node(self.js, self.PRELUDE + r"""
+          const p=globalThis.racecamPanel;
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>100000});
+          const btn=document.getElementById('ev_btn_finish');
+          btn.textContent='Finish';  // Node stub has no HTML-initialized label
+          const first=p.eventCtrlFinish();
+          const text1=btn.textContent, arm1=p.getEventCtrlArm();
+          const posts1=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0).length;
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>105000});
+          const expired=p.eventCtrlFinish();   // 5 s: window closed -> re-arm
+          const posts2=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0).length;
+          const arm2=p.getEventCtrlArm();
+          const confirmed=p.eventCtrlFinish(); // second click within 4 s
+          const posts3=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0)
+                              .map(x=>({url:x.url,body:JSON.parse(x.opts.body)}));
+          console.log(JSON.stringify({first:first,expired:expired,confirmed:confirmed,
+            text1:text1,arm1:arm1,arm2:arm2,
+            counts:[posts1,posts2,posts3.length],finalText:btn.textContent,
+            posted:posts3}));
+        """))
+        self.assertFalse(result["first"], "first Finish click must only arm")
+        self.assertEqual(result["text1"], "Confirm Finish?")
+        self.assertEqual(result["arm1"]["label"], "Finish")
+        self.assertFalse(result["expired"], "click after 4 s must not confirm")
+        self.assertEqual(result["arm2"]["t"], 105000, "expired arm must be re-armed")
+        self.assertTrue(result["confirmed"], "second click within 4 s must confirm")
+        self.assertEqual(result["counts"], [0, 0, 1])
+        self.assertEqual(result["finalText"], "Finish")
+        self.assertEqual(result["posted"], [
+            {"url": "/api/event/state", "body": {"event_guid": "G1", "state": "finish"}}])
+
+    def test_close_two_step_confirm_sends_confirm_true(self):
+        result = parse_result(run_node(self.js, self.PRELUDE + r"""
+          const p=globalThis.racecamPanel;
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>100000});
+          const btn=document.getElementById('ev_btn_close');
+          btn.textContent='Close Event';
+          const first=p.eventCtrlClose();
+          const text1=btn.textContent;
+          const posts1=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0).length;
+          const second=p.eventCtrlClose();
+          const posted=fetchLog.filter(x=>x.url.indexOf('/api/event/')===0)
+                               .map(x=>({url:x.url,body:JSON.parse(x.opts.body)}));
+          console.log(JSON.stringify({first:first,second:second,text1:text1,
+            posts1:posts1,posted:posted,finalText:btn.textContent}));
+        """))
+        self.assertFalse(result["first"])
+        self.assertEqual(result["text1"], "Confirm Close?")
+        self.assertEqual(result["posts1"], 0, "first click must not post")
+        self.assertTrue(result["second"])
+        self.assertEqual(result["finalText"], "Close Event")
+        self.assertEqual(result["posted"], [
+            {"url": "/api/event/close",
+             "body": {"event_guid": "G1", "confirm": True}}])
+
+    def test_host_badge_states_and_start_guard(self):
+        result = parse_result(run_node(self.js, r"""
+          (new Function(PANEL_JS))();
+          const p=globalThis.racecamPanel;
+          const own=document.getElementById('ev_ctrl_owner');
+          const pill=document.getElementById('ev_ctrl_state');
+          const start=document.getElementById('ev_btn_start');
+          p.renderEventControl({guid:'G1',state:1,is_owner:true,owner_guid:'L1',
+            owner_name:'Me',player_count:2,waypoint_count:2});
+          const you={text:own.textContent,clickable:typeof own.onclick==='function',
+                     state:pill.textContent};
+          p.renderEventControl({guid:'G1',state:1,in_countdown:true,is_owner:true,
+            owner_guid:'L1',owner_name:'Me',player_count:2,waypoint_count:2});
+          const counting={text:pill.textContent,cls:pill.className};
+          p.renderEventControl({guid:'G1',state:0,is_owner:false,owner_guid:'',
+            owner_name:'',player_count:2,waypoint_count:2});
+          const none={text:own.textContent,clickable:typeof own.onclick==='function'};
+          p.renderEventControl({guid:'G1',state:2,is_owner:false,
+            owner_guid:'ABCDEF0123456789',owner_name:'Bob',
+            player_count:2,waypoint_count:2});
+          const other={text:own.textContent,clickable:typeof own.onclick==='function',
+                       state:pill.textContent,disabled:start.disabled};
+          p.renderEventControl({guid:'G1',state:0,is_owner:true,owner_guid:'L1',
+            owner_name:'Me',player_count:0,waypoint_count:2});
+          const empty={disabled:start.disabled,title:start.title};
+          p.renderEventControl({});
+          const noEvent={text:own.textContent,disabled:start.disabled};
+          console.log(JSON.stringify({you:you,counting:counting,none:none,other:other,
+            empty:empty,noEvent:noEvent}));
+        """))
+        self.assertEqual(result["you"], {"text": "Host: You", "clickable": False,
+                                         "state": "READY"})
+        self.assertEqual(result["counting"], {"text": "COUNTDOWN",
+                                              "cls": "status-pill counting"})
+        self.assertEqual(result["none"], {"text": "Host: None (Claim)",
+                                          "clickable": True})
+        self.assertEqual(result["other"], {"text": "Host: Bob", "clickable": False,
+                                           "state": "RACING", "disabled": True})
+        self.assertTrue(result["empty"]["disabled"])
+        self.assertIn("Start needs at least one player", result["empty"]["title"])
+        self.assertEqual(result["noEvent"], {"text": "Host: —", "disabled": True})
+
+    def test_post_rpc_verification_and_rejection_toasts(self):
+        result = parse_result(run_node(self.js, self.PRELUDE + r"""
+          const p=globalThis.racecamPanel;
+          const toast=()=>document.getElementById('toast').textContent;
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>200000});
+          globalThis.__eventResponse={ok:true,event_guid:'G1',state:1};
+          await p.eventCtrlState('ready');
+          const pendingA=p.getEventCtrlPending();
+          p.verifyEventCtrl({event_guid:'G1',event_state:1,last_remove_response:null});
+          const okToast=toast(), clearedA=p.getEventCtrlPending();
+          globalThis.__eventResponse={ok:true,event_guid:'G1',state:3};
+          await p.eventCtrlState('finish');
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>203000});
+          p.verifyEventCtrl({event_guid:'G1',event_state:1,last_remove_response:null});
+          const warnToast=toast(), clearedB=p.getEventCtrlPending();
+          Object.defineProperty(Date,'now',{configurable:true,value:()=>300000});
+          await p.eventCtrlClose(); await p.eventCtrlClose();
+          await sleep(10);  // armEventCtrl fires the async confirm without awaiting
+          const pendingC=p.getEventCtrlPending();
+          p.verifyEventCtrl({event_guid:'G1',event_state:1,
+            last_remove_response:{guid:'G1',succeeded:false,ts:300000}});
+          const rejToast=toast(), clearedC=p.getEventCtrlPending();
+          console.log(JSON.stringify({pendingA:pendingA,okToast:okToast,
+            clearedA:clearedA,warnToast:warnToast,clearedB:clearedB,
+            pendingKindC:pendingC&&pendingC.kind,rejToast:rejToast,clearedC:clearedC}));
+        """))
+        self.assertEqual(result["pendingA"]["kind"], "state")
+        self.assertEqual(result["okToast"], "Event → READY")
+        self.assertIsNone(result["clearedA"], "confirmed state must clear pending")
+        self.assertIn("did not apply event change", result["warnToast"])
+        self.assertIn("event host", result["warnToast"])
+        self.assertIsNone(result["clearedB"], "timed-out state must clear pending")
+        self.assertEqual(result["pendingKindC"], "close")
+        self.assertIn("Server rejected", result["rejToast"])
+        self.assertIsNone(result["clearedC"], "rejected close must clear pending")
 
 
 if __name__ == "__main__":

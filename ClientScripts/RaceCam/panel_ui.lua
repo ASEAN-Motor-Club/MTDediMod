@@ -282,6 +282,27 @@ hr{border:0;border-top:1px solid var(--line);margin:8px 0}
   <button id="plans_refresh" onclick="refreshPlans()">Refresh</button>
   <button id="plan_load" onclick="loadPlanFromServer()">Load &amp; Apply</button>
   </div>
+  <div class="card" style="margin-top:8px">
+  <div class="card-head"><h2>Event Control</h2><span class="muted">Live game server — these buttons really change the event</span></div>
+  <div class="select-row">
+    <select id="ev_ctrl_select" onchange="onEventCtrlSelect()"></select>
+    <span id="ev_ctrl_state" class="status-pill">LOBBY</span>
+    <span id="ev_ctrl_owner" class="muted" title="Event host">Host: —</span>
+  </div>
+  <div class="pin-row" style="margin-top:6px">
+    <button id="ev_btn_lobby" class="sm-btn" onclick="eventCtrlState('lobby')">Lobby</button>
+    <button id="ev_btn_ready" class="sm-btn" onclick="eventCtrlState('ready')">Ready</button>
+    <button id="ev_btn_start" class="sm-btn t-start" onclick="eventCtrlState('start')">Start</button>
+    <button id="ev_btn_finish" class="sm-btn" onclick="eventCtrlFinish()">Finish</button>
+  </div>
+  <div class="pin-row">
+    <button id="ev_btn_join" class="sm-btn" onclick="eventCtrlJoinLeave('join')">Join</button>
+    <button id="ev_btn_leave" class="sm-btn" onclick="eventCtrlJoinLeave('leave')">Leave</button>
+    <button id="ev_btn_close" class="sm-btn" onclick="eventCtrlClose()">Close Event</button>
+    <label title="Also arm RaceCam and fire the start sequence when starting the event"><input id="ev_auto_cam" type="checkbox"> Start RaceCam on Start</label>
+  </div>
+  <div class="muted">Rehearsal does NOT shield these controls — they affect the live Motor Town server. Finish and Close need a second click.</div>
+  </div>
 </details>
 <details id="drawer_conn" class="card drawer">
   <summary><strong>Auth &amp; OBS Settings</strong> — token and OBS WebSocket</summary>
@@ -868,6 +889,16 @@ async function poll(){
     renderShotDeck(s);
     renderCues();
     renderContestants(s);
+    // Event Control mirrors the active lobby and confirms pending RPCs.
+    if(s.event_guid!==undefined&&s.event_guid!==null&&s.event_guid!==''){
+      renderEventControl({guid:s.event_guid,state:s.event_state,
+        in_countdown:!!s.in_countdown,
+        owner_guid:s.event_owner_guid||'',owner_name:s.event_owner_name||'',
+        is_owner:!!s.event_is_owner,is_joined:!!s.event_is_joined,
+        player_count:Number(s.event_player_count)||0,
+        waypoint_count:Number(s.event_waypoint_count)||0});
+    }
+    verifyEventCtrl(s);
   }catch(e){}
   if((++pollTick%30)===0)refreshInbox();   // inbox can change while the panel is open
   setTimeout(poll,700);
@@ -1278,7 +1309,144 @@ function renderLiveEvents(){
     sel.appendChild(o);
   });
   if([...sel.options].some(o=>o.value===keep))sel.value=keep;
+  renderEventControlSelect();
 }
+/* ---- Event lifecycle control (token-gated /api/event/*) ----
+   Thin operator surface over the LIVE game server. The RPCs are async: the
+   requested state is remembered and confirmed against the next /api/state
+   polls; a server that silently ignores a non-owner call raises a warning. */
+const EV_STATE_LABEL={0:'LOBBY',1:'READY',2:'RACING',3:'FINISHED'};
+const EV_STATE_NAME={0:'lobby',1:'ready',2:'start',3:'finish'};
+let evCtrlArm=null,evCtrlPending=null;
+
+function eventCtrlEvent(){
+  const sel=$('ev_ctrl_select');
+  if(sel&&sel.value!==''&&liveEvents[Number(sel.value)])return liveEvents[Number(sel.value)];
+  return currentLiveEvent()||null;
+}
+function eventCtrlGuid(ev){ev=ev||eventCtrlEvent();return ev&&ev.guid?String(ev.guid):''}
+function renderEventControl(ev){
+  ev=ev||eventCtrlEvent()||{};
+  const st=$('ev_ctrl_state'),own=$('ev_ctrl_owner'),start=$('ev_btn_start');
+  if(!st||!own||!start)return;
+  const state=Number(ev.state)||0,guid=eventCtrlGuid(ev);
+  const counting=!!ev.in_countdown;
+  st.textContent=counting?'COUNTDOWN':(EV_STATE_LABEL[state]||'LOBBY');
+  st.className='status-pill '+((counting||state===1)?'counting':(state===2?'racing':(state===3?'finished':'')));
+  const og=String(ev.owner_guid||''),isOwner=!!ev.is_owner;
+  if(!guid){
+    own.textContent='Host: —';own.className='muted';own.title='No event selected';own.onclick=null;
+  }else if(isOwner){
+    own.textContent='Host: You';own.className='pill ok';own.title='You own this event';own.onclick=null;
+  }else if(!og){
+    own.textContent='Host: None (Claim)';own.className='pill standby';
+    own.title='No host — click to join and claim this event';
+    own.onclick=()=>eventCtrlJoinLeave('join');
+  }else{
+    own.textContent='Host: '+(String(ev.owner_name||'').trim()||og.slice(0,8));
+    own.className='muted';
+    own.title='Another player owns this event — the server may require host rights';
+    own.onclick=null;
+  }
+  const noPlayers=(Number(ev.player_count)||0)===0;
+  const noWps=(Number(ev.waypoint_count)||0)===0;
+  start.disabled=!guid||noPlayers||noWps||state===2;
+  start.title=(noPlayers||noWps)?'Start needs at least one player and one waypoint':'';
+}
+function renderEventControlSelect(){
+  const sel=$('ev_ctrl_select');if(!sel)return;
+  const keep=sel.value,active=currentLiveEvent();
+  sel.innerHTML='';
+  liveEvents.forEach((ev,i)=>{
+    const o=document.createElement('option');
+    o.value=String(i);
+    const laps=Number(ev.num_laps)||((ev.waypoints||[]).length);
+    o.textContent=String(ev.name||'event')+' ('+laps+'L · '+(Number(ev.player_count)||0)+' racers)';
+    sel.appendChild(o);
+  });
+  const want=active?String(liveEvents.indexOf(active)):keep;
+  if([...sel.options].some(o=>o.value===want))sel.value=want;
+  renderEventControl();
+}
+function onEventCtrlSelect(){disarmEventCtrl();renderEventControl()}
+async function eventCtrlPost(path,extra){
+  const guid=eventCtrlGuid();
+  if(!guid){toast('No event selected — create/join an event in game first');return null}
+  try{
+    const body=Object.assign({event_guid:guid},extra||{});
+    const r=await fetch(path,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},hdr()),body:JSON.stringify(body)});
+    const j=await r.json();
+    $('out').textContent='EVENT '+path+' '+JSON.stringify(body)+' → '+JSON.stringify(j)+'\n'+$('out').textContent;
+    if(!j||j.ok===false){toast('Event error: '+((j&&j.error)||'unknown'));return null}
+    return j;
+  }catch(e){toast('Event ERR '+e);return null}
+}
+function disarmEventCtrl(){
+  if(evCtrlArm){const b=$(evCtrlArm.id);if(b)b.textContent=evCtrlArm.orig;evCtrlArm=null}
+}
+function armEventCtrl(id,label,confirmFn){
+  if(evCtrlArm&&evCtrlArm.id===id&&Date.now()-evCtrlArm.t<=4000){
+    disarmEventCtrl();confirmFn();return true;
+  }
+  disarmEventCtrl();
+  const b=$(id);
+  const orig=b?b.textContent:'';
+  if(b)b.textContent='Confirm '+label+'?';
+  evCtrlArm={id:id,label:label,orig:orig,t:Date.now()};
+  toast('Click again within 4 s to confirm '+label);
+  return false;
+}
+async function eventCtrlState(name){
+  const ev=eventCtrlEvent();
+  if(name==='start'&&ev&&((Number(ev.player_count)||0)===0||(Number(ev.waypoint_count)||0)===0)){
+    toast('Start needs at least one player and one waypoint');return null;
+  }
+  const guid=eventCtrlGuid(ev);
+  const j=await eventCtrlPost('/api/event/state',{state:name});
+  if(!j)return null;
+  const target=Number(j.state);
+  evCtrlPending={kind:'state',guid:String(j.event_guid||guid),state:target,
+    label:EV_STATE_LABEL[target]||String(name).toUpperCase(),t:Date.now()};
+  toast('Event → '+evCtrlPending.label+' (pending)');
+  const ac=$('ev_auto_cam');
+  if(name==='start'&&ac&&ac.checked){cmd('arm');cmd('start')}
+  return j;
+}
+function eventCtrlFinish(){
+  return armEventCtrl('ev_btn_finish','Finish',()=>eventCtrlState('finish'));
+}
+function eventCtrlClose(){
+  return armEventCtrl('ev_btn_close','Close',async()=>{
+    const j=await eventCtrlPost('/api/event/close',{confirm:true});
+    if(!j)return null;
+    evCtrlPending={kind:'close',guid:String(j.event_guid||eventCtrlGuid()),t:Date.now()};
+    toast('Event close requested (pending)');
+    return j;
+  });
+}
+async function eventCtrlJoinLeave(action){
+  const j=await eventCtrlPost(action==='join'?'/api/event/join':'/api/event/leave',{});
+  if(j)toast(action==='join'?'Joining event (pending)':'Leaving event (pending)');
+  return j;
+}
+function eventCtrlClaim(){return eventCtrlJoinLeave('join')}
+function verifyEventCtrl(s){
+  if(!evCtrlPending)return;
+  const p=evCtrlPending,ack=s&&s.last_remove_response;
+  if(p.kind==='close'&&ack&&ack.succeeded===false){
+    toast('Server rejected event change — check that you are event host');evCtrlPending=null;return;
+  }
+  const nowGuid=String((s&&s.event_guid)||'');
+  if(p.kind==='close'){
+    if(!nowGuid||nowGuid!==p.guid){toast('Event closed');evCtrlPending=null;return}
+  }else if(nowGuid===String(p.guid)&&Number(s.event_state)===Number(p.state)){
+    toast('Event → '+p.label);evCtrlPending=null;return;
+  }
+  if(Date.now()-p.t>2500){
+    toast('Server did not apply event change — check that you are event host');evCtrlPending=null;
+  }
+}
+
 function liveEventDoc(ev){
   return {RouteName:ev.name||'live event',Waypoints:(ev.waypoints||[]).map(w=>{
     const loc=(w.Location||w.location||w.Translation||w.translation);
@@ -1794,7 +1962,15 @@ window.racecamPanel={cmd:cmd,trigger:trigger,enqueue:enqueue,undo:undo,toggleReh
   getStagedShot:()=>stagedShot,getDeckSig:()=>lastDeckSig,updateKeysPill:updateKeysPill,
   collapseSetup:collapseSetup,openSetup:openSetup,toggleConnDrawer:toggleConnDrawer,
   renderObsScenePads:renderObsScenePads,setAuthPill:setAuthPill,setObsPill:setObsPill,
-  syncObsAliases:syncObsAliases,toast:toast};
+  syncObsAliases:syncObsAliases,toast:toast,
+  renderEventControl:renderEventControl,renderEventControlSelect:renderEventControlSelect,
+  eventCtrlState:eventCtrlState,eventCtrlFinish:eventCtrlFinish,eventCtrlClose:eventCtrlClose,
+  eventCtrlJoinLeave:eventCtrlJoinLeave,eventCtrlClaim:eventCtrlClaim,
+  onEventCtrlSelect:onEventCtrlSelect,verifyEventCtrl:verifyEventCtrl,
+  disarmEventCtrl:disarmEventCtrl,
+  getEventCtrlArm:()=>evCtrlArm&&Object.assign({},evCtrlArm),
+  getEventCtrlPending:()=>evCtrlPending&&Object.assign({},evCtrlPending),
+  getEventCtrlGuid:()=>eventCtrlGuid()};
 </script></body></html>]=]
 
 return M

@@ -56,6 +56,10 @@ local function guid_of(v)
     return ""
 end
 
+--- Exposed for event_control.lua's response hook: convert a fresh FGuid
+--- userdata into a plain string immediately (never cache the userdata).
+M.guid_string = guid_of
+
 --- Iterate a UE4SS TArray (`:ForEach`) or a plain Lua array. Never return
 --- early from the ForEach callback: UE4SS bounded-exit semantics are not
 --- continue/stop and an early return can wedge the iteration.
@@ -136,6 +140,19 @@ function M.local_name()
     return nil
 end
 
+--- Fresh local CharacterGuid (AMotorTownPlayerState.CharacterGuid) as a plain
+--- string. Used to decide event ownership; no UObject is retained.
+---@return string
+local function local_character_guid()
+    if type(GetMyPlayerController) ~= "function" then return "" end
+    local ok, pc = pcall(GetMyPlayerController)
+    if not ok or not valid(pc) then return "" end
+    local ok2, ps = pcall(function() return pc.PlayerState end)
+    if not ok2 or not valid(ps) then return "" end
+    return guid_of(field(ps, "CharacterGuid"))
+end
+M.local_character_guid = local_character_guid
+
 --- Standings sort: ranked (rank > 0) first by rank asc, then the pre-start
 --- grid (rank == 0) alphabetically, then disqualified alphabetically. Rank
 --- ties break on laps desc, section desc, then name asc.
@@ -153,13 +170,18 @@ local function standing_cmp(a, b)
     return a.name < b.name
 end
 
-local function build_event(ev, wanted_name)
+local function build_event(ev, wanted_name, local_guid)
     local ok, data = pcall(function()
         local players = {}
+        local player_rows = {}
         foreach(field(ev, "Players"), function(_, p)
             if not p then return end
             local nm = name_of(field(p, "PlayerName"))
             if nm then
+                local cid = field(p, "CharacterId")
+                local pguid = guid_of(field(cid, "CharacterGuid"))
+                if pguid == "" then pguid = guid_of(field(cid, "UniqueNetId")) end
+                player_rows[#player_rows + 1] = { name = nm, guid = pguid }
                 players[#players + 1] = {
                     rank = tonumber(field(p, "Rank")) or 0,
                     name = nm,
@@ -172,6 +194,39 @@ local function build_event(ev, wanted_name)
                 }
             end
         end)
+
+        -- Owner is an FMTCharacterId on the event. Convert to a plain string
+        -- immediately; the raw struct userdata must never be retained.
+        local owner_id = field(ev, "OwnerCharacterId")
+        local owner_guid = ""
+        for _, key in ipairs({ "CharacterGuid", "UniqueNetId" }) do
+            local s = guid_of(field(owner_id, key))
+            if s ~= "" then owner_guid = s break end
+        end
+        local owner_name = ""
+        local is_owner = owner_guid ~= "" and local_guid ~= "" and owner_guid == local_guid
+        if owner_guid ~= "" then
+            for _, row in ipairs(player_rows) do
+                if row.guid == owner_guid then owner_name = row.name break end
+            end
+            if owner_name == "" then
+                local gs = get_game_state()
+                if gs then
+                    foreach(field(gs, "PlayerArray"), function(_, ps)
+                        if owner_name == "" and ps
+                           and guid_of(field(ps, "CharacterGuid")) == owner_guid then
+                            local n = name_of(field(ps, "PlayerName"))
+                            if not n and type(ps.GetPlayerName) == "function" then
+                                local okn, v = pcall(ps.GetPlayerName, ps)
+                                if okn then n = name_of(v) end
+                            end
+                            if n then owner_name = n end
+                        end
+                    end)
+                end
+            end
+            if owner_name == "" and is_owner and wanted_name then owner_name = wanted_name end
+        end
 
         -- Compact, sorted leaderboard. Shares the already-built player tables
         -- (no deep copy) so this stays cheap for the 700 ms /api/state poll.
@@ -224,6 +279,10 @@ local function build_event(ev, wanted_name)
             state = tonumber(field(ev, "State")) or 0,
             in_countdown = field(ev, "bInCountdown") and true or false,
             is_member = is_member,
+            is_joined = is_member,
+            owner_guid = owner_guid,
+            owner_name = owner_name,
+            is_owner = is_owner,
             player_count = #players,
             waypoint_count = #waypoints,
             leader_name = leader,
@@ -243,16 +302,60 @@ function M.list(local_player_name)
     local es = get_event_system()
     if not es then return {} end
     local wanted = name_of(local_player_name) or M.local_name()
+    local my_guid = local_character_guid()
     local events = {}
     foreach(field(es, "Net_Events"), function(_, ev)
         if ev then events[#events + 1] = ev end
     end)
     local out = {}
     for _, ev in ipairs(events) do
-        local item = build_event(ev, wanted)
+        local item = build_event(ev, wanted, my_guid)
         if item then out[#out + 1] = item end
     end
     return out
+end
+
+--- Freshly resolve one replicated event by its 32-hex EventGuid string.
+--- Returns ONLY plain Lua numbers plus state/counts - no UObject escapes.
+--- Used by event_control.lua immediately before every RPC, so a stale
+--- UE4SS pointer can never survive across ticks.
+---@param guid_str string
+---@return table? { A, B, C, D, state, player_count, waypoint_count }
+function M.find_event_guid_parts(guid_str)
+    if type(guid_str) ~= "string" or guid_str == "" then return nil end
+    local es = get_event_system()
+    if not es then return nil end
+
+    local found = nil
+    foreach(field(es, "Net_Events"), function(_, ev)
+        -- Never return early from a UE4SS ForEach callback (bounded-exit
+        -- semantics can wedge iteration); skip already-resolved entries.
+        if not found and ev then
+            local g = field(ev, "EventGuid")
+            local eg = g and guid_of(g) or ""
+            if eg ~= "" and eg:lower() == guid_str:lower() then
+                local ok, parts = pcall(function()
+                    local a = tonumber(field(g, "A"))
+                    local b = tonumber(field(g, "B"))
+                    local c = tonumber(field(g, "C"))
+                    local d = tonumber(field(g, "D"))
+                    if not (a and b and c and d) then return nil end
+                    local players, waypoints = 0, 0
+                    foreach(field(ev, "Players"), function() players = players + 1 end)
+                    local route = field(field(ev, "RaceSetup"), "Route")
+                    foreach(field(route, "Waypoints"), function() waypoints = waypoints + 1 end)
+                    return {
+                        A = a, B = b, C = c, D = d,
+                        state = tonumber(field(ev, "State")) or 0,
+                        player_count = players,
+                        waypoint_count = waypoints,
+                    }
+                end)
+                if ok then found = parts end
+            end
+        end
+    end)
+    return found
 end
 
 --- First event the local player is a member of, or nil.

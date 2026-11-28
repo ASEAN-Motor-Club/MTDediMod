@@ -4,6 +4,8 @@
 -- and an operator panel with OBS WebSocket v5 control, tally, cue queue and rehearsal mode.
 local Paths = require("RaceCam/paths")
 local LiveEvents = require("RaceCam/live_events")
+local ok_ec, EventControl = pcall(require, "RaceCam/event_control")
+if not ok_ec or type(EventControl) ~= "table" then EventControl = nil end
 local H = {}
 local D = Paths.data_dir()
 
@@ -255,6 +257,29 @@ end
 --- Source + the operator panel cannot hammer Net_Events on the game thread.
 local standings_payload_cache = { key = nil, t = -math.huge, value = nil }
 
+--- Test seam for the Lua 5.4 harness; production uses the required module.
+H._event_control = EventControl
+
+--- Best-effort ServerRemoveEvent acknowledgement, plain values only.
+local function remove_response_json()
+  local ok, r = pcall(function()
+    local ec = H._event_control
+    return ec and type(ec.last_remove_response) == "function"
+      and ec.last_remove_response() or nil
+  end)
+  if not ok or type(r) ~= "table" then return "null" end
+  return '{"guid":"' .. jstr(r.guid) .. '","succeeded":' ..
+    tostring(r.succeeded and true or false) ..
+    ',"ts":' .. tostring(tonumber(r.ts) or 0) .. '}'
+end
+
+--- Any event lifecycle write changes what the OBS overlay must show: drop
+--- BOTH serialized-string caches (never cache a UObject in either one).
+local function invalidate_event_caches()
+  standings_payload_cache.t = -math.huge
+  pcall(function() LiveEvents.clear_cache() end)
+end
+
 local function snapshot_for_guid(guid)
   if not guid or guid == "" then
     local ok, s = pcall(function() return LiveEvents.active_standings() end)
@@ -352,6 +377,19 @@ local function state_json()
   local ok_ev, ev = pcall(function() return LiveEvents.current_event() end)
   parts[#parts + 1] = '"active_event":' ..
     ((ok_ev and ev and ev.name and ev.name ~= "") and ('"' .. jstr(ev.name) .. '"') or "null")
+  -- Event Control: ownership / membership of the active event so the panel
+  -- can render the host badge and verify a requested state change.
+  if ok_ev and ev then
+    parts[#parts + 1] = '"event_guid":"' .. jstr(ev.guid or "") .. '"'
+    parts[#parts + 1] = '"event_state":' .. tostring(tonumber(ev.state) or 0)
+    parts[#parts + 1] = '"event_owner_guid":"' .. jstr(ev.owner_guid or "") .. '"'
+    parts[#parts + 1] = '"event_owner_name":"' .. jstr(ev.owner_name or "") .. '"'
+    parts[#parts + 1] = '"event_is_owner":' .. tostring(ev.is_owner and true or false)
+    parts[#parts + 1] = '"event_is_joined":' .. tostring(ev.is_joined and true or false)
+    parts[#parts + 1] = '"event_player_count":' .. tostring(tonumber(ev.player_count) or 0)
+    parts[#parts + 1] = '"event_waypoint_count":' .. tostring(tonumber(ev.waypoint_count) or 0)
+  end
+  parts[#parts + 1] = '"last_remove_response":' .. remove_response_json()
   -- Live leaderboard: cached 500 ms in live_events.lua, no waypoints copied.
   local ok_s, active_standings = pcall(function() return LiveEvents.active_standings() end)
   parts[#parts + 1] = '"standings":' .. (ok_s and standings_json(active_standings) or "null")
@@ -590,7 +628,87 @@ local function make_response(req)
     authed = true
     touch()
     local ok, events = pcall(function() return LiveEvents.list() end)
-    code, body = 200, json_encode({ events = (ok and type(events) == "table") and events or {} })
+    code, body = 200,
+      '{"events":' .. json_encode((ok and type(events) == "table") and events or {}) ..
+      ',"last_remove_response":' .. remove_response_json() .. '}'
+  elseif req.method == "POST" and req.path == "/api/event/state" then
+    authed = true
+    touch()
+    invalidate_event_caches()
+    local ec = H._event_control
+    local guid = json_field(req.body, "event_guid") or ""
+    local state_name = json_field(req.body, "state") or ""
+    if not ec then
+      code, body = 503, '{"ok":false,"error":"event control unavailable"}'
+      audit("event_state", guid, "ERR event control unavailable")
+    else
+      local ok, msg, meta = ec.set_state(guid, state_name)
+      if not ok then
+        code, body = 400, '{"ok":false,"error":"' .. jstr(msg) .. '"}'
+        audit("event_state", guid, "ERR " .. tostring(msg))
+      else
+        local st = tonumber(meta and meta.state) or 0
+        local nm = (meta and meta.state_name) or state_name
+        code, body = 200, '{"ok":true,"event_guid":"' .. jstr(guid) ..
+          '","state":' .. tostring(st) .. ',"state_name":"' .. jstr(nm) .. '"}'
+        audit("event_state", guid, "state=" .. tostring(st) .. "/" .. tostring(nm))
+      end
+    end
+  elseif req.method == "POST" and req.path == "/api/event/close" then
+    authed = true
+    touch()
+    invalidate_event_caches()
+    local ec = H._event_control
+    local guid = json_field(req.body, "event_guid") or ""
+    -- Server-side rail: a scripted or misclicked removal must carry confirm.
+    -- Prefer a real JSON parse so `"confirm":true` nested inside a quoted
+    -- string cannot pass; the regex fallback covers clients without JsonParser
+    -- (json_field is similarly raw). Require a JSON delimiter after `true`.
+    local payload = parse_json(req.body)
+    local confirmed = false
+    if type(payload) == "table" then
+      confirmed = payload.confirm == true
+    else
+      confirmed = tostring(req.body or ""):match('"confirm"%s*:%s*true%s*[},]') ~= nil
+    end
+    if not confirmed then
+      code, body = 400, '{"ok":false,"error":"confirm required"}'
+      audit("event_close", guid, "ERR confirm required")
+    elseif not ec then
+      code, body = 503, '{"ok":false,"error":"event control unavailable"}'
+      audit("event_close", guid, "ERR event control unavailable")
+    else
+      local ok, msg = ec.close_event(guid)
+      if not ok then
+        code, body = 400, '{"ok":false,"error":"' .. jstr(msg) .. '"}'
+        audit("event_close", guid, "ERR " .. tostring(msg))
+      else
+        code, body = 200, '{"ok":true,"event_guid":"' .. jstr(guid) .. '"}'
+        audit("event_close", guid, "remove requested")
+      end
+    end
+  elseif req.method == "POST" and
+      (req.path == "/api/event/join" or req.path == "/api/event/leave") then
+    authed = true
+    touch()
+    invalidate_event_caches()
+    local ec = H._event_control
+    local guid = json_field(req.body, "event_guid") or ""
+    local verb = (req.path == "/api/event/join") and "join" or "leave"
+    if not ec then
+      code, body = 503, '{"ok":false,"error":"event control unavailable"}'
+      audit("event_" .. verb, guid, "ERR event control unavailable")
+    else
+      local ok, msg = (verb == "join") and ec.join_event(guid) or ec.leave_event(guid)
+      if not ok then
+        code, body = 400, '{"ok":false,"error":"' .. jstr(msg) .. '"}'
+        audit("event_" .. verb, guid, "ERR " .. tostring(msg))
+      else
+        code, body = 200, '{"ok":true,"event_guid":"' .. jstr(guid) ..
+          '","action":"' .. verb .. '"}'
+        audit("event_" .. verb, guid, verb .. " requested")
+      end
+    end
   elseif req.method == "GET" and req.path == "/api/inbox" then
     authed = true
     touch()
