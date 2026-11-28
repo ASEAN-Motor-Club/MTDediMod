@@ -595,7 +595,6 @@ function M.step_director()
 end
 
 local HUD_MODES = { full = true, tags_only = true, clean = true }
-local hud_pc_cache = nil
 local hud_minimap_orig_vis = nil
 
 local function is_nametag_widget(w)
@@ -605,11 +604,11 @@ end
 
 local function apply_hud_mode(mode)
     pcall(function()
-        local pc = (Core and Core.pc) or hud_pc_cache
+        -- Never cache a raw PlayerController UObject across ticks (UAF risk on reconnect/map change).
+        local pc = (Core and Core.pc) or nil
         if pc and pc.IsValid and not pc:IsValid() then pc = nil end
-        if not pc then
+        if not pc and FindFirstOf then
             pc = FindFirstOf("MotorTownPlayerController")
-            hud_pc_cache = pc
         end
         if not pc or not pc:IsValid() then return end
         local hud = pc:GetHUD()
