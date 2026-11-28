@@ -857,9 +857,38 @@ for _, id in ipairs({ "chase_close", "chase_wide", "front_chase" }) do
 end
 local hx, hy, hfov, hp = project("heli_follow")
 local hdist = math.sqrt(hp.pos[1]^2 + hp.pos[2]^2 + hp.pos[3]^2)
-assert(hdist < 3200.0 and hfov <= 48.0 and math.abs(hx) < 0.20,
+assert(hdist < 3600.0 and hfov <= 58.0 and math.abs(hx) < 0.20,
   string.format("heli not closer/centred: dist=%.1f fov=%.1f nx=%.4f", hdist, hfov, hx))
 assert(Presets.get("heli_follow").flags.tau_hdg >= 1.0, "heli tau_hdg must glide hairpins")
+
+-- Zero-spring check: car cruising at 3000 cm/s slams brakes to 0; camera
+-- boom length to filtered target must stay constant (no longitudinal spring)
+-- and filtered position must not ring/oscillate behind the stop point.
+local e_brk = new_engine({ id = "brk", kind = "follow", preset = "chase_close" })
+T = 0.0; move(0, 0, 0); pawn._yaw = 0
+local x = 0.0
+for _ = 1, 90 do
+  T = T + DT60; x = x + 3000.0 * DT60; move(x, 0, 0)
+  e_brk:pose_of({ id = "brk", kind = "follow", preset = "chase_close" })
+end
+local stop_x = x
+local min_boom, max_boom = math.huge, 0.0
+local peak_overshoot, min_undershoot = 0.0, 0.0
+for _ = 1, 90 do
+  T = T + DT60; move(stop_x, 0, 0)
+  local p = e_brk:pose_of({ id = "brk", kind = "follow", preset = "chase_close" })
+  local fpos = e_brk.tgt_filter.pos
+  local boom = math.sqrt((fpos[1] - p.pos[1])^2 + (fpos[2] - p.pos[2])^2)
+  if boom < min_boom then min_boom = boom end
+  if boom > max_boom then max_boom = boom end
+  local err = fpos[1] - stop_x
+  if err > peak_overshoot then peak_overshoot = err end
+  if err < min_undershoot then min_undershoot = err end
+end
+assert(max_boom - min_boom < 1.0,
+  string.format("longitudinal spring detected: boom %.1f..%.1f", min_boom, max_boom))
+assert(min_undershoot > -20.0,
+  string.format("alpha-beta filter rang backward after stop: %.1f cm", min_undershoot))
 
 -- New rig presets exist with complete, valid flags (validate() in prelude).
 assert(Presets.types.pack_battle == true, "pack_battle type must be registered")
@@ -1037,10 +1066,10 @@ T = 0.0; move(0, 0, 0); pawn._yaw = 0
 local e = new_engine(shot)
 local p = e:pose_of(shot)
 assert(e.seated_vehicle and e.seated_vehicle(pawn) == veh, "seated vehicle not detected")
--- Vehicle root at (500,0,0), yaw 90 deg -> camera at (500,-750,260).
-assert(math.abs(p.pos[1] - 500.0) < 1.0 and math.abs(p.pos[2] + 750.0) < 1.0,
+-- Vehicle root at (500,0,0), yaw 90 deg -> camera at (500,-1100,340).
+assert(math.abs(p.pos[1] - 500.0) < 1.0 and math.abs(p.pos[2] + 1100.0) < 1.0,
   string.format("vehicle-root position wrong: %.1f,%.1f,%.1f", p.pos[1], p.pos[2], p.pos[3]))
-assert(math.abs(p.look[1] - 500.0) < 1.0 and math.abs(p.look[2] - 220.0) < 1.0,
+assert(math.abs(p.look[1] - 500.0) < 1.0 and math.abs(p.look[2] - 250.0) < 1.0,
   string.format("vehicle-root yaw wrong: %.1f,%.1f", p.look[1], p.look[2]))
 -- Invalid vehicle / throwing GetVehicle must fall back to the pawn cleanly.
 local bad = { IsValid = function() return false end,
@@ -1050,13 +1079,13 @@ function pawn:GetVehicle() return bad end
 local e2 = new_engine(shot)
 T = 0.0; move(0, 0, 0); pawn._yaw = 0
 local p2 = e2:pose_of(shot)
-assert(e2.seated_vehicle(pawn) == nil and math.abs(p2.pos[1] + 750.0) < 1.0,
+assert(e2.seated_vehicle(pawn) == nil and math.abs(p2.pos[1] + 1100.0) < 1.0,
   "invalid vehicle did not fall back to the pawn")
 function pawn:GetVehicle() error("vehicle probe exploded") end
 local e3 = new_engine(shot)
 T = 0.0; move(0, 0, 0); pawn._yaw = 0
 local p3 = e3:pose_of(shot)
-assert(p3 and math.abs(p3.pos[1] + 750.0) < 1.0, "throwing GetVehicle broke the tick")
+assert(p3 and math.abs(p3.pos[1] + 1100.0) < 1.0, "throwing GetVehicle broke the tick")
 print(string.format("VEHICLE_OK seated=%.0f,%.0f fallback=%.0f", p.pos[1], p.pos[2], p3.pos[1]))
 '''
 

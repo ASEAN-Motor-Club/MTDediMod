@@ -266,9 +266,9 @@ local function default_plan()
     return {
         source = { name = "Default (No Track Plan)", plan_id = "default" },
         shots = {
-            { id = "follow_focus", kind = "follow", trigger = { type = "boot" }, target = "focus", preset = "chase_close", fov = 70.0 },
-            { id = "heli_follow", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "heli_follow", fov = 55.0 },
-            { id = "front_chase", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "front_chase", fov = 65.0 },
+            { id = "follow_focus", kind = "follow", trigger = { type = "boot" }, target = "focus", preset = "chase_close", fov = 72.0 },
+            { id = "heli_follow", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "heli_follow", fov = 56.0 },
+            { id = "front_chase", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "front_chase", fov = 66.0 },
             { id = "side_tracking", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "side_tracking", fov = 68.0 },
             { id = "orbit_hero", kind = "orbit", trigger = { type = "manual" }, target = "focus", preset = "orbit_hero", fov = 60.0 },
             { id = "onboard_tcam", kind = "follow", trigger = { type = "manual" }, target = "focus", preset = "onboard_tcam", fov = 78.0 },

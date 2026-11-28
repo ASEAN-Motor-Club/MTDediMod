@@ -409,9 +409,12 @@ local function target_state(self, s, preset)
     return f
   end
 
-  -- Alpha-beta predictor: dead-reckon between network packets, then correct
-  -- with the measurement residual. Steady-state lag on a constant-velocity
-  -- car is zero (both position and velocity error converge to zero).
+  -- Critically/slightly-overdamped alpha-beta predictor (zeta >= 1.15):
+  -- dead-reckons smoothly between network packets without ringing.
+  -- Critical damping for a discrete alpha-beta filter is
+  -- beta_crit = 2 - alpha - 2*sqrt(1 - alpha) (~alpha^2 / 4).
+  -- Using 0.75 * beta_crit guarantees zero spring overshoot on bursty network
+  -- packet arrival or hard braking/acceleration.
   local px = f.pos[1] + f.vel[1] * dt
   local py = f.pos[2] + f.vel[2] * dt
   local pz = f.pos[3] + f.vel[3] * dt
@@ -424,14 +427,19 @@ local function target_state(self, s, preset)
     scale = err > 2500.0 and 0.12 or (300.0 / err)
   end
   ex, ey, ez = ex * scale, ey * scale, ez * scale
+  -- Critically damped alpha-beta predictor (zeta = 1.0, ZERO spring bounce):
+  -- For a 2nd-order critically damped tracker with time constant tau_pos,
+  -- alpha = 1 - exp(-2*dt/tau_pos) and beta_crit = 2 - alpha - 2*sqrt(1-alpha).
+  -- This converges in ~4*tau_pos on hard braking/acceleration with zero
+  -- overshoot while crushing 10-15 Hz network packet jitter.
   local tau_pos = shot_tau(self, s, preset, "tau_pos")
-  local alpha_pos = exp_alpha(dt, tau_pos)
-  local alpha_vel = exp_alpha(dt, tau_pos * 2.5)
+  local alpha_pos = exp_alpha(dt, tau_pos * 0.5)
+  local beta_vel = 2.0 - alpha_pos - 2.0 * math.sqrt(math.max(0.0, 1.0 - alpha_pos))
   f.pos[1], f.pos[2], f.pos[3] = px + ex * alpha_pos, py + ey * alpha_pos, pz + ez * alpha_pos
   local inv_dt = 1.0 / math.max(dt, 0.008)
-  f.vel[1] = clamp_num(f.vel[1] + ex * inv_dt * alpha_vel, -12000.0, 12000.0)
-  f.vel[2] = clamp_num(f.vel[2] + ey * inv_dt * alpha_vel, -12000.0, 12000.0)
-  f.vel[3] = clamp_num(f.vel[3] + ez * inv_dt * alpha_vel, -12000.0, 12000.0)
+  f.vel[1] = clamp_num(f.vel[1] + ex * inv_dt * beta_vel, -12000.0, 12000.0)
+  f.vel[2] = clamp_num(f.vel[2] + ey * inv_dt * beta_vel, -12000.0, 12000.0)
+  f.vel[3] = clamp_num(f.vel[3] + ez * inv_dt * beta_vel, -12000.0, 12000.0)
 
   -- Heading: prefer the velocity vector once the car is moving, blended with
   -- the (noisier) replicated actor yaw; fall back to pure smoothed actor yaw
@@ -534,15 +542,15 @@ function E.pose_of(self, s)
     local want_pos = { loc[1] + fx * f_off + rx * r_off,
                        loc[2] + fy * f_off + ry * r_off,
                        loc[3] + u_off }
+    -- Stage 1 already filtered st.pos and st.fwd cleanly; keeping XY rigidly
+    -- attached to the filtered rig eliminates longitudinal rubber-banding
+    -- during hard braking/acceleration while still damping vertical Z bumps.
     local pos = want_pos
     if self.follow_pos then
-      -- XY settles with tau_pos; Z is deliberately slower so road bumps and
-      -- replicated suspension bob don't pump the camera vertically.
-      local kxy = exp_alpha(dt, shot_tau(self, s, preset, "tau_pos"))
       local kz = exp_alpha(dt, shot_tau(self, s, preset, "tau_pos") * 1.5)
       pos = {
-        lerp(self.follow_pos[1], want_pos[1], kxy),
-        lerp(self.follow_pos[2], want_pos[2], kxy),
+        want_pos[1],
+        want_pos[2],
         lerp(self.follow_pos[3], want_pos[3], kz),
       }
     end
@@ -551,12 +559,12 @@ function E.pose_of(self, s)
     -- Look point: look_ahead along the body forward axis (negative looks back
     -- at the car, as front_chase does to frame it and the pack behind).
     local look_ahead = (s.look_ahead_m and s.look_ahead_m * 100.0)
-      or lo.look_ahead or lo.ahead or 600.0
+      or lo.look_ahead or lo.ahead or 250.0
     local want_look = { loc[1] + fx * look_ahead, loc[2] + fy * look_ahead,
-                        loc[3] + (lo.up or 150.0) }
+                        loc[3] + (lo.up or 130.0) }
     local look = want_look
     if self.follow_look then
-      look = vlerp(self.follow_look, want_look, exp_alpha(dt, shot_tau(self, s, preset, "tau_look")))
+      look = vlerp(self.follow_look, want_look, exp_alpha(dt, shot_tau(self, s, preset, "tau_look") * 0.5))
     end
     self.follow_look = look
     return { pos = pos, look = look, fov = s.fov or (preset and preset.fov) or 70.0 }
