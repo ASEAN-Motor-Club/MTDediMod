@@ -23,10 +23,65 @@ local M = {
     log_every = 5,
     auto_start = false,
     follow_leader = false,
+    -- Operator camera-smoothing preset. Persisted on M (not just the engine)
+    -- so a plan reload or a re-arm keeps the producer's chosen feel.
+    smoothing_mode = "normal",
 }
 _G.RACECAM_INIT = M
 
 local PLAN_ID_PATTERN = "^[A-Za-z0-9_%-]+$"
+local SMOOTHING_MODES = { tight = true, normal = true, cinematic = true }
+
+--- Apply the remembered smoothing preset to an engine. Safe before arming:
+--- when no engine exists yet the mode simply stays on M and is applied by
+--- wire_engine() as soon as one is created.
+local function apply_smoothing_mode(e)
+    if not e then return end
+    local mode = SMOOTHING_MODES[M.smoothing_mode] and M.smoothing_mode or "normal"
+    M.smoothing_mode = mode
+    e.smoothing_mode = mode
+    if type(e.set_smoothing_mode) == "function" then
+        local ok, err = pcall(function() e:set_smoothing_mode(mode) end)
+        if not ok and LogOutput then
+            LogOutput("ERROR", "RaceCam smoothing apply failed: %s", tostring(err))
+        end
+    end
+end
+
+--- Wrap the engine's target selector so every caller (HTTP /api/target,
+--- dispatch("select"), live-event auto-follow) gets a clean smoothing reset
+--- when the producer cuts to a DIFFERENT driver. Engine-side reset is
+--- idempotent, so this is harmless if shot_engine already resets on a cut.
+local function wire_engine(e)
+    if not e then return e end
+    if type(e.set_target_by_name) == "function" and not e._racecam_target_wired then
+        local original = e.set_target_by_name
+        e.set_target_by_name = function(self, name, ...)
+            local prev = self.target_name
+            local ok, msg, extra = original(self, name, ...)
+            if ok and self.target_name ~= prev and type(self.reset_smoothing) == "function" then
+                pcall(function() self:reset_smoothing() end)
+            end
+            return ok, msg, extra
+        end
+        e._racecam_target_wired = true
+    end
+    apply_smoothing_mode(e)
+    return e
+end
+
+--- Operator API used by the panel via POST /api/command {"cmd":"smoothing"}.
+---@param mode string "tight"|"normal"|"cinematic"
+---@return boolean ok
+---@return string mode_or_error
+function M.set_smoothing_mode(mode)
+    if type(mode) ~= "string" or not SMOOTHING_MODES[mode] then
+        return false, "invalid smoothing mode"
+    end
+    M.smoothing_mode = mode
+    apply_smoothing_mode(M.engine)
+    return true, mode
+end
 
 local automation = {
     last_check = 0.0,
@@ -168,7 +223,7 @@ end
 
 M.init = function(core)
     local plan, route, pid = load_plan_and_route()
-    local e = Engine.new(core, Presets, plan, route)
+    local e = wire_engine(Engine.new(core, Presets, plan, route))
     _G.RACECAM_SHOTS = e
     M.engine = e
     core.shots = e
@@ -240,7 +295,7 @@ end
 --- without restarting Motor Town.
 function M.ReloadPlan()
     local plan, route, pid = load_plan_and_route()
-    local e = Engine.new(Core, Presets, plan, route)
+    local e = wire_engine(Engine.new(Core, Presets, plan, route))
     if M.engine then
         e.target_name, e.target_idx, e.target_index = M.engine.target_name, M.engine.target_idx, M.engine.target_index
         e.target = M.engine.target
@@ -290,7 +345,7 @@ function M.reload_plan(plan_id, plan_tbl, route_tbl)
 
     local e = M.engine
     if not e then
-        e = Engine.new(Core, Presets, plan_tbl, route_tbl)
+        e = wire_engine(Engine.new(Core, Presets, plan_tbl, route_tbl))
         M.engine = e
         _G.RACECAM_SHOTS = e
         Core.shots = e
@@ -308,6 +363,7 @@ function M.reload_plan(plan_id, plan_tbl, route_tbl)
         e.target_idx, e.target_index = target_idx, target_idx
         e.target = target
         Core.rehearsal = rehearsal
+        apply_smoothing_mode(e)
         if e.log then e:log("HOT-RELOAD plan=" .. plan_id .. " shots=" .. tostring(#(plan_tbl.shots or {}))) end
     end
     log("RaceCam hot-reloaded plan '%s' (%d shots)", plan_id, #(plan_tbl.shots or {}))
@@ -396,7 +452,7 @@ function M.Start()
         return false
     end
     local plan, route, pid = load_plan_and_route()
-    local e = Engine.new(Core, Presets, plan, route)
+    local e = wire_engine(Engine.new(Core, Presets, plan, route))
     _G.RACECAM_SHOTS = e
     M.engine = e
     Core.shots = e

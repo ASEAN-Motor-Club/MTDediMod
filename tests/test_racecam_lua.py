@@ -578,6 +578,243 @@ print("STANDINGS_OK")
 '''
 
 
+# Shared prelude for the five Stage-1/Stage-2 smoothing harnesses. The engine's
+# clock is injected (`T`) so every test is fully deterministic under Lua 5.4.
+SMOOTHING_PRELUDE = r'''
+local DATA_DIR = "__DATA_DIR__"
+local ROOT = "__REPO_ROOT__/ClientScripts"
+package.path = ROOT .. "/?.lua;" .. ROOT .. "/?/init.lua;" .. package.path
+
+local real_getenv = os.getenv
+os.getenv = function(k)
+  if k == "RACECAM_DIR" then return DATA_DIR end
+  return real_getenv(k)
+end
+
+RequireSafe = function() return nil end
+CreateInvalidObject = function() return { IsValid = function() return false end } end
+FindAllOf = function() return {} end
+FindFirstOf = function() return nil end
+StaticFindObject = function() return nil end
+GetCachedWorld = function() return CreateInvalidObject() end
+LogOutput = function() end
+LoopInGameThreadWithDelay = function() return true end
+LoopInGameThreadAfterFrames = function() return true end
+IsValid = function(o) return o ~= nil end
+package.preload["socket"] = function()
+  return { bind = function() error("socket.bind must not be called in this test") end }
+end
+
+local Presets = require("RaceCam/presets")
+local Engine = require("RaceCam/shot_engine")
+local verr = Presets.validate()
+assert(#verr == 0, "presets.validate: " .. table.concat(verr, ";"))
+
+local Core = { apply_pose = function() end, rehearsal = true }
+local T = 0.0
+local pawn = { _x = 0.0, _y = 0.0, _z = 0.0, _yaw = 0.0 }
+function pawn:K2_GetActorLocation() return { X = self._x, Y = self._y, Z = self._z } end
+function pawn:K2_GetActorRotation() return { Yaw = self._yaw } end
+local function move(x, y, z) pawn._x, pawn._y, pawn._z = x, y or 0.0, z or 0.0 end
+local function new_engine(shot)
+  local e = Engine.new(Core, Presets, { shots = { shot } }, nil)
+  e.clock = function() return T end
+  e.target = pawn
+  return e
+end
+local function pose_dist(a, b)
+  local s = 0.0
+  for i = 1, 3 do
+    s = s + (a.pos[i] - b.pos[i])^2 + (a.look[i] - b.look[i])^2
+  end
+  return math.sqrt(s)
+end
+local DT60 = 1.0 / 60.0
+'''
+
+# 1. dt-invariance: identical 0.5 s convergence at 30 / 60 / 120 FPS.
+SMOOTH_DT_HARNESS = r'''
+local shot = { id = "f1", kind = "follow", preset = "chase_close" }
+local function run(fps)
+  T = 0.0
+  local e = new_engine(shot)
+  move(0, 0, 0); pawn._yaw = 0
+  e:pose_of(shot) -- first tick snaps the estimator + rig
+  e.follow_pos = { 0.0, -3000.0, 0.0 }
+  e.follow_look = { 0.0, -3000.0, 0.0 }
+  local dt = 1.0 / fps
+  local p
+  for _ = 1, math.floor(0.5 * fps) do T = T + dt; p = e:pose_of(shot) end
+  return p
+end
+local p30, p60, p120 = run(30), run(60), run(120)
+local d1, d2 = pose_dist(p30, p60), pose_dist(p30, p120)
+-- 3% of the ~3000 cm transient amplitude is 90 cm; real result is ~1e-6 cm.
+assert(d1 < 90.0 and d2 < 90.0,
+  string.format("dt-invariance failed: d(30,60)=%.6f d(30,120)=%.6f", d1, d2))
+print(string.format("SMOOTH_DT_OK d30_60=%.6f d30_120=%.6f", d1, d2))
+'''
+
+# 2. 15 Hz stepped + +-80 cm noisy packets at 60 FPS: aim jitter must drop >65%.
+SMOOTH_JITTER_HARNESS = r'''
+local shot = { id = "f2", kind = "follow", preset = "chase_close" }
+T = 0.0
+local e = new_engine(shot)
+move(0, 0, 0); pawn._yaw = 0
+local v = 2000.0
+local seed = 12345
+local function noise()
+  seed = (seed * 48271) % 2147483647
+  return (seed % 161) - 80
+end
+local raws = {}
+local raw = { 0.0, 0.0, 0.0 }
+for i = 1, 240 do
+  if (i - 1) % 4 == 0 then -- every 4th frame = 15 Hz network packets
+    local t = (i - 1) * DT60
+    raw = { v * t + noise(), noise(), 0.0 }
+  end
+  raws[i] = raw
+end
+local looks = {}
+for i = 1, 240 do
+  local r = raws[i]
+  move(r[1], r[2], r[3])
+  T = T + DT60
+  local p = e:pose_of(shot)
+  looks[i] = { p.look[1], p.look[2], p.look[3] }
+end
+local function jitter(seq)
+  local s = 0.0
+  for i = 2, #seq - 1 do
+    local ax = seq[i+1][1] - 2 * seq[i][1] + seq[i-1][1]
+    local ay = seq[i+1][2] - 2 * seq[i][2] + seq[i-1][2]
+    local az = seq[i+1][3] - 2 * seq[i][3] + seq[i-1][3]
+    s = s + math.sqrt(ax * ax + ay * ay + az * az)
+  end
+  return s / (#seq - 2)
+end
+local raw_looks = {}
+for i = 1, 240 do
+  local r = raws[i]
+  raw_looks[i] = { r[1] + 600.0, r[2], r[3] + 150.0 }
+end
+local j_raw, j_filt = jitter(raw_looks), jitter(looks)
+local reduction = 1.0 - j_filt / j_raw
+assert(reduction > 0.65,
+  string.format("jitter reduction only %.4f (raw=%.3f filt=%.3f)", reduction, j_raw, j_filt))
+print(string.format("SMOOTH_JITTER_OK reduction=%.4f raw=%.3f filt=%.3f", reduction, j_raw, j_filt))
+'''
+
+# 3. Alpha-beta predictor: zero steady-state lag on a 5000 cm/s car.
+SMOOTH_LAG_HARNESS = r'''
+local shot = { id = "f3", kind = "follow", preset = "chase_close" }
+T = 0.0
+local e = new_engine(shot)
+move(0, 0, 0); pawn._yaw = 0
+local v = 5000.0
+for _ = 1, 180 do
+  T = T + DT60
+  move(v * T, 0, 0)
+  e:pose_of(shot)
+end
+local f = e.tgt_filter
+local lag = v * T - f.pos[1]
+assert(math.abs(lag) < 50.0,
+  string.format("steady-state lag %.2f cm exceeds 50 cm", lag))
+assert(math.abs(f.vel[1] - v) < 200.0,
+  string.format("velocity estimate %.2f does not converge to %.2f", f.vel[1], v))
+print(string.format("SMOOTH_LAG_OK lag=%.3f vel=%.3f", lag, f.vel[1]))
+'''
+
+# 4. >25 m teleport / target cut snaps in one tick with no camera smear.
+SMOOTH_SNAP_HARNESS = r'''
+local shot = { id = "f4", kind = "follow", preset = "chase_close" }
+T = 0.0
+local e = new_engine(shot)
+move(0, 0, 0); pawn._yaw = 0
+for _ = 1, 30 do T = T + DT60; e:pose_of(shot) end
+-- 50 m jump in one frame -> hard snap, not a 2.5 s pan across the map.
+move(5000, 0, 0)
+T = T + DT60
+local p = e:pose_of(shot)
+local f = e.tgt_filter
+assert(math.abs(f.pos[1] - 5000.0) < 0.001
+   and math.abs(f.pos[2]) < 0.001 and math.abs(f.pos[3]) < 0.001,
+  string.format("teleport did not snap filter: %.3f,%.3f,%.3f", f.pos[1], f.pos[2], f.pos[3]))
+assert(p.look[1] > 5000.0, "camera aim smeared across a teleport: " .. tostring(p.look[1]))
+-- A different target actor must snap too (Alt+1 -> Alt+2 cut).
+local other = { _x = 12000.0, _y = 0.0, _z = 0.0, _yaw = 0.0 }
+function other:K2_GetActorLocation() return { X = self._x, Y = self._y, Z = self._z } end
+function other:K2_GetActorRotation() return { Yaw = self._yaw } end
+e.target = other
+T = T + DT60
+local p2 = e:pose_of(shot)
+assert(math.abs(e.tgt_filter.pos[1] - 12000.0) < 0.001,
+  "target actor switch did not snap: " .. tostring(e.tgt_filter.pos[1]))
+assert(p2.look[1] > 12000.0, "aim smeared across a target switch")
+print(string.format("SMOOTH_SNAP_OK jump_x=%.3f look_x=%.3f switch_x=%.3f",
+  f.pos[1], p.look[1], e.tgt_filter.pos[1]))
+'''
+
+# 5. orbit / trackside_pan aim+fov smoothing, clean resets, smoothing modes.
+SMOOTH_MODES_HARNESS = r'''
+-- Orbit: aim chases the filtered target smoothly (no raw packet steps).
+local orbit = { id = "o1", kind = "orbit", preset = "orbit_hero" }
+T = 0.0
+local eo = new_engine(orbit)
+move(0, 0, 0); pawn._yaw = 0
+eo:pose_of(orbit)
+move(300, 0, 0)
+local looks = {}
+for _ = 1, 60 do T = T + DT60; looks[#looks + 1] = eo:pose_of(orbit).look[1] end
+assert(looks[1] < 100.0 and looks[60] > 250.0,
+  string.format("orbit aim not smooth: first=%.2f last=%.2f", looks[1], looks[60]))
+-- Trackside pan: fov glides toward the auto-zoom target, never steps.
+local pan = { id = "p1", kind = "trackside_pan", location = { 0, 0, 0 }, preset = "trackside_low" }
+T = 0.0
+local ep = new_engine(pan)
+move(4000, 0, 0); pawn._yaw = 0
+local f0 = ep:pose_of(pan).fov
+move(2000, 0, 0)
+local fovs = {}
+for _ = 1, 60 do T = T + DT60; fovs[#fovs + 1] = ep:pose_of(pan).fov end
+assert(f0 > 50.0 and f0 < 60.0, "initial pan fov wrong: " .. tostring(f0))
+assert(fovs[1] > f0 and fovs[10] < fovs[60] and fovs[60] > 60.0,
+  string.format("pan fov not smoothed: f0=%.2f f1=%.2f f10=%.2f f60=%.2f",
+    f0, fovs[1], fovs[10], fovs[60]))
+-- Modes: case-insensitive validation + multiplier applied to effective taus.
+assert(Engine.set_smoothing_mode(ep, "TIGHT") == "tight" and ep.smoothing_scale == 0.5)
+assert(Engine.set_smoothing_mode(ep, "normal") == "normal" and ep.smoothing_scale == 1.0)
+assert(Engine.set_smoothing_mode(ep, "CINEMATIC") == "cinematic" and ep.smoothing_scale == 1.8)
+local bad, msg = Engine.set_smoothing_mode(ep, "bogus")
+assert(bad == nil and msg == "invalid mode", "invalid mode must be rejected")
+local at = Engine.exp_alpha(DT60, 0.12 * 0.5)
+local bn = Engine.exp_alpha(DT60, 0.12)
+local cc = Engine.exp_alpha(DT60, 0.12 * 1.8)
+assert(at > bn and bn > cc, "tight/normal/cinematic taus not ordered")
+-- Clean reset: every smoothed field is cleared, next pose snaps (no smear).
+ep:reset_smoothing()
+assert(ep.follow_pos == nil and ep.follow_look == nil and ep.smooth_fov == nil and ep.tgt_filter == nil)
+local cut = ep:pose_of(pan)
+assert(math.abs(cut.look[1] - 2000.0) < 0.001 and math.abs(cut.fov - 65.0) < 0.01,
+  string.format("cut did not snap: look=%.2f fov=%.2f", cut.look[1], cut.fov))
+-- activate() performs the same cut even when the new target is far away.
+move(12000, 0, 0)
+assert(ep:activate(orbit) == true, "activate(orbit) failed")
+local oc = ep:pose_of(orbit)
+assert(math.abs(oc.look[1] - 12000.0) < 1.0,
+  "activate did not clear previous aim: " .. tostring(oc.look[1]))
+-- Legacy plans using damping (no preset / no tau_*) still run.
+T = 0.0
+local legacy = { id = "l1", kind = "follow", damping = 0.12 }
+local el = new_engine(legacy)
+move(0, 0, 0)
+for _ = 1, 30 do T = T + DT60; el:pose_of(legacy) end
+assert(el.tgt_filter ~= nil, "legacy damping shot did not initialize the estimator")
+print(string.format("SMOOTH_MODES_OK orbit=%.2f fov=%.2f cut=%.2f", looks[60], fovs[60], cut.look[1]))
+'''
+
 class RaceCamLuaTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -829,6 +1066,130 @@ class RaceCamLuaTests(unittest.TestCase):
             self.assertIn("STANDINGS_OK", proc.stdout, f"{proc.stdout}\n{proc.stderr}")
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+    def _run_smoothing_harness(self, body: str, token: str, prefix: str) -> None:
+        """Run one deterministic Lua 5.4 smoothing harness on the NixOS host."""
+        tmpdir = Path(tempfile.mkdtemp(prefix=f"racecam_{prefix}_", dir=SCRATCH))
+        try:
+            harness = (SMOOTHING_PRELUDE + body).replace("__DATA_DIR__", str(tmpdir)).replace(
+                "__REPO_ROOT__", str(REPO)
+            )
+            harness_path = tmpdir / "harness.lua"
+            harness_path.write_text(harness, encoding="utf-8")
+            wrapper_path = tmpdir / "run_harness.sh"
+            wrapper_path.write_text(
+                "#!/usr/bin/env bash\nset -u\n"
+                f'nix shell nixpkgs#lua5_4 -c lua "{harness_path}"\n',
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [str(HOSTRUN), str(wrapper_path)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            self.assertEqual(
+                0,
+                proc.returncode,
+                f"{prefix} harness failed:\n{proc.stdout}\n{proc.stderr}",
+            )
+            self.assertIn(token, proc.stdout, f"{proc.stdout}\n{proc.stderr}")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_lua_smoothing_dt_invariance(self) -> None:
+        """30/60/120 FPS converge to the same pose after 0.5 s (within 3%)."""
+        self._run_smoothing_harness(SMOOTH_DT_HARNESS, "SMOOTH_DT_OK", "smoothdt")
+
+    def test_lua_smoothing_network_jitter(self) -> None:
+        """15 Hz stepped +-80 cm packets: aim jitter drops by > 65% at 60 FPS."""
+        self._run_smoothing_harness(SMOOTH_JITTER_HARNESS, "SMOOTH_JITTER_OK", "smoothjit")
+
+    def test_lua_smoothing_zero_steady_state_lag(self) -> None:
+        """Alpha-beta estimator has zero lag on a constant 5000 cm/s car."""
+        self._run_smoothing_harness(SMOOTH_LAG_HARNESS, "SMOOTH_LAG_OK", "smoothlag")
+
+    def test_lua_smoothing_teleport_snap(self) -> None:
+        ">25 m respawns and target-actor cuts snap in one tick, no camera smear."
+        self._run_smoothing_harness(SMOOTH_SNAP_HARNESS, "SMOOTH_SNAP_OK", "smoothsnap")
+
+    def test_lua_smoothing_orbit_pan_modes_and_reset(self) -> None:
+        """Orbit/pan aim+fov smoothing, clean cut resets, smoothing modes."""
+        self._run_smoothing_harness(SMOOTH_MODES_HARNESS, "SMOOTH_MODES_OK", "smoothmodes")
+
+    def test_lua_player_array_full_server_roster_and_remote_fallback(self) -> None:
+        """list_targets merges GameState.PlayerArray; far drivers track PlayerState.Location and upgrade when streamed in."""
+        harness = r'''
+local function mk_str(s) return { ToString = function() return s end } end
+local near_pawn = {
+  PlayerState = { GetPlayerName = function() return mk_str("NearDriver") end },
+  K2_GetActorLocation = function() return { X = 100, Y = 200, Z = 50 } end,
+  K2_GetActorRotation = function() return { Yaw = 0 } end,
+}
+local far_ps = {
+  IsValid = function() return true end,
+  GetPlayerName = function() return mk_str("FarDriver") end,
+  Location = { X = 50000, Y = 60000, Z = 300 },
+}
+local near_ps = {
+  IsValid = function() return true end,
+  GetPlayerName = function() return mk_str("NearDriver") end,
+  Location = { X = 100, Y = 200, Z = 50 },
+}
+local extra_ps = {
+  IsValid = function() return true end,
+  GetPlayerName = function() return mk_str("AnotherFar") end,
+  Location = { X = 80000, Y = 10000, Z = 100 },
+}
+local live_pawns = { near_pawn }
+_G.FindAllOf = function(cls)
+  if cls == "MTPlayerCharacter_C" then return live_pawns end
+  return {}
+end
+_G.FindFirstOf = function(cls)
+  if cls == "MotorTownGameState" then
+    return {
+      IsValid = function() return true end,
+      PlayerArray = { near_ps, far_ps, extra_ps },
+    }
+  end
+  return nil
+end
+
+local shot = { id = "f1", kind = "follow", preset = "chase_close" }
+local e = Engine.new(Core, Presets, { shots = { shot } }, nil)
+e.clock = function() return T end
+
+-- 1. Full-server roster: nearby first, remote sorted alphabetically, deduplicated.
+local roster = e:list_targets()
+assert(#roster == 3, "expected 3 drivers, got " .. tostring(#roster))
+assert(roster[1] == "NearDriver" and roster[2] == "AnotherFar" and roster[3] == "FarDriver",
+  "unexpected roster order: " .. table.concat(roster, ","))
+
+-- 2. Target a far driver outside UE5 relevancy bubble: tracks PlayerState.Location.
+local ok, msg = e:set_target_by_name("FarDriver")
+assert(ok and e.target == nil and e.target_ps == far_ps, "far target failed: " .. tostring(msg))
+T = 1.0
+local pose1 = e:pose_of(shot)
+assert(pose1 and not e.target_lost, "pose1 failed for remote PlayerState")
+assert(math.abs(pose1.look[1] - 50000) < 3000 and math.abs(pose1.look[2] - 60000) < 3000,
+  "remote look not near PlayerState.Location")
+
+-- 3. FarDriver streams into relevancy: resolve_target upgrades seamlessly to live pawn.
+local far_pawn = {
+  PlayerState = { GetPlayerName = function() return mk_str("FarDriver") end },
+  K2_GetActorLocation = function() return { X = 50100, Y = 60000, Z = 300 } end,
+  K2_GetActorRotation = function() return { Yaw = 0 } end,
+}
+live_pawns = { near_pawn, far_pawn }
+T = 2.0
+local pose2 = e:pose_of(shot)
+assert(pose2 and e.target == far_pawn and e.target_ps == nil and not e.target_lost,
+  "did not upgrade from remote PlayerState to streamed-in pawn")
+print("PLAYER_ARRAY_ROSTER_OK count=3 upgraded=true")
+'''
+        self._run_smoothing_harness(harness, "PLAYER_ARRAY_ROSTER_OK", "roster")
 
 
 if __name__ == "__main__":

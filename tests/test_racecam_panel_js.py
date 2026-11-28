@@ -39,6 +39,7 @@ UNIVERSAL = ["start_line", "fly_up", "auto_trackside", "heli_follow", "follow_fo
 VALID_IDS = {
     "banner", "tok", "rehb", "prog", "prv", "shot", "fov", "plan", "cd", "hb", "run",
     "queue", "qat", "sid", "tgt_name", "standings_hdr", "contestants",
+    "sm_tight", "sm_normal", "sm_cinematic",
     "live_current", "live_load_btn", "live_refresh", "live_events", "auto_start",
     "follow_leader", "track_file", "drop_zone", "saved_plans", "plans_refresh",
     "plan_load", "track_info", "track_canvas",
@@ -47,6 +48,17 @@ VALID_IDS = {
     "pin_position", "pin_undo", "pin_clear", "pin_count", "pin_build",
     "obsurl", "obspw", "obsst", "obs_check", "obs_remember", "obsscene", "obssrc",
     "obsprev", "out", "panel_manual",
+    # Broadcast Desk v2 — sticky tally bar
+    "tally_bar", "arm_pill", "pgm", "keys_pill", "auth_pill", "obs_pill",
+    "reh_btn", "stop_btn", "reh", "deg", "toast", "footer_bar",
+    # Broadcast Desk v2 — two-column desk
+    "desk", "transport_card", "mode_btn", "take_btn",
+    "pad_card", "shot_pads", "shot_pads_extra",
+    "cue_card", "q", "obs_quick", "rec_btn", "rec_time", "obs_scene_pads",
+    "field_card", "auto_follow", "preview_card", "pv_canvas", "pv_meta",
+    # Broadcast Desk v2 — collapsible drawers + aliased OBS fields
+    "drawer_setup", "drawer_conn", "drawer_log",
+    "obs_url", "obs_pw", "obs_rem", "obs_sc",
 }
 
 
@@ -918,6 +930,354 @@ class LiveLeaderboardTests(unittest.TestCase):
                          "identical state must not rebuild the contestant DOM")
         self.assertEqual(result["w3"], [2, 2],
                          "a changed row must rebuild exactly once")
+
+
+class SmoothingControlTests(unittest.TestCase):
+    """Operator camera-smoothing toggle: tight | normal | cinematic."""
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        cls.js = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S).group(1)
+        cls.handlers = {}
+        for mode in ("tight", "normal", "cinematic"):
+            m = re.search(r'id="sm_%s"[^>]*onclick="([^"]+)"' % mode, cls.lua)
+            assert m, "missing onclick handler for sm_%s" % mode
+            cls.handlers[mode] = m.group(1)
+        # No Windows drive-letter paths in the panel (Scale3D: is not a path).
+        self_free = re.search(r"\bD:[\\/]", cls.lua)
+        assert self_free is None, "panel must not use D: paths"
+
+    @staticmethod
+    def _state(smoothing=None):
+        state = {"degraded": False, "target_lost": False, "shots": ["start_line"],
+                 "targets": ["Driver"], "rehearsal": False, "running": False}
+        if smoothing is not None:
+            state["smoothing"] = smoothing
+        return state
+
+    def _click(self, mode):
+        """Fire the real inline onclick string from the HTML on a live panel."""
+        extra = ("(new Function(PANEL_JS))();\n"
+                 "const CLICK = " + json.dumps(self.handlers[mode]) + ";\n")
+        result = parse_result(run_node(self.js, r"""
+          await sleep(20);                       // let boot's first poll settle
+          const p = globalThis.racecamPanel;
+          (new Function('setSmoothing', CLICK))(p.setSmoothing);
+          await sleep(20);
+          const cls = ['tight','normal','cinematic'].map(m =>
+            document.getElementById('sm_'+m).className);
+          console.log(JSON.stringify({
+            posts: fetchLog.filter(x => x.url === '/api/command')
+                           .map(x => JSON.parse(x.opts.body)),
+            classes: cls, mode: p.getSmoothingMode()
+          }));
+        """, extra=extra))
+        return result
+
+    def test_markup_and_handler_wiring(self):
+        for mode in ("tight", "normal", "cinematic"):
+            with self.subTest(mode=mode):
+                self.assertIn('id="sm_%s"' % mode, self.lua)
+                self.assertEqual(self.handlers[mode],
+                                 "setSmoothing('%s')" % mode)
+        for snippet in ["const SMOOTHING_MODES=['tight','normal','cinematic']",
+                        "return cmd('smoothing',mode)", "highlightSmoothing(sMode)",
+                        "s.smoothing"]:
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.js)
+
+    def test_click_sm_tight_posts_smoothing_command(self):
+        result = self._click("tight")
+        self.assertIn({"cmd": "smoothing", "args": "tight"}, result["posts"])
+        self.assertEqual(result["mode"], "tight")
+        self.assertEqual(result["classes"],
+                         ["sm-btn on", "sm-btn", "sm-btn"])
+
+    def test_click_sm_cinematic_posts_smoothing_command(self):
+        result = self._click("cinematic")
+        self.assertIn({"cmd": "smoothing", "args": "cinematic"}, result["posts"])
+        self.assertEqual(result["mode"], "cinematic")
+        self.assertEqual(result["classes"],
+                         ["sm-btn", "sm-btn", "sm-btn on"])
+
+    def test_poll_syncs_highlight_from_state(self):
+        extra = ("globalThis.__stateOverride = "
+                 + json.dumps(self._state("cinematic")) + ";\n"
+                 + "(new Function(PANEL_JS))();\n"
+                 + "const NORMAL_STATE = "
+                 + json.dumps(self._state("normal")) + ";\n")
+        result = parse_result(run_node(self.js, r"""
+          await sleep(30);                       // boot's poll has applied
+          const p = globalThis.racecamPanel;
+          const read = () => ['tight','normal','cinematic'].map(m =>
+            document.getElementById('sm_'+m).className);
+          const cinematic = {classes:read(), mode:p.getSmoothingMode()};
+          globalThis.__stateOverride = NORMAL_STATE;
+          await p.poll();
+          await sleep(20);
+          const normal = {classes:read(), mode:p.getSmoothingMode()};
+          console.log(JSON.stringify({cinematic:cinematic, normal:normal}));
+        """, extra=extra))
+        self.assertEqual(result["cinematic"]["classes"],
+                         ["sm-btn", "sm-btn", "sm-btn on"])
+        self.assertEqual(result["cinematic"]["mode"], "cinematic")
+        self.assertEqual(result["normal"]["classes"],
+                         ["sm-btn", "sm-btn on", "sm-btn"])
+        self.assertEqual(result["normal"]["mode"], "normal")
+
+
+
+
+class BroadcastDeskTests(unittest.TestCase):
+    """Broadcast Desk v2: stream-board layout, camera pads, preview→take, focus UX."""
+    @classmethod
+    def setUpClass(cls):
+        cls.lua = PANEL.read_text(encoding="utf-8")
+        m = re.search(r"<script>([\s\S]*?)</script>", cls.lua, re.S)
+        assert m, "no <script> block in panel_ui.lua"
+        cls.js = m.group(1)
+        cls.shots = ["start_line", "fly_up", "auto_trackside", "heli_follow",
+                     "follow_focus", "front_chase", "side_tracking", "orbit_hero",
+                     "route_flyover", "finish_line", "overview",
+                     "corner_01_pan", "corner_02_pan"]
+        cls.state = {"shots": cls.shots, "current": "fly_up", "next": "heli_follow",
+                     "targets": ["Driver"], "target_name": "Driver", "rehearsal": False,
+                     "degraded": False, "target_lost": False, "running": False}
+
+    def _run(self, body, extra=""):
+        # `extra` must run before boot so key/state overrides are in place.
+        return parse_result(run_node(self.js, body,
+                                     extra=extra + "\n(new Function(PANEL_JS))();\n"))
+
+    def test_layout_structure_and_self_contained_module(self):
+        for sid in ["tally_bar", "arm_pill", "pgm", "prv", "keys_pill", "auth_pill",
+                    "obs_pill", "reh_btn", "stop_btn", "reh", "deg", "desk",
+                    "transport_card", "mode_btn", "take_btn", "pad_card", "shot_pads",
+                    "shot_pads_extra", "cue_card", "q", "obs_quick", "rec_btn",
+                    "rec_time", "obs_scene_pads", "field_card", "auto_follow",
+                    "preview_card", "pv_canvas", "pv_meta", "drawer_setup",
+                    "drawer_conn", "drawer_log", "toast", "obs_url", "obs_pw",
+                    "obs_rem", "obs_sc"]:
+            with self.subTest(id=sid):
+                self.assertIn('id="%s"' % sid, self.lua)
+        for snippet in ["position:sticky", "grid-template-columns:minmax(0,1.32fr)",
+                        "@media(max-width:900px)", "KEYS PAUSED (Esc)",
+                        "Preview→Take", "TAKE (Space)", "STOP (X)", "ON AIR",
+                        "● REC", "--prog", "--prev"]:
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, self.lua)
+        self.assertIsNone(re.search(r"<(?:script|link)[^>]+(?:src|href)=", self.lua),
+                          "panel must not load external CSS/JS")
+        self.assertTrue(self.lua.rstrip().endswith("return M"))
+        self.assertIn("]=]", self.lua)
+
+    def test_setup_drawer_holds_loader_and_conn_drawer_holds_obs_fields(self):
+        setup_start = self.lua.index('<details id="drawer_setup"')
+        setup_end = self.lua.index('<details id="drawer_conn"', setup_start)
+        setup = self.lua[setup_start:setup_end]
+        for sid in ["track_loader_card", "live_events", "drop_zone", "paste_json",
+                    "inbox_files", "pin_position", "saved_plans", "track_file"]:
+            with self.subTest(setup=sid):
+                self.assertIn('id="%s"' % sid, setup)
+        conn_start = setup_end
+        conn_end = self.lua.index('<details id="drawer_log"', conn_start)
+        conn = self.lua[conn_start:conn_end]
+        for sid in ["tok", "obs_url", "obs_pw", "obs_rem", "obs_sc",
+                    "obsurl", "obspw", "obs_remember", "obsscene", "obsprev"]:
+            with self.subTest(conn=sid):
+                self.assertIn('id="%s"' % sid, conn)
+        self.assertIn('<details id="panel_manual" class="card">', self.lua)
+        self.assertLess(conn_end, self.lua.index('<details id="panel_manual"'))
+
+    def test_camera_pad_grid_renders_primary_and_extra_shots(self):
+        result = self._run(r"""
+          const p=globalThis.racecamPanel;
+          p.renderShotDeck(S);
+          console.log(JSON.stringify({
+            primary:document.getElementById('shot_pads').innerHTML,
+            extra:document.getElementById('shot_pads_extra').innerHTML,
+            sig:p.getDeckSig()}));
+        """, extra="const S=" + json.dumps(self.state) + ";\n")
+        primary, extra = result["primary"], result["extra"]
+        self.assertEqual(primary.count("<button"), 9)
+        for n in range(1, 10):
+            self.assertIn('<span class="keycap">%d</span>' % n, primary)
+        for label in ["Start Line", "Fly Up", "Auto Trackside", "Heli Follow",
+                      "Follow Focus", "Front Chase", "Side Track", "Orbit Hero", "Flyover"]:
+            with self.subTest(label=label):
+                self.assertIn(label, primary)
+        self.assertIn('class="pad-kind drone"', primary)
+        self.assertIn('class="pad-kind follow"', primary)
+        self.assertEqual(extra.count("<button"), 4)
+        self.assertIn("Finish Line", extra)
+        self.assertIn("Overview", extra)
+        self.assertIn('data-rc-shot="corner_01_pan"', extra)
+        self.assertIn('data-rc-shot="corner_02_pan"', extra)
+        self.assertIn('class="shot-pad pgm" data-rc-shot="fly_up"', primary)
+        self.assertIn('class="shot-pad prv" data-rc-shot="heli_follow"', primary)
+        self.assertTrue(result["sig"])
+
+    def test_cut_bus_pad_click_cuts_immediately(self):
+        result = self._run(r"""
+          await sleep(20);
+          const p=globalThis.racecamPanel;
+          const before=fetchLog.filter(x=>x.url==='/api/command').length;
+          document.getElementById('shot_pads')._ev.click({
+            target:{closest:()=>({getAttribute:()=> 'fly_up'})}});
+          await sleep(20);
+          console.log(JSON.stringify({
+            mode:p.isTakeMode(),
+            posts:fetchLog.filter(x=>x.url==='/api/command')
+                           .map(x=>JSON.parse(x.opts.body)),
+            before:before}));
+        """, extra="globalThis.__stateOverride=" + json.dumps(self.state) + ";\n")
+        self.assertFalse(result["mode"])
+        self.assertEqual(result["before"], 0)
+        self.assertIn({"cmd": "trigger", "args": "fly_up"}, result["posts"])
+
+    def test_program_tally_syncs_on_poll(self):
+        state2 = dict(self.state, current="orbit_hero", next="route_flyover")
+        result = self._run(r"""
+          await sleep(20);
+          const first={html:document.getElementById('shot_pads').innerHTML,
+            pgm:document.getElementById('pgm').textContent,
+            prv:document.getElementById('prv').textContent,
+            pill:document.getElementById('arm_pill').textContent};
+          globalThis.__stateOverride=NEXT;
+          await globalThis.racecamPanel.poll();
+          await sleep(10);
+          const second={html:document.getElementById('shot_pads').innerHTML,
+            pgm:document.getElementById('pgm').textContent};
+          console.log(JSON.stringify({first:first,second:second}));
+        """, extra=("globalThis.__stateOverride=" + json.dumps(self.state) + ";\n"
+                    "const NEXT=" + json.dumps(state2) + ";\n"))
+        self.assertIn('class="shot-pad pgm" data-rc-shot="fly_up"', result["first"]["html"])
+        self.assertEqual(result["first"]["pgm"], "PROGRAM fly_up")
+        self.assertEqual(result["first"]["prv"], "PREVIEW heli_follow")
+        self.assertEqual(result["first"]["pill"], "STANDBY")
+        self.assertIn('class="shot-pad pgm" data-rc-shot="orbit_hero"', result["second"]["html"])
+        self.assertNotIn('class="shot-pad pgm" data-rc-shot="fly_up"', result["second"]["html"])
+        self.assertEqual(result["second"]["pgm"], "PROGRAM orbit_hero")
+
+    def test_preview_take_mode_stages_then_space_takes(self):
+        result = self._run(r"""
+          await sleep(20);
+          const p=globalThis.racecamPanel;
+          p.toggleMode();
+          document.getElementById('shot_pads')._ev.click({
+            target:{closest:()=>({getAttribute:()=> 'fly_up'})}});
+          await sleep(20);
+          const staged={shot:p.getStagedShot(),
+            prv:document.getElementById('prv').textContent,
+            pads:document.getElementById('shot_pads').innerHTML,
+            posts:fetchLog.filter(x=>x.url==='/api/command').length};
+          keyHandler({key:' ',code:'Space',target:{tagName:'DIV'},preventDefault(){}});
+          await sleep(20);
+          const taken={shot:p.getStagedShot(),
+            posts:fetchLog.filter(x=>x.url==='/api/command')
+                          .map(x=>JSON.parse(x.opts.body))};
+          console.log(JSON.stringify({staged:staged,taken:taken,
+            mode:p.isTakeMode(),btn:document.getElementById('mode_btn').textContent,
+            takeDisabled:document.getElementById('take_btn').disabled}));
+        """, extra=("let keyHandler=null;\n"
+                    "document.addEventListener=(ev,fn)=>{if(ev==='keydown')keyHandler=fn};\n"
+                    "globalThis.__stateOverride=" + json.dumps(self.state) + ";\n"))
+        staged = result["staged"]
+        self.assertTrue(result["mode"])
+        self.assertEqual(staged["posts"], 0, "pad click must not cut in Preview→Take mode")
+        self.assertEqual(staged["shot"], "fly_up")
+        self.assertEqual(staged["prv"], "PREVIEW fly_up")
+        self.assertIn('class="shot-pad pgm prv" data-rc-shot="fly_up"', staged["pads"])
+        self.assertIn({"cmd": "trigger", "args": "fly_up"}, result["taken"]["posts"])
+        self.assertEqual(result["taken"]["shot"], "")
+        self.assertEqual(result["btn"], "Preview→Take")
+        self.assertFalse(result["takeDisabled"])
+
+    def test_take_button_inline_onclick_executes_cut(self):
+        m = re.search(r'id="take_btn"[^>]*onclick="([^"]+)"', self.lua)
+        assert m, "take_btn has no inline onclick"
+        self.assertEqual(m.group(1), "takeShot()")
+        result = self._run(r"""
+          await sleep(20);
+          const p=globalThis.racecamPanel;
+          p.toggleMode();
+          p.stageShot('heli_follow');
+          (new Function('takeShot', CLICK))(p.takeShot);
+          await sleep(20);
+          console.log(JSON.stringify({
+            posts:fetchLog.filter(x=>x.url==='/api/command')
+                          .map(x=>JSON.parse(x.opts.body)),
+            staged:p.getStagedShot()}));
+        """, extra=("globalThis.__stateOverride=" + json.dumps(self.state) + ";\n"
+                    "const CLICK=" + json.dumps(m.group(1)) + ";\n"))
+        self.assertIn({"cmd": "trigger", "args": "heli_follow"}, result["posts"])
+        self.assertEqual(result["staged"], "")
+
+    def test_keys_pill_and_escape_blur_restore_hotkeys(self):
+        result = self._run(r"""
+          const p=globalThis.racecamPanel;
+          const inp=document.getElementById('tgt_name');
+          inp.tagName='INPUT';
+          let blurred=false;
+          inp.blur=()=>{blurred=true;document.activeElement=null};
+          document.activeElement=inp;
+          p.updateKeysPill();
+          const paused={text:document.getElementById('keys_pill').textContent,
+                        cls:document.getElementById('keys_pill').className};
+          keyHandler({key:'Escape',target:{tagName:'INPUT'},preventDefault(){}});
+          const active={text:document.getElementById('keys_pill').textContent,
+                        blurred:blurred,cleared:document.activeElement===null};
+          console.log(JSON.stringify({paused:paused,active:active}));
+        """, extra=("let keyHandler=null;\n"
+                    "document.addEventListener=(ev,fn)=>{if(ev==='keydown')keyHandler=fn};\n"))
+        self.assertEqual(result["paused"]["text"], "KEYS PAUSED (Esc)")
+        self.assertIn("keys-paused", result["paused"]["cls"])
+        self.assertEqual(result["active"]["text"], "KEYS ACTIVE")
+        self.assertTrue(result["active"]["blurred"])
+        self.assertTrue(result["active"]["cleared"])
+
+    def test_drawer_defaults_and_auto_collapse_on_track_load(self):
+        doc = {"RouteName": "Desk Test", "Waypoints": [
+            {"Location": {"X": 0, "Y": 0, "Z": 0}, "Scale3D": {"Y": 18}},
+            {"Location": {"X": 3000, "Y": 0, "Z": 0}, "Scale3D": {"Y": 18}},
+            {"Location": {"X": 3000, "Y": 3000, "Z": 0}, "Scale3D": {"Y": 18}}]}
+        result = self._run(r"""
+          await sleep(20);
+          const p=globalThis.racecamPanel,d=id=>document.getElementById(id);
+          const initial={setup:d('drawer_setup').open,conn:d('drawer_conn').open,
+                         log:d('drawer_log').open};
+          p.handleRawInput(JSON.stringify(DOC),'desk_test',false);
+          await sleep(10);
+          const loaded={setup:d('drawer_setup').open,meta:d('pv_meta').textContent};
+          p.openSetup();
+          const reopened=d('drawer_setup').open;
+          p.collapseSetup();
+          const closed=d('drawer_setup').open;
+          const connOpened=p.toggleConnDrawer();
+          console.log(JSON.stringify({initial:initial,loaded:loaded,reopened:reopened,
+            closed:closed,connOpened:connOpened,connState:d('drawer_conn').open}));
+        """, extra="const DOC=" + json.dumps(doc) + ";\n")
+        self.assertTrue(result["initial"]["setup"], "setup drawer starts open with no route")
+        self.assertFalse(result["initial"]["conn"])
+        self.assertFalse(result["initial"]["log"])
+        self.assertFalse(result["loaded"]["setup"], "setup auto-collapses after a track loads")
+        self.assertIn("Desk Test", result["loaded"]["meta"])
+        self.assertTrue(result["reopened"])
+        self.assertFalse(result["closed"])
+        self.assertTrue(result["connState"])
+
+    def test_smoothing_preserved_and_zero_drive_paths(self):
+        for mode in ("tight", "normal", "cinematic"):
+            with self.subTest(mode=mode):
+                self.assertIn('id="sm_%s"' % mode, self.lua)
+                self.assertEqual(re.search(r'id="sm_%s"[^>]*onclick="([^"]+)"' % mode,
+                                           self.lua).group(1), "setSmoothing('%s')" % mode)
+        for snippet in ["const SMOOTHING_MODES=['tight','normal','cinematic']",
+                        "return cmd('smoothing',mode)", "highlightSmoothing(sMode)"]:
+            with self.subTest(js=snippet):
+                self.assertIn(snippet, self.js)
+        self.assertIsNone(re.search(r"\b[A-Z]:[\\/]", self.lua),
+                          "no hardcoded Windows drive paths allowed")
 
 
 if __name__ == "__main__":

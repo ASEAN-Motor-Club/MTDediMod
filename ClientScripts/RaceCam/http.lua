@@ -271,6 +271,9 @@ local function state_json()
   local init = get_init()
   parts[#parts + 1] = '"auto_start":' .. tostring(init and init.auto_start and true or false)
   parts[#parts + 1] = '"follow_leader":' .. tostring(init and init.follow_leader and true or false)
+  local smoothing = (e and e.smoothing_mode) or (init and init.smoothing_mode) or "normal"
+  if type(smoothing) ~= "string" or smoothing == "" then smoothing = "normal" end
+  parts[#parts + 1] = '"smoothing":"' .. jstr(smoothing) .. '"'
   local ok_ev, ev = pcall(function() return LiveEvents.current_event() end)
   parts[#parts + 1] = '"active_event":' ..
     ((ok_ev and ev and ev.name and ev.name ~= "") and ('"' .. jstr(ev.name) .. '"') or "null")
@@ -608,11 +611,43 @@ local function make_response(req)
     touch()
     local cmd = json_field(req.body, "cmd") or ""
     local args = json_field(req.body, "args") or ""
-    local ok, result = pcall(dispatch, { cmd = cmd, args = args })
-    last_result = ok and tostring(result) or ("ERR " .. tostring(result))
-    log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
-    audit("command", cmd, last_result)
-    code, body = 200, '{"status":"' .. jstr(last_result) .. '"}'
+    if cmd == "smoothing" then
+      -- Operator preset: tight | normal | cinematic. Validated here as well
+      -- as in init.lua so a malformed panel request can never reach the rig.
+      if args ~= "tight" and args ~= "normal" and args ~= "cinematic" then
+        code, body = 400, '{"ok":false,"error":"invalid smoothing mode"}'
+        last_result = "ERR invalid smoothing mode"
+        audit("command", cmd, last_result)
+      else
+        local init = get_init()
+        local applied = false
+        if init and type(init.set_smoothing_mode) == "function" then
+          local ok, setok = pcall(function() return init.set_smoothing_mode(args) end)
+          applied = (ok and setok ~= false)
+        elseif _G.RACECAM_SHOTS then
+          -- Engine-only fallback when init has not armed yet: persist on the
+          -- live engine, init will pick it up on the next arming pass.
+          _G.RACECAM_SHOTS.smoothing_mode = args
+          applied = true
+        end
+        if not applied then
+          code, body = 400, '{"ok":false,"error":"smoothing unavailable"}'
+          last_result = "ERR smoothing unavailable"
+        else
+          last_result = "smoothing:" .. args
+          code, body = 200, '{"ok":true,"status":"smoothing:' .. jstr(args) ..
+            '","smoothing":"' .. jstr(args) .. '"}'
+        end
+        log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
+        audit("command", cmd, last_result)
+      end
+    else
+      local ok, result = pcall(dispatch, { cmd = cmd, args = args })
+      last_result = ok and tostring(result) or ("ERR " .. tostring(result))
+      log("CMD " .. cmd .. " " .. args .. " -> " .. last_result)
+      audit("command", cmd, last_result)
+      code, body = 200, '{"status":"' .. jstr(last_result) .. '"}'
+    end
   elseif req.method == "POST" and req.path == "/api/target" then
     authed = true
     touch()

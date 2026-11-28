@@ -22,6 +22,57 @@ local function aim(pos, look)
   }
 end
 
+-- dt-invariant smoothing ------------------------------------------------------
+local function clamp_num(v, lo, hi)
+  if v < lo then return lo end
+  if v > hi then return hi end
+  return v
+end
+
+-- Exponential smoothing coefficient for a wall-clock step dt and time constant
+-- tau (seconds). tau <= 0 means "snap". Unlike a fixed per-frame alpha this is
+-- identical at 30 / 60 / 120 FPS and survives frame-time spikes.
+local function exp_alpha(dt, tau)
+  if not tau or tau <= 0.0 then return 1.0 end
+  return 1.0 - math.exp(-dt / tau)
+end
+E.exp_alpha = exp_alpha
+
+local function norm_xy(x, y, fb_x, fb_y)
+  local n = math.sqrt(x * x + y * y)
+  if n > 1.0e-6 then return x / n, y / n end
+  return fb_x or 1.0, fb_y or 0.0
+end
+
+local DEFAULT_TAU = {
+  tau_pos = 0.14, tau_look = 0.12, tau_hdg = 0.20, tau_fov = 0.25,
+}
+
+-- Legacy 60 Hz alpha -> time constant, so old plans using `damping` /
+-- `smoothing_alpha` keep their previous feel without any explicit tau.
+local function legacy_alpha_tau(a, default)
+  if type(a) ~= "number" then return default end
+  if a >= 1.0 then return 0.0 end
+  if a <= 0.0 then return default end
+  return -1.0 / (60.0 * math.log(1.0 - a))
+end
+
+-- Explicit tau_* on the shot wins, then the preset flags, then the legacy
+-- alpha conversion, then a sensible default. Operator smoothing multiplier is
+-- applied to every effective tau.
+local function shot_tau(self, s, preset, name)
+  local flags = preset and preset.flags or nil
+  local v = s and s[name]
+  if type(v) ~= "number" or v <= 0.0 then v = flags and flags[name] end
+  if type(v) ~= "number" or v <= 0.0 then
+    local a = s and s.damping
+    if type(a) ~= "number" then a = s and s.smoothing_alpha end
+    if type(a) ~= "number" then a = flags and flags.smoothing_alpha end
+    v = legacy_alpha_tau(a, DEFAULT_TAU[name] or 0.14)
+  end
+  return v * (self.smoothing_scale or 1.0)
+end
+
 -- Sample a compiled route table at arc distance d (cm). Backwards-compatible:
 -- routes exposing pos_at() delegate to it; plain sample tables (dist/x/y/z,
 -- ordered by dist) are interpolated linearly, clamped or wrapped per
@@ -73,7 +124,9 @@ function E.new(core, presets, plan, route)
     signals = {}, gate_hits = {}, wp_index = 0,
     active = nil, transition = nil, target = nil, target_name = nil,
     target_lost = false, target_lost_since = nil, target_retry_at = 0.0,
-    follow_pos = nil, follow_fwd = nil,
+    follow_pos = nil, follow_look = nil, follow_fwd = nil,
+    smooth_fov = nil, tgt_filter = nil,
+    smoothing_mode = "normal", smoothing_scale = 1.0,
     queue_entries = {},
     last = { pos = { 0, 0, 0 }, look = { 0, 0, 0 }, fov = 70.0 },
     log_path = Paths.log_path("shots.txt"),
@@ -96,6 +149,33 @@ function E.signal(self, name)
     self.elapsed = 0.0
     self:log("SIGNAL start")
   end
+end
+
+-- Operator-facing smoothing multiplier (Stage 2). Affects every effective
+-- tau_*; "tight" halves the time constants, "cinematic" makes them 1.8x longer.
+local SMOOTHING_SCALES = { tight = 0.5, normal = 1.0, cinematic = 1.8 }
+
+function E.set_smoothing_mode(self, mode)
+  if type(mode) ~= "string" then return nil, "invalid mode" end
+  local key = mode:lower()
+  if not SMOOTHING_SCALES[key] then return nil, "invalid mode" end
+  self.smoothing_mode = key
+  self.smoothing_scale = SMOOTHING_SCALES[key]
+  return key
+end
+
+local function reset_rig(self)
+  self.follow_pos = nil
+  self.follow_look = nil
+  self.follow_fwd = nil
+  self.smooth_fov = nil
+end
+
+-- Wipe every smoothed state so a shot cut / target switch is a crisp cut, never
+-- a smear from the previous driver or camera position.
+function E.reset_smoothing(self)
+  reset_rig(self)
+  self.tgt_filter = nil
 end
 
 function E.set_lead(self, pos)
@@ -157,20 +237,160 @@ local function resolve_target(self)
 end
 
 -- Live target location (pcall-guarded), or nil after a throttled re-resolve.
+-- Prefers a streamed-in MTPlayerCharacter_C pawn; falls back to the map-wide
+-- replicated AMotorTownPlayerState.Location when the driver is outside UE5's
+-- network relevancy bubble, upgrading back to the live pawn automatically once
+-- they stream in.
+local function ps_location(ps)
+  if not ps then return nil end
+  local ok, loc = pcall(function()
+    if ps.IsValid and not ps:IsValid() then return nil end
+    local l = ps.Location
+    if not l then return nil end
+    if l.X == nil and l[1] == nil then return nil end
+    return l
+  end)
+  if ok and loc then return loc end
+  return nil
+end
+
 local function target_loc(self)
-  if not resolve_target(self) then return nil end
-  local p = self.target
-  local ok, loc = pcall(function() return p:K2_GetActorLocation() end)
-  if not ok or not loc then
-    mark_target_lost(self)
-    if not resolve_target(self) then return nil end
-    p = self.target
-    ok, loc = pcall(function() return p:K2_GetActorLocation() end)
-    if not ok or not loc then mark_target_lost(self) return nil end
+  if not self.target then
+    -- Periodically check whether the live pawn has streamed in (or re-resolve
+    -- a lost target).
+    resolve_target(self)
   end
-  self.target_lost = false
-  self.target_lost_since = nil
-  return loc
+  local p = self.target
+  if p then
+    local ok, loc = pcall(function() return p:K2_GetActorLocation() end)
+    if ok and loc then
+      self.target_lost = false
+      self.target_lost_since = nil
+      return loc
+    end
+    -- Pawn despawned or streamed out of relevancy; try re-resolving (which may
+    -- fall back to PlayerState.Location).
+    self.target = nil
+    self.target_retry_at = 0.0
+    resolve_target(self)
+    if self.target then
+      local ok2, loc2 = pcall(function() return self.target:K2_GetActorLocation() end)
+      if ok2 and loc2 then
+        self.target_lost = false
+        self.target_lost_since = nil
+        return loc2
+      end
+      self.target = nil
+    end
+  end
+  if self.target_ps then
+    local loc = ps_location(self.target_ps)
+    if loc then
+      self.target_lost = false
+      self.target_lost_since = nil
+      return loc
+    end
+    self.target_ps = nil
+  end
+  mark_target_lost(self)
+  return nil
+end
+
+-- Stage 1 — shared velocity-compensated target state estimator.
+-- Updated at most once per clock tick; every live shot kind consumes the same
+-- filtered position / velocity / heading so cuts between them never disagree.
+local function target_state(self, s, preset)
+  local loc = target_loc(self)
+  if not loc then return nil end
+  local p = self.target
+  local actor_ref = p or self.target_ps
+  local raw = { loc.X or loc[1] or 0.0, loc.Y or loc[2] or 0.0, loc.Z or loc[3] or 0.0 }
+  local fx, fy = 1.0, 0.0
+  if p then
+    local okr, rot = pcall(function() return p:K2_GetActorRotation() end)
+    if okr and rot then
+      local yaw = math.rad(rot.Yaw or 0.0)
+      fx, fy = math.cos(yaw), math.sin(yaw)
+    end
+  elseif self.tgt_filter and self.tgt_filter.fwd then
+    fx, fy = self.tgt_filter.fwd[1], self.tgt_filter.fwd[2]
+  end
+  local now = self:clock()
+  local f = self.tgt_filter
+  local name = self.target_name
+
+  -- Fresh target / target switch / first tick: snap, never interpolate across
+  -- the map from a previous driver. Same driver upgrading between remote
+  -- PlayerState and streamed-in pawn keeps the filter continuous unless >25m.
+  local same_driver = f and name and name ~= "" and f.name == name
+  if not f or (not same_driver and f.actor ~= actor_ref) then
+    reset_rig(self)
+    self.tgt_filter = {
+      pos = { raw[1], raw[2], raw[3] }, vel = { 0.0, 0.0, 0.0 },
+      fwd = { fx, fy }, t = now, dt = 1.0 / 60.0, actor = actor_ref, name = name,
+    }
+    return self.tgt_filter
+  end
+  f.actor = actor_ref
+  -- pose_of can be called more than once in a tick (activate + update, or the
+  -- auto_trackside recursion). The estimator must be idempotent within a tick.
+  if now <= f.t then return f end
+
+  local dt = clamp_num(now - f.t, 1.0 / 240.0, 0.10)
+  f.dt = dt
+  local dx, dy, dz = raw[1] - f.pos[1], raw[2] - f.pos[2], raw[3] - f.pos[3]
+  local jump = math.sqrt(dx * dx + dy * dy + dz * dz)
+  if jump > 2500.0 then
+    -- Respawn / teleport / rubber-band across >25 m: hard snap in one tick.
+    reset_rig(self)
+    f.pos[1], f.pos[2], f.pos[3] = raw[1], raw[2], raw[3]
+    f.vel[1], f.vel[2], f.vel[3] = 0.0, 0.0, 0.0
+    f.fwd[1], f.fwd[2] = fx, fy
+    f.t = now
+    return f
+  end
+
+  -- Alpha-beta predictor: dead-reckon between network packets, then correct
+  -- with the measurement residual. Steady-state lag on a constant-velocity
+  -- car is zero (both position and velocity error converge to zero).
+  local px = f.pos[1] + f.vel[1] * dt
+  local py = f.pos[2] + f.vel[2] * dt
+  local pz = f.pos[3] + f.vel[3] * dt
+  local ex, ey, ez = raw[1] - px, raw[2] - py, raw[3] - pz
+  local err = math.sqrt(ex * ex + ey * ey + ez * ez)
+  local scale = 1.0
+  if err > 300.0 then
+    -- Brief packet-loss rubber-banding: bound the step correction so the
+    -- camera glides instead of snapping. >25 m is handled above as a cut.
+    scale = err > 2500.0 and 0.12 or (300.0 / err)
+  end
+  ex, ey, ez = ex * scale, ey * scale, ez * scale
+  local tau_pos = shot_tau(self, s, preset, "tau_pos")
+  local alpha_pos = exp_alpha(dt, tau_pos)
+  local alpha_vel = exp_alpha(dt, tau_pos * 2.5)
+  f.pos[1], f.pos[2], f.pos[3] = px + ex * alpha_pos, py + ey * alpha_pos, pz + ez * alpha_pos
+  local inv_dt = 1.0 / math.max(dt, 0.008)
+  f.vel[1] = clamp_num(f.vel[1] + ex * inv_dt * alpha_vel, -12000.0, 12000.0)
+  f.vel[2] = clamp_num(f.vel[2] + ey * inv_dt * alpha_vel, -12000.0, 12000.0)
+  f.vel[3] = clamp_num(f.vel[3] + ez * inv_dt * alpha_vel, -12000.0, 12000.0)
+
+  -- Heading: prefer the velocity vector once the car is moving, blended with
+  -- the (noisier) replicated actor yaw; fall back to pure smoothed actor yaw
+  -- when stationary or reversing.
+  local spd = math.sqrt(f.vel[1] * f.vel[1] + f.vel[2] * f.vel[2])
+  local tx, ty = fx, fy
+  if spd > 300.0 then
+    local w = clamp_num((spd - 300.0) / 700.0, 0.0, 0.8)
+    tx, ty = (f.vel[1] / spd) * w + fx * (1.0 - w),
+             (f.vel[2] / spd) * w + fy * (1.0 - w)
+  end
+  local nx, ny = norm_xy(tx, ty, fx, fy)
+  local kh = exp_alpha(dt, shot_tau(self, s, preset, "tau_hdg"))
+  local hx = f.fwd[1] + (nx - f.fwd[1]) * kh
+  local hy = f.fwd[2] + (ny - f.fwd[2]) * kh
+  f.fwd[1], f.fwd[2] = norm_xy(hx, hy, f.fwd[1], f.fwd[2])
+  f.t = now
+  return f
 end
 
 function E.pose_of(self, s)
@@ -178,19 +398,12 @@ function E.pose_of(self, s)
   local kind = s.kind or "look_at"
   local preset = s.preset and self.presets.get(s.preset) or nil
   if kind == "follow" then
-    local loc = target_loc(self)
-    if not loc then return nil end
-    local p = self.target
-    self.target_lost = false
-    self.target_lost_since = nil
+    local st = target_state(self, s, preset)
+    if not st then return nil end
+    local loc = st.pos
+    local fx, fy = st.fwd[1], st.fwd[2]
     local o = preset and preset.offset or {}
     local lo = preset and preset.look_offset or {}
-    local fx, fy = 1.0, 0.0
-    local okr, rot = pcall(function() return p:K2_GetActorRotation() end)
-    if okr then
-      local yaw = math.rad(rot.Yaw)
-      fx, fy = math.cos(yaw), math.sin(yaw)
-    end
     -- Body-frame 3D offsets: { fwd, right, up } in cm along the car's heading
     -- and its right-hand normal (rx, ry) = (-fy, fx). Legacy two-slot plans
     -- write { 0, -back, up } (zero fwd, negative middle) meaning "behind the
@@ -209,20 +422,35 @@ function E.pose_of(self, s)
       f_off, r_off, u_off = -(o.back or 900.0), 0.0, o.up or 350.0
     end
     local rx, ry = -fy, fx
-    local alpha = s.damping or (preset and preset.flags and preset.flags.smoothing_alpha) or 0.12
-    local want_pos = { loc.X + fx * f_off + rx * r_off,
-                       loc.Y + fy * f_off + ry * r_off,
-                       loc.Z + u_off }
+    local dt = st.dt or (1.0 / 60.0)
+    local want_pos = { loc[1] + fx * f_off + rx * r_off,
+                       loc[2] + fy * f_off + ry * r_off,
+                       loc[3] + u_off }
     local pos = want_pos
-    if self.follow_pos and alpha < 1.0 then
-      pos = vlerp(self.follow_pos, want_pos, alpha)
+    if self.follow_pos then
+      -- XY settles with tau_pos; Z is deliberately slower so road bumps and
+      -- replicated suspension bob don't pump the camera vertically.
+      local kxy = exp_alpha(dt, shot_tau(self, s, preset, "tau_pos"))
+      local kz = exp_alpha(dt, shot_tau(self, s, preset, "tau_pos") * 1.5)
+      pos = {
+        lerp(self.follow_pos[1], want_pos[1], kxy),
+        lerp(self.follow_pos[2], want_pos[2], kxy),
+        lerp(self.follow_pos[3], want_pos[3], kz),
+      }
     end
     self.follow_pos = pos
+    self.follow_fwd = { fx, fy }
     -- Look point: look_ahead along the body forward axis (negative looks back
     -- at the car, as front_chase does to frame it and the pack behind).
     local look_ahead = (s.look_ahead_m and s.look_ahead_m * 100.0)
       or lo.look_ahead or lo.ahead or 600.0
-    local look = { loc.X + fx * look_ahead, loc.Y + fy * look_ahead, loc.Z + (lo.up or 150.0) }
+    local want_look = { loc[1] + fx * look_ahead, loc[2] + fy * look_ahead,
+                        loc[3] + (lo.up or 150.0) }
+    local look = want_look
+    if self.follow_look then
+      look = vlerp(self.follow_look, want_look, exp_alpha(dt, shot_tau(self, s, preset, "tau_look")))
+    end
+    self.follow_look = look
     return { pos = pos, look = look, fov = s.fov or (preset and preset.fov) or 70.0 }
   end
   if kind == "flyover" and self.route then
@@ -237,17 +465,29 @@ function E.pose_of(self, s)
   if kind == "trackside_pan" then
     if not s.location then return nil end
     local pos = { s.location[1], s.location[2], s.location[3] }
-    local loc = target_loc(self)
-    if loc then
-      -- Live pan: aim at the target and optionally zoom to keep it framed.
-      local look = { loc.X, loc.Y, loc.Z + 120.0 }
+    local st = target_state(self, s, preset)
+    if st then
+      -- Broadcast tripod head: aim at the filtered target, glide the zoom.
+      local want_look = { st.pos[1], st.pos[2], st.pos[3] + 120.0 }
+      local look = want_look
+      if self.follow_look then
+        look = vlerp(self.follow_look, want_look,
+          exp_alpha(st.dt or (1.0 / 60.0), shot_tau(self, s, preset, "tau_look")))
+      end
+      self.follow_look = look
       local fov = s.fov or 65.0
       if s.auto_zoom ~= false then
-        local dx, dy, dz = loc.X - pos[1], loc.Y - pos[2], look[3] - pos[3]
+        local dx, dy, dz = st.pos[1] - pos[1], st.pos[2] - pos[2], st.pos[3] + 120.0 - pos[3]
         local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-        fov = math.max(s.fov_min or 28.0,
+        local want_fov = math.max(s.fov_min or 28.0,
           math.min(s.fov_max or 65.0, 220000.0 / math.max(dist, 1500.0)))
+        fov = want_fov
+        if self.smooth_fov then
+          fov = lerp(self.smooth_fov, want_fov,
+            exp_alpha(st.dt or (1.0 / 60.0), shot_tau(self, s, preset, "tau_fov")))
+        end
       end
+      self.smooth_fov = fov
       return { pos = pos, look = look, fov = fov }
     end
     -- No live target: fall back to the static frame.
@@ -271,16 +511,12 @@ function E.pose_of(self, s)
       fallback.kind = "follow"
       return self:pose_of(fallback)
     end
-    local loc = target_loc(self)
+    local st = target_state(self, s, preset)
     local tx, ty = 0.0, 0.0
     local fwd_x, fwd_y = nil, nil
-    if loc then
-      tx, ty = loc.X, loc.Y
-      local okr, rot = pcall(function() return self.target:K2_GetActorRotation() end)
-      if okr and rot then
-        local yaw = math.rad(rot.Yaw)
-        fwd_x, fwd_y = math.cos(yaw), math.sin(yaw)
-      end
+    if st then
+      tx, ty = st.pos[1], st.pos[2]
+      fwd_x, fwd_y = st.fwd[1], st.fwd[2]
     end
     local best, best_score = nil, math.huge
     for _, c in ipairs(cands) do
@@ -300,10 +536,10 @@ function E.pose_of(self, s)
     return self:pose_of(chosen)
   end
   if kind == "orbit" then
-    local loc = target_loc(self)
+    local st = target_state(self, s, preset)
     local c
-    if loc then
-      c = { loc.X, loc.Y, loc.Z }
+    if st then
+      c = { st.pos[1], st.pos[2], st.pos[3] }
     elseif s.center then
       c = { s.center[1], s.center[2], s.center[3] }
     else
@@ -316,7 +552,13 @@ function E.pose_of(self, s)
     local started = self.shot_started_at or self:clock()
     local ang = math.rad((self:clock() - started) * dps)
     local pos = { c[1] + math.cos(ang) * r, c[2] + math.sin(ang) * r, c[3] + h }
-    local look = { c[1], c[2], c[3] + 100.0 }
+    local want_look = { c[1], c[2], c[3] + 100.0 }
+    local look = want_look
+    if self.follow_look then
+      look = vlerp(self.follow_look, want_look,
+        exp_alpha(st and st.dt or (1.0 / 60.0), shot_tau(self, s, preset, "tau_look")))
+    end
+    self.follow_look = look
     return { pos = pos, look = look, fov = s.fov or (preset and preset.fov) or 60.0 }
   end
   if s.to and (kind == "tween" or s.transition == "spline") then
@@ -334,13 +576,9 @@ end
 function E.activate(self, s, via)
   if not s then return false end
   self.shot_started_at = self:clock()
-  -- A new follow shot restarts position/heading smoothing from the fresh pose
-  -- (clear before pose_of so the activation frame does not blend with the old
-  -- follow shot's position).
-  if s.kind == "follow" then
-    self.follow_pos = nil
-    self.follow_fwd = nil
-  end
+  -- Every shot cut restarts all smoothing from the fresh pose (clear before
+  -- pose_of so the activation frame never blends with the previous shot).
+  self:reset_smoothing()
   local to = self:pose_of(s)
   if not to then return false end
   -- A non-follow shot has no live target: the TARGET LOST banner must clear.
@@ -373,6 +611,7 @@ function E.activate(self, s, via)
 end
 
 function E.set_target(self, pawn)
+  if self.target ~= pawn then self:reset_smoothing() end
   self.target = pawn
   return pawn and "target set" or "target cleared"
 end
@@ -399,12 +638,89 @@ function E.pawns(self)
   return found
 end
 
+function E.ps_name(self, ps)
+  if not ps then return nil end
+  local ok, name = pcall(function()
+    if ps.IsValid and not ps:IsValid() then return nil end
+    if not ps.GetPlayerName then return nil end
+    local n = ps:GetPlayerName()
+    if type(n) == "string" then return n end
+    if n and n.ToString then return n:ToString() end
+    return nil
+  end)
+  if ok and type(name) == "string" and name ~= "" then return name end
+  return nil
+end
+
+function E.player_states(self)
+  local out = {}
+  local ok_gs, gs = pcall(function()
+    if FindFirstOf then
+      local g = FindFirstOf("MotorTownGameState")
+      if g and (not g.IsValid or g:IsValid()) then return g end
+      g = FindFirstOf("GameStateBase")
+      if g and (not g.IsValid or g:IsValid()) then return g end
+    end
+    return nil
+  end)
+  if ok_gs and gs then
+    local ok_arr, arr = pcall(function() return gs.PlayerArray end)
+    if ok_arr and arr then
+      if type(arr) == "table" then
+        for i = 1, #arr do
+          if arr[i] then out[#out + 1] = arr[i] end
+        end
+      else
+        local ok_fe = pcall(function()
+          arr:ForEach(function(_, elem)
+            local ps = elem and elem.get and elem:get() or elem
+            if ps then out[#out + 1] = ps end
+          end)
+        end)
+        if not ok_fe then
+          pcall(function()
+            local n = #arr
+            for i = 1, n do
+              if arr[i] then out[#out + 1] = arr[i] end
+            end
+          end)
+        end
+      end
+    end
+  end
+  if #out == 0 then
+    local ok_all, all = pcall(function() return FindAllOf("MotorTownPlayerState") end)
+    if ok_all and type(all) == "table" then
+      for i = 1, #all do
+        if all[i] then out[#out + 1] = all[i] end
+      end
+    end
+  end
+  return out
+end
+
 function E.list_targets(self)
-  local names = {}
+  local names, seen = {}, {}
+  -- Streamed-in nearby pawns first so they stay at the top of the roster.
   for _, p in ipairs(self:pawns()) do
     local n = self:pawn_name(p)
-    if n then names[#names + 1] = n end
+    if n and not seen[n] then
+      seen[n] = true
+      names[#names + 1] = n
+    end
   end
+  -- Full-server roster from GameState.PlayerArray (map-wide, outside UE5's
+  -- relevancy bubble).
+  local remote = {}
+  for _, ps in ipairs(self:player_states()) do
+    local n = self:ps_name(ps)
+    if n and not seen[n] then
+      seen[n] = true
+      remote[#remote + 1] = n
+    end
+  end
+  table.sort(remote)
+  for _, n in ipairs(remote) do names[#names + 1] = n end
   return names
 end
 
@@ -412,11 +728,11 @@ end
 function E.set_target_by_name(self, name)
   if not name or name == "" then return false, "no name given" end
   local found = self:pawns()
-  if #found == 0 then return false, "no pawns" end
   for i, p in ipairs(found) do
     if self:pawn_name(p) == name then
-      if self.target ~= p then self.follow_pos = nil; self.follow_fwd = nil end
+      if self.target_name ~= name then self:reset_smoothing() end
       self.target = p
+      self.target_ps = nil
       self.target_name = name
       self.target_index = i
       self.target_lost = false
@@ -425,12 +741,30 @@ function E.set_target_by_name(self, name)
       return true, "target " .. name
     end
   end
+  -- Fallback: driver is on the server (GameState.PlayerArray) but currently
+  -- outside UE5's network relevancy bubble. Track PlayerState.Location until
+  -- their MTPlayerCharacter_C streams in.
+  for _, ps in ipairs(self:player_states()) do
+    if self:ps_name(ps) == name then
+      if self.target_name ~= name then self:reset_smoothing() end
+      self.target = nil
+      self.target_ps = ps
+      self.target_name = name
+      self.target_index = nil
+      self.target_lost = false
+      self.target_lost_since = nil
+      self:log("TARGET name=" .. name .. " (remote PlayerState)")
+      return true, "target " .. name
+    end
+  end
+  if #found == 0 then return false, "no pawns" end
   return false, "no pawn named " .. tostring(name)
 end
 
 function E.set_target_by_index(self, i)
   local ok, pawns = pcall(function() return FindAllOf("MTPlayerCharacter_C") end)
   if not ok or not pawns or not pawns[i] then return "no pawn " .. tostring(i) end
+  if self.target ~= pawns[i] then self:reset_smoothing() end
   self.target = pawns[i]
   self.target_index = i
   self.target_name = self:pawn_name(pawns[i])
