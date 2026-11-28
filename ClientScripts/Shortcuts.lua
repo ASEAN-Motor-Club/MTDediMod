@@ -361,8 +361,7 @@ end
 ---Toggle the nearest door on the vehicle the player is aiming at
 local function TriggerDoorToggle()
     if not IsAdmin() then
-        LogOutput("WARN", "Door toggle shortcut: Admin only")
-        return
+        LogOutput("WARN", "Door toggle shortcut: bIsAdmin false locally; sending anyway (server decides)")
     end
 
     local now = os.clock() * 1000
@@ -433,8 +432,7 @@ end
 ---Toggle ghost mode via server API (replicated to all clients)
 local function TriggerGhostToggle()
     if not IsAdmin() then
-        LogOutput("WARN", "Ghost toggle shortcut: Admin only")
-        return
+        LogOutput("WARN", "Ghost toggle shortcut: bIsAdmin false locally; sending anyway (server decides)")
     end
 
     local now = os.clock() * 1000
@@ -468,8 +466,7 @@ end
 ---Toggle god mode via bCanBeDamaged
 local function TriggerGodToggle()
     if not IsAdmin() then
-        LogOutput("WARN", "God toggle shortcut: Admin only")
-        return
+        LogOutput("WARN", "God toggle shortcut: bIsAdmin false locally; sending anyway (server decides)")
     end
 
     local now = os.clock() * 1000
@@ -504,8 +501,7 @@ end
 ---Toggle HideCostume flag via server API (replicated to all clients)
 local function TriggerHideCostume()
     if not IsAdmin() then
-        LogOutput("WARN", "Hide costume shortcut: Admin only")
-        return
+        LogOutput("WARN", "Hide costume shortcut: bIsAdmin false locally; sending anyway (server decides)")
     end
 
     local now = os.clock() * 1000
@@ -539,8 +535,7 @@ end
 ---Toggle actor visibility via server API (replicated to all clients)
 local function TriggerInvisibleToggle()
     if not IsAdmin() then
-        LogOutput("WARN", "Invisible toggle shortcut: Admin only")
-        return
+        LogOutput("WARN", "Invisible toggle shortcut: bIsAdmin false locally; sending anyway (server decides)")
     end
 
     local now = os.clock() * 1000
@@ -570,8 +565,7 @@ end
 ---Despawn the actor the player is aiming at (vehicle, cargo, or item)
 local function TriggerDespawnAimed()
     if not IsAdmin() then
-        LogOutput("WARN", "Despawn shortcut: Admin only")
-        return
+        LogOutput("WARN", "Despawn shortcut: bIsAdmin false locally; sending anyway (server decides)")
     end
 
     local now = os.clock() * 1000
@@ -645,8 +639,7 @@ end
 ---locally increasing counter.
 local function TriggerEngineToggleAimed()
     if not IsAdmin() then
-        LogOutput("WARN", "Engine toggle shortcut: Admin only")
-        return
+        LogOutput("WARN", "Engine toggle shortcut: bIsAdmin false locally; sending anyway (server decides)")
     end
 
     local now = os.clock() * 1000
@@ -707,8 +700,7 @@ end
 ---Uses the game's built-in ServerApplyImpact RPC which replicates automatically.
 local function TriggerImpulseAimed()
     if not IsAdmin() then
-        LogOutput("WARN", "Impulse shortcut: Admin only")
-        return
+        LogOutput("WARN", "Impulse shortcut: bIsAdmin false locally; sending anyway (server decides)")
     end
 
     local now = os.clock() * 1000
@@ -1108,6 +1100,7 @@ end
 RegisterKeyBind(Key.RIGHT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerRightClick)
 RegisterKeyBind(Key.I, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
 RegisterKeyBind(Key.LEFT_MOUSE_BUTTON, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerImpulseAimed)
+RegisterKeyBind(Key.X, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDespawnAimed)
 RegisterKeyBind(Key.O, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerDoorToggle)
 RegisterKeyBind(Key.E, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerEngineToggleAimed)
 RegisterKeyBind(Key.T, { ModifierKey.CONTROL, ModifierKey.SHIFT }, TriggerTeleportDialog)
@@ -1124,6 +1117,35 @@ RegisterKeyBind(Key.F5, { ModifierKey.CONTROL, ModifierKey.SHIFT }, function()
     LogOutput("INFO", "Vehicle quick-saved")
   end
 end)
+
+-- bIsAdmin is hidden on the wire by the server (PR #52), so clients read false
+-- and native admin UI widgets hide. Re-asserting it locally only unlocks the
+-- client-side UI gate; the server remains the sole authority for every RPC.
+local function SetLocalAdminTrue()
+  local PC = GetMyPlayerController()
+  if not PC or not PC:IsValid() then return false end
+  local PS = PC.PlayerState
+  if not PS or not PS:IsValid() then return false end
+  if PS.bIsAdmin == true then return false end
+  PS.bIsAdmin = true
+  return true
+end
+
+local function AssertLocalAdmin(tag)
+  ExecuteInGameThread(function()
+    local ok, changed = pcall(SetLocalAdminTrue)
+    if ok and changed then
+      LogOutput("INFO", "[Admin] local bIsAdmin forced true (%s; client-side UI only)", tag)
+    end
+  end)
+end
+
+pcall(function()
+  RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
+    ExecuteWithDelay(1500, function() AssertLocalAdmin("ClientRestart") end)
+  end)
+end)
+ExecuteWithDelay(2000, function() AssertLocalAdmin("boot") end)
 
 -- Public API driven by OverlayBridge.lua (egui overlay) and by the keybinds.
 return {
